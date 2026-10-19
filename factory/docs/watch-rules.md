@@ -62,15 +62,19 @@ policy:
   dedupe: update             # once per change: not again until the issue changes after a fix that succeeded
   cooldown: {success: 10m, failure: 20m}   # how long after a run, by its outcome
   phase: 3                   # its tasks' order in the queue, after the priority label
-expect: [open, no-linked-pr] # checked again when the task is about to start
 ```
 
 Read aloud: *for an issue the overseer tracks (see [Which items a rule
 sees](#which-items-a-rule-sees)); not held back by a fan-out; with no open
 PR; naming no workflow; and changed since the last fix that succeeded - once
 the last fix is 10 minutes old (20 after a failure), queue the fix recipe (a coder
-bot runs it), open the PR with the issue's labels when it ends, and drop the
-task if the issue closes or a PR appears before it starts.*
+bot runs it) and open the PR with the issue's labels when it ends.*
+
+A queued task is checked again just before it starts, and dropped (not
+counted as an attempt) if the item closed or was stopped, or the facts it
+was decided on moved: a PR's head for ci, conflict and review, a PR
+linked to the issue for fix. A rule does not say which; see
+[Before a task starts](#before-a-task-starts).
 
 ---
 
@@ -87,7 +91,6 @@ task if the issue closes or a PR appears before it starts.*
 | `when` | predicates | The condition. See [`when`](#when-the-predicates). |
 | `run` | a recipe, or GitHub writes | The action. See [`run`](#run-the-action). |
 | `policy` | see below | Dedupe, cooldown, give-up and ordering. See [`policy`](#policy). |
-| `expect` | `open`; `head` (PRs); `no-linked-pr` (issues) | Facts the queued task is checked against when the dispatcher is about to start it: the item still open, the PR's head unchanged, still no linked PR. A task whose facts no longer hold is dropped, and a drop is not an attempt. |
 
 ---
 
@@ -359,6 +362,25 @@ A single rule decides:
 
 ---
 
+## Before a task starts
+
+A decision is made at scan time; the task may wait in the queue behind
+the concurrency limits. Just before it starts, the dispatcher checks it
+again and drops it if:
+
+- the item closed, or has the stop label (every task);
+- a PR task decided on its head (ci, conflict, review) finds the head
+  moved;
+- a fix finds an open PR linked to the issue.
+
+A drop is not an attempt and starts no cooldown; the next scan decides
+again. Comments are not dropped by a push: a commit does not answer
+feedback. Which facts are checked follows from the task, not from the
+rule file; once the engine builds tasks itself, it decides the rule
+again on the item as it is instead.
+
+---
+
 ## Turning rules on and off
 
 A rule is on unless something turns it off. Each source overrides the one
@@ -407,7 +429,6 @@ run:
   apply: submit-review
 policy:
   dedupe: head
-expect: [open, head]
 ```
 
 Rules are checked strictly when they load:

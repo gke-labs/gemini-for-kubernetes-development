@@ -75,9 +75,6 @@ type Rule struct {
 	Run Run `yaml:"run" json:"run"`
 	// Policy is the rule's dedupe, cooldown, give-up and ordering.
 	Policy Policy `yaml:"policy,omitempty" json:"policy,omitzero"`
-	// Expect are the facts a queued task is checked against before it
-	// starts (preconditions): head, open, no-linked-pr.
-	Expect []string `yaml:"expect,omitempty" json:"expect,omitempty"`
 
 	// Source is whose rule it is, SourceFactory or SourceRepo, and
 	// EnabledBy whose its Enabled is when a repository's toggle set it;
@@ -593,15 +590,6 @@ func (r *Rule) Validate() error {
 		}
 		if err := checkSince(g.Since); err != nil {
 			return fail("policy.give-up: %v", err)
-		}
-	}
-	for _, e := range r.Expect {
-		switch {
-		case e == "open":
-		case e == "head" && r.On == OnPR:
-		case e == "no-linked-pr" && r.On == OnIssue:
-		default:
-			return fail("expect %q: want open, head (on pr) or no-linked-pr (on issue)", e)
 		}
 	}
 	listed := r.On == OnIssue || r.On == OnPR
