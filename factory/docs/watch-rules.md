@@ -161,7 +161,9 @@ the merge queue get nothing from any rule.
 | `schedule` | `due: true` | the agent definition's schedule is due |
 | `event` | `event: linked-issue-closed` | the sandbox GC confirmed an issue closed (an issue linking it gets the event) |
 
-A rule on `event` needs `when.event`.
+A rule on `event` needs `when.event`. An event is a reason to act now: a
+rule on one is not held back by another rule's cooldown on the same task
+(`nudge` steps a workflow at once, inside the `workflow` rule's cooldown).
 
 ### `any-of`
 
@@ -253,12 +255,10 @@ engine does not fill in there is an error when the rule loads.
 
 | field | values | meaning |
 |---|---|---|
-| `dedupe` | `item`, `head`, `update` | `item`: one task per item and rule at a time (every rule has that much). `head`: once per PR head. `update`: once per change to the item, not again until it is updated after the run. A failed run does not count for `head` or `update`, so it retries after its cooldown. |
+| `dedupe` | `head`, `update` | Every rule decides nothing while its task for the item is queued or running; `dedupe` narrows that. `head`: once per PR head. `update`: once per change to the item, not again until it is updated after the run. A failed run does not count, so it retries after its cooldown. |
 | `cooldown` | see below | how long after its last run the rule waits before it runs on the item again |
 | `give-up` | see below | when the rule stops trying and stops the item |
 | `phase` | a number | its tasks' order in the queue, after the priority label: lower first |
-| `identity-pin` | `true`, `false`; unset is on | run as the bot that owns the item's sandbox |
-| `skip-cooldown` | `true` | its task is queued inside the cooldown of the rule whose task it is (`nudge` stepping a workflow at once) |
 
 ### `cooldown`
 

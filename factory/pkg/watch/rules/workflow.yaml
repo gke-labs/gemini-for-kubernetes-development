@@ -17,7 +17,6 @@ when:
 run:
   recipe: workflow
 policy:
-  dedupe: item
   cooldown: {success: "{{workflow-cooldown}}", failure: 20m}
   phase: 4
 expect: [open]

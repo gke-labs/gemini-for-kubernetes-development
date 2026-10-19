@@ -129,9 +129,6 @@ type Decision struct {
 	// Writes are the GitHub writes, placeholders filled in and only what
 	// changes something.
 	Writes Writes
-	// SkipCooldown is the rule's policy: its task is queued inside the
-	// cooldown of the rule whose task it is.
-	SkipCooldown bool
 }
 
 // What a decision does.
@@ -238,7 +235,7 @@ func decide(r *Rule, it Item, env Env) (Decision, bool) {
 	if !policyAllows(r, it, env, runs) {
 		return Decision{}, false
 	}
-	d := Decision{Rule: r.Name, Kind: it.Kind, Number: it.Number, Outcome: OutcomeRun, SkipCooldown: r.Policy.SkipCooldown}
+	d := Decision{Rule: r.Name, Kind: it.Kind, Number: it.Number, Outcome: OutcomeRun}
 	if r.Run.Recipe != "" {
 		d.Recipe, d.Apply = r.Run.Recipe, r.Run.Apply
 		if len(r.Run.Inputs) > 0 {

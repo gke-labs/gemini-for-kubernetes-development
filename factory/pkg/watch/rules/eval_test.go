@@ -230,7 +230,7 @@ func TestDecideScheduleAndEvent(t *testing.T) {
 	}
 	set, _ := Builtin()
 	ds := set.Decide(Item{Kind: OnEvent, Number: 13244, Event: "linked-issue-closed"}, testEnv)
-	if len(ds) != 1 || ds[0].Rule != "nudge" || !ds[0].SkipCooldown {
+	if len(ds) != 1 || ds[0].Rule != "nudge" {
 		t.Errorf("event = %v", ds)
 	}
 }
