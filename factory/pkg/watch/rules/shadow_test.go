@@ -1,7 +1,9 @@
 package rules
 
 import (
+	"encoding/json"
 	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -60,5 +62,34 @@ func TestRecorderFeedsTheShadow(t *testing.T) {
 	}
 	if entries, _ := os.ReadDir(dir); len(entries) != 0 {
 		t.Errorf("wrote %v", entries)
+	}
+}
+
+// Once the engine decides a rule for the scanner, Decided is the engine's
+// and agrees by construction: the shadow compares the engine with the
+// scanner's own condition instead, per rule.
+func TestShadowHanded(t *testing.T) {
+	set, _ := Builtin()
+	s := NewShadow(set)
+	ci := Item{Kind: OnPR, Number: 9, Labels: []string{"overseer"}, Assignees: []string{"bot"}, Author: "bot", Checks: "failing", Head: "h", UpdatedAt: now}
+	env := testEnv
+	env.Pool = []string{"bot"}
+	s.Observe(Record{At: now, Env: env, Item: ci, Decided: []string{"ci run"}, Handed: []Handed{{Rule: "ci", Legacy: true}}})  // the scanner would have too
+	s.Observe(Record{At: now, Env: env, Item: ci, Decided: []string{"ci run"}, Handed: []Handed{{Rule: "ci", Legacy: false}}}) // it would not
+	sum := s.Summary()
+	if sum.Compared != 2 || sum.Agree != 2 {
+		t.Errorf("summary = %+v: Decided is the engine's, so it agrees", sum)
+	}
+	if h := sum.ByRule["ci"].Handed; h == nil || h.Decided != 2 || h.Differ != 1 {
+		t.Errorf("ci handed = %+v, want 2 decided, 1 differing", h)
+	}
+
+	b, _ := json.Marshal(Record{At: now, Env: env, Item: ci, Decided: []string{"ci run"}, Handed: []Handed{{Rule: "ci", Legacy: false}}})
+	res, err := set.Replay(strings.NewReader(string(b)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h := res.Handed["ci"]; h.Decided != 1 || h.Differ != 1 || len(res.Diffs) != 0 {
+		t.Errorf("replay = %+v", res)
 	}
 }

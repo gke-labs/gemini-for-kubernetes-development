@@ -156,8 +156,18 @@ type QueueShadow struct {
 	Recent   []QueueShadowDiff          `json:"recent,omitempty"`
 }
 
-// QueueShadowRule is one rule's tally in shadow.
+// QueueShadowRule is one rule's tally in shadow; Handed, once the engine
+// decides the rule for the scanner, is how often it did and how often the
+// scanner's own condition said otherwise.
 type QueueShadowRule struct {
+	Decided int                `json:"decided"`
+	Differ  int                `json:"differ"`
+	Handed  *QueueShadowHanded `json:"handed,omitempty"`
+}
+
+// QueueShadowHanded is a rule the engine decides for the scanner, compared
+// with the scanner's own condition.
+type QueueShadowHanded struct {
 	Decided int `json:"decided"`
 	Differ  int `json:"differ"`
 }

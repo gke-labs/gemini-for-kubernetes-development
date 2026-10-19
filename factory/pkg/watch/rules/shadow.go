@@ -24,8 +24,18 @@ type Shadow struct {
 }
 
 // ShadowRule is one rule's tally: the records where the scanner or the
-// rules decided it, and those where only one side did.
+// rules decided it, and those where only one side did; and, once the
+// engine decides it for the scanner, the records it did so on and those
+// where the scanner's own condition said otherwise (Handed).
 type ShadowRule struct {
+	Decided int          `json:"decided"`
+	Differ  int          `json:"differ"`
+	Handed  *HandedTally `json:"handed,omitempty"`
+}
+
+// HandedTally counts a rule the engine decided for the scanner: on how
+// many records, and on how many the scanner's own condition disagreed.
+type HandedTally struct {
 	Decided int `json:"decided"`
 	Differ  int `json:"differ"`
 }
@@ -71,9 +81,18 @@ func (s *Shadow) Observe(rec Record) {
 		return
 	}
 	engine, scanner, same := compare(s.set, rec)
+	handed := handedTally(s.set, rec)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.compared++
+	for rule, t := range handed {
+		r := s.rule(rule)
+		if r.Handed == nil {
+			r.Handed = &HandedTally{}
+		}
+		r.Handed.Decided += t.Decided
+		r.Handed.Differ += t.Differ
+	}
 	decided := map[string]bool{}
 	for _, d := range append(append([]string(nil), engine...), scanner...) {
 		rule, _, _ := strings.Cut(d, " ")
@@ -111,7 +130,12 @@ func (s *Shadow) Summary() ShadowSummary {
 	// A record differs once, however many rules it differs on.
 	out := ShadowSummary{Since: s.since, Compared: s.compared, Agree: s.compared - s.differ, Gated: s.gated, ByRule: map[string]ShadowRule{}}
 	for name, r := range s.byRule {
-		out.ByRule[name] = *r
+		c := *r
+		if r.Handed != nil {
+			h := *r.Handed
+			c.Handed = &h
+		}
+		out.ByRule[name] = c
 	}
 	for i := len(s.recent) - 1; i >= 0; i-- {
 		out.Recent = append(out.Recent, s.recent[i])
@@ -121,6 +145,30 @@ func (s *Shadow) Summary() ShadowSummary {
 
 // compare is the rules' decisions on a record and the scanner's, sorted,
 // and whether they are the same.
+// handedTally compares, for each rule the engine decided for the scanner
+// on the record, the engine's decision (any outcome) with the scanner's
+// own condition.
+func handedTally(set Set, rec Record) map[string]HandedTally {
+	if len(rec.Handed) == 0 {
+		return nil
+	}
+	env := rec.Env
+	if env.Now.IsZero() {
+		env.Now = rec.At
+	}
+	ds := set.Decide(rec.Item, env)
+	out := map[string]HandedTally{}
+	for _, h := range rec.Handed {
+		t := out[h.Rule]
+		t.Decided++
+		if Decided(ds, h.Rule) != h.Legacy {
+			t.Differ++
+		}
+		out[h.Rule] = t
+	}
+	return out
+}
+
 func compare(set Set, rec Record) (engine, scanner []string, same bool) {
 	env := rec.Env
 	if env.Now.IsZero() {

@@ -1352,6 +1352,10 @@ type prFixture struct {
 	readyForHuman bool
 	// checkErr makes the check-runs listing fail with a 500 error.
 	checkErr bool
+	// failing makes the head commit's CI report a failed check run.
+	failing bool
+	// comments are the pull request's issue comments.
+	comments []*githubv39.IssueComment
 	// reviews are the submitted reviews, whose inline comments used to cost a
 	// request each.
 	reviews []*githubv39.PullRequestReview
@@ -1427,7 +1431,15 @@ func (f *prFixture) route(w http.ResponseWriter, r *http.Request) {
 		}})
 
 	case fmt.Sprintf("%s/issues/%d/comments", base, f.num):
-		_ = json.NewEncoder(w).Encode([]*githubv39.IssueComment{})
+		if r.Method == http.MethodPost {
+			_ = json.NewEncoder(w).Encode(&githubv39.IssueComment{})
+			return
+		}
+		comments := f.comments
+		if comments == nil {
+			comments = []*githubv39.IssueComment{}
+		}
+		_ = json.NewEncoder(w).Encode(comments)
 
 	case fmt.Sprintf("%s/pulls/%d/reviews", base, f.num):
 		_ = json.NewEncoder(w).Encode(f.reviews)
@@ -1445,6 +1457,14 @@ func (f *prFixture) route(w http.ResponseWriter, r *http.Request) {
 			runs = append(runs, &githubv39.CheckRun{
 				Name:   githubv39.String("build"),
 				Status: githubv39.String("in_progress"),
+			})
+		}
+		if f.failing {
+			runs = append(runs, &githubv39.CheckRun{
+				Name:        githubv39.String("test"),
+				Status:      githubv39.String("completed"),
+				Conclusion:  githubv39.String("failure"),
+				CompletedAt: &githubv39.Timestamp{Time: now},
 			})
 		}
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{"check_runs": runs})

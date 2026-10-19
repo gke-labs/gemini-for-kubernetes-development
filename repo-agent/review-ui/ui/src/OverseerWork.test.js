@@ -337,6 +337,15 @@ describe('the rules in shadow', () => {
         el.remove();
     });
 
+    test('shows a rule the engine decides for the scanner, against the scanner\'s own condition', async () => {
+        const el = document.createElement('div');
+        const root = createRoot(el);
+        const handed = { ...shadow, byRule: { ...shadow.byRule, conflict: { decided: 4, differ: 0, handed: { decided: 4, differ: 1 } } } };
+        await act(async () => { root.render(<ShadowBar shadow={handed} />); });
+        expect(el.textContent).toContain('conflict by engine 1✗');
+        await act(async () => { root.unmount(); });
+    });
+
     test('is not drawn without a tally', async () => {
         const el = document.createElement('div');
         const root = createRoot(el);

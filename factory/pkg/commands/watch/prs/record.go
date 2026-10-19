@@ -170,16 +170,58 @@ func (s *Scanner) decides(rule string, prIssue *githubv39.Issue, legacy bool) bo
 
 // picks is a pr-care case's condition: never when its rule is disabled; the
 // engine's decision (engineCare) when the engine decides the rule; else the
-// scanner's own condition. The handler it leads to keeps its own checks
-// and outside gates (a busy sandbox).
+// scanner's own condition. The handler it leads to keeps its outside gates
+// (a busy sandbox). An engine's give-up leads only to a handler that gives
+// up on it (ci's, given the outcome by engineOutcome); any other handler
+// would run instead.
 func (s *Scanner) picks(rule string, prIssue *githubv39.Issue, legacy bool) bool {
 	if s.rules.Off(rule) {
 		return false
 	}
 	if s.takes(rule, prIssue) {
-		return rules.Decided(s.engineCare, rule)
+		switch s.engineOutcome(rule, prIssue) {
+		case rules.OutcomeRun:
+			return true
+		case rules.OutcomeGiveUp:
+			return giveUpHandlers[rule]
+		}
+		return false
 	}
 	return legacy
+}
+
+// giveUpHandlers are the pr-care rules whose handler acts on an engine's
+// give-up (handlePRInvestigate's engine).
+var giveUpHandlers = map[string]bool{"ci": true}
+
+// engineOutcome is the engine's decision on rule for the pull request when
+// it decides the rule for the scanner: its outcome, or "" when the engine
+// does not decide the rule or decided nothing.
+func (s *Scanner) engineOutcome(rule string, prIssue *githubv39.Issue) string {
+	if !s.takes(rule, prIssue) {
+		return ""
+	}
+	for _, d := range s.engineCare {
+		if d.Rule == rule {
+			return d.Outcome
+		}
+	}
+	return ""
+}
+
+// recordHanded notes, for each pr-care rule the engine decides for the
+// scanner, whether the scanner's own pick (legacyPick, the first case its
+// conditions take, "" for none) was that rule: what the record compares
+// once Decided is the engine's.
+func (s *Scanner) recordHanded(prIssue *githubv39.Issue, legacyPick string) {
+	for _, rule := range prCareRules {
+		if rule == "ready" || rule == "ready-unreview" {
+			continue
+		}
+		if s.takes(rule, prIssue) {
+			s.rec.Handed(rule, legacyPick == rule)
+		}
+	}
 }
 
 // picksReadiness is whether readiness is reconciled: not when ready is
