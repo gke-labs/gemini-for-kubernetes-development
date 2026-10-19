@@ -240,7 +240,7 @@ the engine does not offer. From today's rules:
 | on | predicates |
 |---|---|
 | any item | `labels: {any, all, none}`; `author: pool`; `assignee: pool\|not-pool\|none`; `last-run: failed` (the rule's last run on the item, on its head when deduped by head) |
-| issue | `linked-pr: none\|open`; `workflow: none\|any`; `opened-by: watcher`; `fanout: none\|parent\|child`; `fanout-held` (a parent, or a child the fan-out has not labelled) |
+| issue | `linked-pr: none\|open`; `workflow: none\|any`; `opened-by: watcher`; `fanout` (a fan-out's parent; a child is an ordinary issue, created only when it is to be worked on) |
 | PR | `checks: failing\|pending\|green`; `mergeable`; `feedback: new-trusted\|none`; `closes: {labels}` (the labels of the issues it closes, between them); `reviewed-at-head`; `approved`; `draft`; `inactive-for: <duration>` |
 | sandbox | `item: closed`; `age: <duration>`; `idle: <duration>`; `requires-human` |
 | any | `any-of: [<predicates>, …]` |
@@ -656,7 +656,7 @@ KCC, calls per pass drop and the tasks enqueued match a week before.
 
 - 2a: the model and the prebaked rules (2a-1, #1996); the model's gaps
   closed and the files exact (2a-2a: `from` (since removed), `any-of`, `closes`,
-  `last-run`, `fanout-held`, resets, placeholders; adoption folded into
+  `last-run`, `fanout-held` (since folded into `fanout`, once children were created only when due), resets, placeholders; adoption folded into
   fix, #1999); the evaluator (2a-2b: `Set.Decide` over an `Item` of facts
   and an `Env`, no calls, #2000); replay (2a-3: the scanners record each
   decision with its facts behind `rulesRecord`, and `factory watch rules

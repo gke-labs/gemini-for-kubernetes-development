@@ -1,7 +1,7 @@
 # Mirrors issues/scanner.go queueTask (with queueTasks) and issues/scan.go
 # scanAssigned / adoptCreatedIssues: an open issue the overseer is pointed
 # at - labelled with the trigger, assigned to the pool, or opened by the
-# watcher's own login - not held back by a fan-out, with no closing or
+# watcher's own login - not a fan-out's parent, with no closing or
 # linked PR and no workflow named in its body, updated since its last fix
 # ended, is fixed and the PR opened ready (the dispatcher's recipe table,
 # api/recipe.go: fix --apply --action open-pr --pr-labels --input
@@ -19,7 +19,7 @@ description: Fix an issue the overseer is pointed at and open the PR
 on: issue
 order: 20
 when:
-  fanout-held: false
+  fanout: false
   linked-pr: none
   workflow: none
 run:

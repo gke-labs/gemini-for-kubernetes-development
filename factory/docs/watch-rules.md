@@ -49,7 +49,7 @@ description: Fix an issue the overseer is pointed at and open the PR
 on: issue                    # the kind of item the rule looks at
 order: 20                    # its place among the issue rules; a recipe rule takes the item
 when:                        # the condition: every predicate set must hold
-  fanout-held: false         #   no fan-out holds it back
+  fanout: false              #   not a fan-out's parent (the fan-out controller's)
   linked-pr: none            #   no open PR closes it or is linked to it
   workflow: none             #   its body names no workflow (the workflow rule's)
 run:                         # the action
@@ -140,8 +140,7 @@ the merge queue get nothing from any rule.
 | `linked-pr` | `none`, `open` | no open PR closes or is linked to the issue; one does (a closing reference such as "Fixes #N", or GitHub's sidebar link) |
 | `workflow` | `none`, `any` | the issue's body names no workflow definition; it names one |
 | `opened-by` | `watcher` | the watcher's own login opened it |
-| `fanout` | `none`, `parent`, `child` | it is not in a fan-out; it is a fan-out's parent; it is a child |
-| `fanout-held` | `true`, `false` | a fan-out holds it back: it is a parent, or a child the fan-out has not labelled yet |
+| `fanout` | `true`, `false` | it is a fan-out's parent (the fanout label): the fan-out controller's, never fixed itself. A child is an ordinary issue, created when it is to be worked on |
 
 ### Pull requests
 

@@ -7,7 +7,6 @@ import (
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/api"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/conventions"
-	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/fanout"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/watch/rules"
 )
 
@@ -35,7 +34,6 @@ func (s *Scanner) startRecording(issue *githubv39.Issue) *rules.Recording {
 	if s.recorder == nil {
 		return nil
 	}
-	_, _, _, child := fanout.ParseMarker(issue.GetBody())
 	it := rules.Item{
 		Kind:         rules.OnIssue,
 		Number:       issue.GetNumber(),
@@ -44,7 +42,6 @@ func (s *Scanner) startRecording(issue *githubv39.Issue) *rules.Recording {
 		Author:       issue.GetUser().GetLogin(),
 		UpdatedAt:    issue.GetUpdatedAt(),
 		FanoutParent: conventions.HasFanoutLabel(issue.Labels, s.cfg.TriggerLabel),
-		FanoutChild:  child,
 	}
 	return s.recorder.Start("issues", s.rulesEnv(), it)
 }

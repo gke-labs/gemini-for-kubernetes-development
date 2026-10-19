@@ -327,7 +327,7 @@ With the settings above:
 | … | 5 each | 3 | |
 
 - **Units.** The window counts children (PRs in flight). Everything else counts items: checkpoints, the progress comment, and what `Finally` waits for. A child closed as completed counts all its items done; closed as not planned, all of them skipped.
-- **A group is made when its child is labelled**: the next `group` items without a child, in order. A child keeps the items it was made with; a group that grows only changes the next child. Children not yet labelled do not exist, except one made without triage access or unlabelled by a person. The progress comment still lists every item from the start.
+- **A group is made when its child is labelled**: the next `group` items without a child, in order. A child keeps the items it was made with; a group that grows only changes the next child. Children not yet labelled do not exist, except one made without triage access (it is fixed all the same: it was created because its turn came) or unlabelled by a person. The progress comment still lists every item from the start.
 - **Default checkpoint**: the items of the first batch, `group.start × window.start`.
 - `group: 1`, the default, is the one-item-per-child fan-out described above.
 
@@ -353,7 +353,7 @@ The controller keeps no local state. GitHub holds everything, so a restarted dae
 
 - **The spec** is the bot's spec comment, or the body.
 - **The children** are found by the marker, on the parent's timeline and in the state.
-- **The window, what was already counted against it, the checkpoints passed, the children created and the children labelled** live in a hidden block in the progress comment: `<!-- factory:fanout-state {"window":3,"group":1,"counted":[1201,1207],"checkpoints":[2],"children":{"apigeeinstance":1201},"started":[1201]} -->`. `counted` holds the children closed and the PRs closed unmerged that moved the window, so a pass never counts one twice. A child in `started` is never labelled again, so a person who unlabels a child has the last word. If the block is lost, the group is recomputed as the largest completed child's size, doubled and capped at `group.max` (just the largest when nothing completed), and the window as `start + completed` once the group is at its max, capped at `max`, and the checkpoints at or below the number done count as passed.
+- **The window, what was already counted against it, the checkpoints passed, the children created and the children labelled** live in a hidden block in the progress comment: `<!-- factory:fanout-state {"window":3,"group":1,"counted":[1201,1207],"checkpoints":[2],"children":{"apigeeinstance":1201},"started":[1201]} -->`. `counted` holds the children closed and the PRs closed unmerged that moved the window, so a pass never counts one twice. A child in `started` is never labelled again by the controller, and an unlabelled child does not count in the window; to pause a child, add the stop label, as for any issue (the watch fixes a child it opened, labelled or not). If the block is lost, the group is recomputed as the largest completed child's size, doubled and capped at `group.max` (just the largest when nothing completed), and the window as `start + completed` once the group is at its max, capped at `max`, and the checkpoints at or below the number done count as passed.
 - **The progress comment** has one row per item (child, PR, state) and the current window. It is edited in place and never re-posted, so the parent does not fill up with progress comments.
 
 ### The `fanout` recipe

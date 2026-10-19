@@ -9,7 +9,6 @@ import (
 	"k8s.io/klog/v2"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/conventions"
-	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/fanout"
 )
 
 // scanLabelled lists every open issue carrying the trigger label, following
@@ -202,14 +201,12 @@ func (s *Scanner) adoptCreatedIssues(ctx context.Context, created []*githubv39.I
 }
 
 // fanoutWork says why an issue belongs to a fan-out rather than to the issue
-// scanner, or "" when it does not: a parent is never worked on itself, and a
-// child is worked on only once the fan-out has labelled it.
+// scanner, or "" when it does not: a parent is never worked on itself. A
+// child is an ordinary issue: the fan-out creates it when it is to be
+// worked on (create: lazy), and the stop label pauses it like any other.
 func (s *Scanner) fanoutWork(issue *githubv39.Issue) string {
 	if conventions.HasFanoutLabel(issue.Labels, s.cfg.TriggerLabel) {
 		return "it is a fan-out parent"
-	}
-	if parent, _, _, ok := fanout.ParseMarker(issue.GetBody()); ok && !conventions.HasTriggerLabel(issue.Labels, s.cfg.TriggerLabel) {
-		return fmt.Sprintf("it is a child of fan-out #%d the fan-out has not started", parent)
 	}
 	return ""
 }

@@ -75,8 +75,7 @@ func TestDecideIssues(t *testing.T) {
 		{"failed 25m ago, not updated: retried", issue(func(it *Item) { it.Runs = []PastRun{fixed(25*time.Minute, true)}; it.UpdatedAt = ago(2 * time.Hour) }), "fix run"},
 		{"failed 15m ago: failure cooldown", issue(func(it *Item) { it.Runs = []PastRun{fixed(15*time.Minute, true)} }), ""},
 		{"fan-out parent", issue(func(it *Item) { it.FanoutParent = true }), ""},
-		{"fan-out child not released", issue(func(it *Item) { it.FanoutChild, it.Labels, it.Author = true, nil, "argus-watcher-bot" }), ""},
-		{"fan-out child released", issue(func(it *Item) { it.FanoutChild = true }), "fix run"},
+		{"a fan-out child, created when it is to be worked on, unlabelled (no triage)", issue(func(it *Item) { it.Labels, it.Author = nil, "argus-watcher-bot" }), "fix run"},
 		{"names a workflow", issue(func(it *Item) { it.Workflow = "kcc-greenfield" }), "workflow run"},
 		{"workflow inside its definition's cooldown", issue(func(it *Item) {
 			it.Workflow, it.WorkflowCooldown = "kcc-greenfield", time.Hour
