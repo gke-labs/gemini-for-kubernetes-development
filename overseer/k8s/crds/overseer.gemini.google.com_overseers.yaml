@@ -108,11 +108,22 @@ spec:
                 type: object
               rules:
                 properties:
+                  canaryLabel:
+                    type: string
+                  disabled:
+                    items:
+                      type: string
+                    type: array
                   engine:
                     enum:
                     - "off"
                     - shadow
+                    - "on"
                     type: string
+                  use:
+                    additionalProperties:
+                      type: string
+                    type: object
                 type: object
               rulesRecord:
                 type: boolean

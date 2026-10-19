@@ -133,3 +133,64 @@ func logins(users []*githubv39.User) []string {
 	}
 	return out
 }
+
+// prCareRules are the pr-care group's rules, in the scanner's order.
+var prCareRules = []string{"comments", "conflict", "ci", "review", "ready", "ready-unreview"}
+
+// engineDecide is the engine's decisions on the pull request being
+// evaluated, from the facts recorded so far; nil without a record (the
+// engine needs the facts the record holds).
+func (s *Scanner) engineDecide() []rules.Decision {
+	if s.rec == nil {
+		return nil
+	}
+	return s.rules.Decide(*s.rec.Item, s.rulesEnv())
+}
+
+// takes is whether the engine decides rule for the scanner on the pull
+// request: the engine on, the rule handed to it, the canary label on the
+// pull request when there is one, and the facts recorded.
+func (s *Scanner) takes(rule string, prIssue *githubv39.Issue) bool {
+	return s.rec != nil && s.rules.Takes(rule, labelNames(prIssue.Labels))
+}
+
+// decides is whether the scanner goes on to act on rule, a rule of its own
+// step (inherit-labels, inactive): never when the rule is disabled; on the
+// engine's decision when the engine decides it; else as the scanner would
+// (legacy), whose own checks follow.
+func (s *Scanner) decides(rule string, prIssue *githubv39.Issue, legacy bool) bool {
+	if s.rules.Off(rule) {
+		return false
+	}
+	if s.takes(rule, prIssue) {
+		return rules.Decided(s.engineDecide(), rule)
+	}
+	return legacy
+}
+
+// picks is a pr-care case's condition: never when its rule is disabled; the
+// engine's decision (engineCare) when the engine decides the rule; else the
+// scanner's own condition. The handler it leads to keeps its own checks
+// and outside gates (a busy sandbox).
+func (s *Scanner) picks(rule string, prIssue *githubv39.Issue, legacy bool) bool {
+	if s.rules.Off(rule) {
+		return false
+	}
+	if s.takes(rule, prIssue) {
+		return rules.Decided(s.engineCare, rule)
+	}
+	return legacy
+}
+
+// picksReadiness is whether readiness is reconciled: not when ready is
+// disabled (both its halves go with it); when the engine decides ready, on
+// its deciding ready or ready-unreview; else always, as before.
+func (s *Scanner) picksReadiness(prIssue *githubv39.Issue) bool {
+	if s.rules.Off("ready") {
+		return false
+	}
+	if s.takes("ready", prIssue) {
+		return rules.Decided(s.engineCare, "ready") || rules.Decided(s.engineCare, "ready-unreview")
+	}
+	return true
+}

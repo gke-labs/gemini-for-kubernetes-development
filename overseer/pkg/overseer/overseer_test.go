@@ -265,6 +265,25 @@ func TestBuildSandboxManifest_RulesEngine(t *testing.T) {
 	if got := overseerEnv(t, o)["WATCH_RULES_ENGINE"]; got != "shadow" {
 		t.Errorf("WATCH_RULES_ENGINE = %v, want shadow", got)
 	}
+	o.Spec.Rules = &overseerv1alpha1.OverseerRules{
+		Engine: "on", Use: map[string]string{"conflict": "engine", "ci": "legacy"},
+		CanaryLabel: "overseer/engine", Disabled: []string{"review", "inactive"},
+	}
+	env := overseerEnv(t, o)
+	for name, want := range map[string]string{
+		"WATCH_RULES_ENGINE": "on", "WATCH_RULES_USE": "ci=legacy,conflict=engine",
+		"WATCH_RULES_CANARY_LABEL": "overseer/engine", "WATCH_RULES_DISABLED": "review,inactive",
+	} {
+		if got := env[name]; got != want {
+			t.Errorf("%s = %v, want %q", name, got, want)
+		}
+	}
+	// Disabled alone, the engine off.
+	o.Spec.Rules = &overseerv1alpha1.OverseerRules{Disabled: []string{"review"}}
+	env = overseerEnv(t, o)
+	if _, ok := env["WATCH_RULES_ENGINE"]; ok || env["WATCH_RULES_DISABLED"] != "review" {
+		t.Errorf("env = %v", env)
+	}
 }
 
 // spec.rulesRecord reaches the watcher as WATCH_RULES_RECORD, a file on
