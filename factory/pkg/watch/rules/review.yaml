@@ -4,13 +4,13 @@
 # not reviewed, and that wants a review - */review on itself, or, while
 # it is not ready-for-human, on an issue it closes - is reviewed and the
 # review submitted (review --apply --action submit-review,
-# api/recipe.go), once per head. Fourth in the pr-care group
-# (prs/scanner.go evaluate). The review instructions are the overseer's,
+# api/recipe.go), once per head. Fourth of the PR rules that take the
+# item (prs/scanner.go evaluate). The review instructions are the overseer's,
 # passed by the engine.
 name: review
 description: Review a green PR that wants a review
 on: pr
-group: {name: pr-care, order: 40}
+order: 40
 when:
   author: pool
   checks: green

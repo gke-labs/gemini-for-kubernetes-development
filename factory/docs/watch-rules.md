@@ -32,7 +32,7 @@ A rule's file is named after it: `fix.yaml` holds the rule named `fix`.
 List the rules, with a checkout's `.agents/rules/` laid over factory's:
 
 ```sh
-factory watch rules                 # table: NAME ON FROM GROUP RUN AS POLICY SOURCE ENABLED
+factory watch rules                 # table: NAME ON ORDER RUN AS POLICY SOURCE ENABLED
 factory watch rules -o yaml         # every rule, whole
 factory watch rules --dir .         # with this checkout's .agents/rules/ laid over
 ```
@@ -47,6 +47,7 @@ factory watch rules --dir .         # with this checkout's .agents/rules/ laid o
 name: fix                    # unique; names the file
 description: Fix an issue the overseer is pointed at and open the PR
 on: issue                    # the kind of item the rule looks at
+order: 20                    # its place among the issue rules; a recipe rule takes the item
 when:                        # the condition: every predicate set must hold
   fanout-held: false         #   no fan-out holds it back
   linked-pr: none            #   no open PR closes it or is linked to it
@@ -83,7 +84,8 @@ task if the issue closes or a PR appears before it starts.*
 | `description` | string | What the rule is for, in a line. |
 | `on` | `issue`, `pr`, `schedule`, `event` | The kind of item. `schedule` is an `.agents/` agent definition whose schedule is due; `event` is something the watch derives rather than lists (today `linked-issue-closed`). |
 | `enabled` | `true`, `false`; unset is on | A rule shipped off says `enabled: false`. See [Turning rules on and off](#turning-rules-on-and-off). |
-| `group` | `{name: <group>, order: <n>}` or `{name: <group>, last: true}` | Makes the rule one of an ordered, exclusive set on an item. See [Groups](#groups). |
+| `order` | a number above 0 | The rule's place among the rules on its kind of item, lower first. A rule without one goes after those with one; a rule that takes the item needs one, and no two rules on a kind share one. See [Order](#order). |
+| `exclusive` | `true`, `false`; unset: a recipe rule `true`, GitHub writes `false` | Whether the rule takes the item: of the rules that do, only the first that holds is decided. See [Order](#order). |
 | `when` | predicates | The condition. See [`when`](#when-the-predicates). |
 | `run` | a recipe, or GitHub writes | The action. See [`run`](#run-the-action). |
 | `as` | `coder`, `agent`, `reviewer`, `author`, `watcher` | The role the action runs as. A recipe runs as `coder`, `agent`, `reviewer` or `author` (the PR's own bot, from the pool); GitHub writes are the `watcher`'s (its own token), and `as` may be left out for them. |
@@ -252,7 +254,6 @@ engine does not fill in there is an error when the rule loads.
 | `give-up` | see below | when the rule stops trying and stops the item |
 | `phase` | a number | its tasks' order in the queue, after the priority label: lower first |
 | `identity-pin` | `true`, `false`; unset is on | run as the bot that owns the item's sandbox |
-| `before` | a group's name | evaluated ahead of that group, every time; the group's rules see its label writes (`inherit-labels` before `pr-care`) |
 | `skip-cooldown` | `true` | its task is queued inside the cooldown of the rule whose task it is (`nudge` stepping a workflow at once) |
 
 ### `cooldown`
@@ -285,27 +286,37 @@ off (which is a `pause` event, and resets the counts that name it).
 
 ---
 
-## Groups
+## Order
 
-A group is an ordered, exclusive set of rules on one item: the first rule of
-the group whose condition and policy hold is taken, and the rest are not
-looked at. While a task of the item is queued or running, a group takes
-nothing.
+The rules on one kind of item are one list, walked in `order`. A rule
+**takes the item** (`exclusive`; a recipe rule does unless it says
+otherwise) or does not:
 
-The prebaked `pr-care` group, in order:
+- of the rules that take the item, only the first that holds is decided,
+  and none is while a task of the item is queued or running: one task at
+  a time per item, in priority order;
+- a rule that does not (label writes) decides on its own, and its label
+  writes are what the rules after it see; one that writes the stop label
+  ends the walk.
 
-| order | rule | does |
-|---|---|---|
-| 10 | `comments` | answers new trusted feedback |
-| 20 | `conflict` | rebases a PR that conflicts |
-| 30 | `ci` | fixes failing checks |
-| 40 | `review` | reviews a green PR that wants one |
-| 50 | `ready` | hands a ready PR to the humans |
-| 60 | `ready-unreview` | takes `*/review` off a PR already handed over |
+The prebaked PR rules, in order:
 
-A group's rules look at one kind of item; their orders are unique, and at
-most one is `last` (taken when no other holds). A rule ordered `before` a
-group (`inherit-labels`) is not in it.
+| order | rule | takes the item | does |
+|---|---|---|---|
+| 5 | `inherit-labels` | no | copies the closing issues' labels, so the rules after it see them |
+| 7 | `inactive` | no | pauses an idle PR (the stop label ends the walk) |
+| 10 | `comments` | yes | answers new trusted feedback |
+| 20 | `conflict` | yes | rebases a PR that conflicts |
+| 30 | `ci` | yes | fixes failing checks |
+| 40 | `review` | yes | reviews a green PR that wants one |
+| 50 | `ready` | yes (`exclusive: true`) | hands a ready PR to the humans |
+| 60 | `ready-unreview` | yes (`exclusive: true`) | takes `*/review` off a PR already handed over |
+| - | `adopt-pr` | no | (off) |
+
+On issues, `workflow` (10) and `fix` (20) both take the item; their
+predicates (`workflow: any` and `workflow: none`) keep them apart. `ready`
+writes labels but takes the item: it must not hold beside a care rule, nor
+while a task runs.
 
 ---
 
@@ -318,13 +329,11 @@ gathered - it makes no GitHub calls:
    and neither does a PR in the merge queue.
 2. **The rules that apply.** The enabled rules of the item's kind (the item
    is one the watch tracks).
-3. **Before the groups.** The rules ordered `before` a group decide first;
-   their label writes are what the rest see. A stop label written here ends
-   the decision.
-4. **Rules of no group** decide each on its own. One that stops the item
-   (`inactive`) ends the decision.
-5. **Each group** takes its first rule that holds, unless a task of the item
-   is active.
+3. **In order.** The rules are walked in `order`. A rule that takes the
+   item is decided only if none before it was and no task of the item is
+   active; any other rule decides on its own, and its label writes are what
+   the rules after it see. A stop label written by one (`inactive`, or
+   inherited from a closing issue) ends the decision.
 
 A single rule decides:
 
@@ -375,6 +384,7 @@ A repository rule that asks for a review of every green bot PR labelled
 name: review-on-label
 description: Review a green bot PR labelled needs-review
 on: pr
+order: 45                    # after review (40), before ready (50)
 when:
   author: pool
   labels: {all: [needs-review]}
@@ -399,8 +409,9 @@ Rules are checked strictly when they load:
 - the floors: `attempts.max` and `give-up.attempts` at most 10, a cooldown
   at least 1m - a rule cannot loop on an item;
 - a placeholder the engine does not fill in where it is used is an error;
-- in a set: unique names; a group's rules on one kind, unique orders, at
-  most one `last`; `before` names a group of the same kind.
+- a rule that takes the item has an `order`; `order` and `exclusive` are
+  only for rules on issues and PRs;
+- in a set: unique names; no two rules on one kind share an `order`.
 
 ---
 
@@ -442,10 +453,10 @@ shows the disagreements per rule (the design's Phase 2b).
 | `fix` | issue | fixes an issue the overseer is pointed at and opens the PR |
 | `workflow` | issue | takes the next step of the workflow an issue names |
 | `stop` | issue | (off: the stop label is an engine gate) drops an item's queued tasks |
-| `inherit-labels` | pr | copies the closing issues' labels onto the PR, before `pr-care` |
+| `inherit-labels` | pr | copies the closing issues' labels onto the PR, ahead of the rules that take it |
 | `adopt-pr` | pr | (off) labels a bot PR no listing finds whose closing issue is the overseer's |
 | `inactive` | pr | (off: no timeout by default) pauses a PR nobody looked at |
-| `comments` ... `ready-unreview` | pr | the `pr-care` group, above |
+| `comments` ... `ready-unreview` | pr | PR care, in [order](#order) |
 | `chore` | schedule | runs a scheduled agent on the repository |
 | `nudge` | event | steps a workflow when an issue it links closes |
 

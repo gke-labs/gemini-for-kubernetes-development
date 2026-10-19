@@ -6,7 +6,7 @@
 # assignees assigned and the pool's bot unassigned. The review is
 # satisfied when the automated reviewer reviewed the head without asking
 # for changes, or no review is wanted (*/review on neither the PR nor an
-# issue it closes). After the care rules in the pr-care group: it holds
+# issue it closes). It takes the item, after the care rules: it holds
 # when none does, and a task of the PR running holds it back
 # (prs/scanner.go evaluate).
 #
@@ -15,7 +15,8 @@
 name: ready
 description: Hand a ready PR to the humans
 on: pr
-group: {name: pr-care, order: 50}
+order: 50
+exclusive: true
 when:
   author: pool
   labels: {none: ["*/ready-for-human"]}

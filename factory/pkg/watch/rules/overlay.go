@@ -24,7 +24,7 @@ const (
 //	name: review
 //	enabled: false
 func (r *Rule) IsToggle() bool {
-	return r.Enabled != nil && r.On == "" && r.Group == nil && r.As == "" && len(r.Expect) == 0 &&
+	return r.Enabled != nil && r.On == "" && r.Order == 0 && r.Exclusive == nil && r.As == "" && len(r.Expect) == 0 &&
 		reflect.ValueOf(r.When).IsZero() && reflect.ValueOf(r.Run).IsZero() && reflect.ValueOf(r.Policy).IsZero()
 }
 

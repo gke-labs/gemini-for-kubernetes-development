@@ -3,12 +3,12 @@
 # post-replies, api/recipe.go). It runs again on a new head, after a
 # failed run, on a PR assigned to the pool explicitly, or 2h after the
 # last. After 3 attempts since the last commit, trusted human comment or
-# pause it gives up with the stop label (investigationAttempts). Third in
-# the pr-care group (prs/scanner.go evaluate).
+# pause it gives up with the stop label (investigationAttempts). Third of
+# the PR rules that take the item (prs/scanner.go evaluate).
 name: ci
 description: Investigate and fix failing checks
 on: pr
-group: {name: pr-care, order: 30}
+order: 30
 when:
   author: pool
   checks: failing

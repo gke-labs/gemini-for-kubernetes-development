@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -214,45 +215,21 @@ func printWatchRules(out io.Writer, set rules.Set, output string) error {
 		return fmt.Errorf("unknown output format %q (want yaml or json)", output)
 	}
 	w := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(w, "NAME\tON\tGROUP\tRUN\tAS\tPOLICY\tSOURCE\tENABLED")
+	fmt.Fprintln(w, "NAME\tON\tORDER\tRUN\tAS\tPOLICY\tSOURCE\tENABLED")
 	for _, r := range ordered {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", r.Name, r.On, ruleGroup(r), ruleRun(r), orDash(r.As), rulePolicy(r), orDash(r.Source), ruleEnabled(r))
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", r.Name, r.On, ruleOrder(r), ruleRun(r), orDash(r.As), rulePolicy(r), orDash(r.Source), ruleEnabled(r))
 	}
 	return w.Flush()
 }
 
 var ruleOnOrder = map[string]int{rules.OnIssue: 0, rules.OnPR: 1, rules.OnSchedule: 2, rules.OnEvent: 3}
 
-// orderWatchRules orders the rules by what they look at; within that, the
-// rules of no group by name, then each group's rules in the group's order.
+// orderWatchRules orders the rules by what they look at; within that, in
+// the order the engine walks them.
 func orderWatchRules(set rules.Set) []*rules.Rule {
-	groups := set.Groups()
-	var out []*rules.Rule
-	for _, r := range set {
-		if r.Group == nil {
-			out = append(out, r)
-		}
-	}
-	names := make([]string, 0, len(groups))
-	for name := range groups {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	for _, name := range names {
-		out = append(out, groups[name]...)
-	}
+	out := []*rules.Rule(set.Ordered())
 	sort.SliceStable(out, func(i, j int) bool {
-		a, b := out[i], out[j]
-		if ruleOnOrder[a.On] != ruleOnOrder[b.On] {
-			return ruleOnOrder[a.On] < ruleOnOrder[b.On]
-		}
-		if (a.Group == nil) != (b.Group == nil) {
-			return a.Group == nil
-		}
-		if a.Group == nil {
-			return a.Name < b.Name
-		}
-		return a.Group.Name < b.Group.Name
+		return ruleOnOrder[out[i].On] < ruleOnOrder[out[j].On]
 	})
 	return out
 }
@@ -266,15 +243,16 @@ func ruleEnabled(r *rules.Rule) string {
 	return fmt.Sprintf("%t", r.IsEnabled())
 }
 
-func ruleGroup(r *rules.Rule) string {
-	switch {
-	case r.Group == nil:
-		return "-"
-	case r.Group.Last:
-		return r.Group.Name + "/last"
-	default:
-		return fmt.Sprintf("%s/%d", r.Group.Name, r.Group.Order)
+// ruleOrder is the rule's place, and whether it takes the item.
+func ruleOrder(r *rules.Rule) string {
+	order := "-"
+	if r.Order > 0 {
+		order = strconv.Itoa(r.Order)
 	}
+	if r.IsExclusive() {
+		order += " exclusive"
+	}
+	return order
 }
 
 func ruleRun(r *rules.Rule) string {
@@ -322,9 +300,6 @@ func rulePolicy(r *rules.Rule) string {
 			gu += "/" + g.Since.String()
 		}
 		parts = append(parts, gu)
-	}
-	if p.Before != "" {
-		parts = append(parts, "before="+p.Before)
 	}
 	if p.SkipCooldown {
 		parts = append(parts, "skip-cooldown")

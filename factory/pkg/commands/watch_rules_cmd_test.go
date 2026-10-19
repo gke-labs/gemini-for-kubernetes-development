@@ -26,20 +26,20 @@ func runWatchRules(t *testing.T, args ...string) string {
 func TestWatchRulesTable(t *testing.T) {
 	out := runWatchRules(t)
 	lines := strings.Split(strings.TrimSpace(out), "\n")
-	if got := strings.Fields(lines[0]); strings.Join(got, " ") != "NAME ON GROUP RUN AS POLICY SOURCE ENABLED" {
+	if got := strings.Fields(lines[0]); strings.Join(got, " ") != "NAME ON ORDER RUN AS POLICY SOURCE ENABLED" {
 		t.Fatalf("header = %v", got)
 	}
 	var names []string
 	for _, l := range lines[1:] {
 		names = append(names, strings.Fields(l)[0])
 	}
-	// Issues, then PRs (ungrouped, then pr-care in order), then the rest.
-	want := "fix stop workflow adopt-pr inactive inherit-labels comments conflict ci review ready ready-unreview chore nudge"
+	// Issues, then PRs, each in the order the engine walks them, then the rest.
+	want := "workflow fix stop inherit-labels inactive comments conflict ci review ready ready-unreview adopt-pr chore nudge"
 	if strings.Join(names, " ") != want {
 		t.Errorf("rows = %v, want %s", names, want)
 	}
 	for _, sub := range []string{
-		"pr-care/10", "pr-care/50",
+		"10 exclusive", "50 exclusive",
 		"care-comments → post-replies", "fix → open-pr",
 		"dedupe=item cooldown=10m/20m phase=3",
 		"give-up=3/head",
@@ -62,10 +62,13 @@ func TestWatchRulesYAMLAndJSON(t *testing.T) {
 	if len(fromYAML) != 14 || len(fromJSON) != 14 {
 		t.Fatalf("yaml %d rules, json %d", len(fromYAML), len(fromJSON))
 	}
-	if fromYAML[0]["name"] != "fix" || fromJSON[0]["name"] != "fix" {
-		t.Errorf("first rule = %v / %v", fromYAML[0]["name"], fromJSON[0]["name"])
+	if fromYAML[1]["name"] != "fix" || fromJSON[1]["name"] != "fix" {
+		t.Errorf("second rule = %v / %v", fromYAML[1]["name"], fromJSON[1]["name"])
 	}
-	policy := fromJSON[0]["policy"].(map[string]any)
+	if fromJSON[1]["order"] != float64(20) {
+		t.Errorf("fix order = %v", fromJSON[1]["order"])
+	}
+	policy := fromJSON[1]["policy"].(map[string]any)
 	if cd := policy["cooldown"].(map[string]any); cd["success"] != "10m" {
 		t.Errorf("cooldown = %v", cd)
 	}

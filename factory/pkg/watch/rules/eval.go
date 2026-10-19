@@ -165,12 +165,13 @@ func (w Writes) empty() bool {
 //   - a stopped item (the stop label) gets nothing: the stop label is a
 //     gate on every rule;
 //   - only the enabled rules of the item's kind are looked at (the item
-//     is one the watch tracks: the scanners list no others);
-//   - the rules ordered before a group go first, and their label writes
-//     are what the rules after them see;
-//   - every rule of no group decides on its own;
-//   - each group takes its first rule that holds, in order, and none while
-//     a task of the item is active.
+//     is one the watch tracks: the scanners list no others), in order: one
+//     list per kind;
+//   - a rule that takes the item (IsExclusive) is decided only if none
+//     before it was, and none is while a task of the item is active;
+//   - every other rule decides on its own, and its label writes are what
+//     the rules after it see; one that stops the item (inactive, or the
+//     stop label inherited from a closing issue) ends the decision.
 //
 // A rule holds when its predicates do and its policy lets it run: not in
 // its cooldown, not already run on this head when deduped by head. A rule
@@ -195,52 +196,26 @@ func (s Set) Decide(it Item, env Env) []Decision {
 	}
 	var out []Decision
 	labels := slices.Clone(it.Labels)
-	for _, r := range mine {
-		if r.Policy.Before == "" {
+	taken := false
+	for _, r := range mine.Ordered() {
+		exclusive := r.IsExclusive()
+		if exclusive && (taken || it.TaskActive) {
 			continue
 		}
 		cur := it
 		cur.Labels = labels
-		if d, ok := decide(r, cur, env); ok {
-			out = append(out, d)
-			labels = applyLabels(labels, d.Writes)
-		}
-	}
-	it.Labels = labels
-	// A label a rule before the groups wrote may stop the item (the stop
-	// label inherited from a closing issue).
-	if hasLabel(labels, env.Prefixes, "*/stop") {
-		return out
-	}
-	stopped := false
-	for _, r := range mine {
-		if r.Group == nil && r.Policy.Before == "" {
-			if d, ok := decide(r, it, env); ok {
-				out = append(out, d)
-				stopped = stopped || d.Writes.Stop
-			}
-		}
-	}
-	// A rule that stopped the item (inactive) leaves the groups nothing to
-	// do.
-	if stopped {
-		return out
-	}
-	groups := mine.Groups()
-	names := make([]string, 0, len(groups))
-	for name := range groups {
-		names = append(names, name)
-	}
-	slices.Sort(names)
-	for _, name := range names {
-		if it.TaskActive {
+		d, ok := decide(r, cur, env)
+		if !ok {
 			continue
 		}
-		for _, r := range groups[name] {
-			if d, ok := decide(r, it, env); ok {
-				out = append(out, d)
-				break
-			}
+		out = append(out, d)
+		if exclusive {
+			taken = true
+			continue
+		}
+		labels = applyLabels(labels, d.Writes)
+		if d.Writes.Stop || hasLabel(labels, env.Prefixes, "*/stop") {
+			break
 		}
 	}
 	return out
