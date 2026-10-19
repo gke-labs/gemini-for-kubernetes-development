@@ -57,17 +57,71 @@ func newIssueTask(gh *github.Client, opts taskOptions) *api.QueueTask {
 	}
 }
 
-// resolveWorkflow returns the workflow an issue asks for in its description,
-// as the definition's path and its name, or two empty strings when it asks for
-// none. A path naming an ordinary skill or agent prompt rather than a workflow
-// definition counts as none: the issue gets the standard fix.
-func resolveWorkflow(ctx context.Context, gh *github.Client, issue *githubv39.Issue) (string, string) {
+// issueWorkflow is the workflow an issue asks for in its description.
+type issueWorkflow struct {
+	// Path is the definition's path or URL as the issue names it. It is set
+	// whenever the issue names a workflow, including one that is missing.
+	Path string
+	// Name is the workflow's name, which the task file is named after. An
+	// empty Name means the issue gets no workflow run. Once checked, it is
+	// set only for a workflow that was found.
+	Name string
+	// Status is the outcome of checking the definition. It is meaningful only
+	// once checked.
+	Status common.WorkflowStatus
+	// Err explains why the definition could not be loaded, for a workflow
+	// that is missing, unusable or unresolved.
+	Err error
+	// checked reports whether Status has been settled. A workflow named by
+	// convention is identified from its path alone, so that its task name is
+	// known - and the gates keyed on it can run - before its definition is
+	// fetched.
+	checked bool
+}
+
+// identifyWorkflow works out which workflow, if any, an issue asks for in its
+// description, without fetching a definition that is a workflow by naming
+// convention; call check to settle whether that one can be loaded.
+//
+// A path that is not a workflow by convention has to be fetched here, since
+// only its content says whether it is one. A path naming an ordinary skill or
+// agent prompt rather than a workflow definition counts as none: the issue
+// gets the standard fix.
+func identifyWorkflow(ctx context.Context, gh *github.Client, issue *githubv39.Issue) issueWorkflow {
 	workflowPath := common.FindWorkflowPath(issue.GetBody())
-	if workflowPath == "" || !common.IsWorkflowDefinition(ctx, gh, workflowPath) {
-		return "", ""
+	if workflowPath == "" {
+		return issueWorkflow{Status: common.NotAWorkflow, checked: true}
 	}
-	filenameOnly := filepath.Base(workflowPath)
-	return workflowPath, strings.TrimSuffix(filenameOnly, filepath.Ext(filenameOnly))
+	if common.IsWorkflowPathByConvention(workflowPath) {
+		return issueWorkflow{Path: workflowPath, Name: workflowNameFromPath(workflowPath)}
+	}
+	// A path outside the convention can only come back found or not a
+	// workflow: one that cannot be read is not taken to be a workflow.
+	if status, _ := common.CheckWorkflowDefinition(ctx, gh, workflowPath); status == common.WorkflowFound {
+		return issueWorkflow{Path: workflowPath, Name: workflowNameFromPath(workflowPath), Status: status, checked: true}
+	}
+	return issueWorkflow{Status: common.NotAWorkflow, checked: true}
+}
+
+// check settles whether an identified workflow's definition can be loaded, so
+// that the caller can tell the issue's author about a missing one rather than
+// queue a run that can only fail. A workflow already checked is returned as is.
+func (wf issueWorkflow) check(ctx context.Context, gh *github.Client) issueWorkflow {
+	if wf.checked {
+		return wf
+	}
+	status, err := common.CheckWorkflowDefinition(ctx, gh, wf.Path)
+	wf.Status, wf.checked = status, true
+	if status != common.WorkflowFound {
+		wf.Name, wf.Err = "", err
+	}
+	return wf
+}
+
+// workflowNameFromPath names a workflow after its definition's file.
+func workflowNameFromPath(path string) string {
+	filenameOnly := filepath.Base(path)
+	return strings.TrimSuffix(filenameOnly, filepath.Ext(filenameOnly))
 }
 
 // issueTaskFilename names the task file for an issue's standard fix or, given
