@@ -8,6 +8,7 @@
 name: inactive
 description: Pause a PR nobody has looked at
 on: pr
+order: 7
 when:
   author: pool
   inactive-for: "{{pr-inactivity-timeout}}"

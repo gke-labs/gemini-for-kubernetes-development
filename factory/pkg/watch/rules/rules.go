@@ -59,8 +59,16 @@ type Rule struct {
 	// file sets it, and a repository's file of the same name with only a
 	// name and enabled turns factory's rule on or off (IsToggle, Overlay).
 	Enabled *bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
-	// Group makes the rule one of an ordered, exclusive set on an item.
-	Group *Group `yaml:"group,omitempty" json:"group,omitempty"`
+	// Order is the rule's place among the rules on its kind of item,
+	// lower first: one ordered list per kind (Set.Ordered). Unset, the
+	// rule goes after the ordered ones; a rule that takes the item needs
+	// one.
+	Order int `yaml:"order,omitempty" json:"order,omitempty"`
+	// Exclusive is whether the rule takes the item: of the rules that do,
+	// the first in order that holds is the only one decided, and none is
+	// while a task of the item is active. Unset, a recipe rule takes the
+	// item and a rule of GitHub writes does not (IsExclusive).
+	Exclusive *bool `yaml:"exclusive,omitempty" json:"exclusive,omitempty"`
 	// When is the condition: every predicate set must hold.
 	When When `yaml:"when" json:"when"`
 	// Run is the action.
@@ -85,13 +93,17 @@ type Rule struct {
 // IsEnabled reports whether the rule is on.
 func (r *Rule) IsEnabled() bool { return r.Enabled == nil || *r.Enabled }
 
-// Group places a rule in an ordered, exclusive set of rules on one item:
-// the first of the group whose condition holds is taken, none while a task
-// of the item runs, and the rule ordered last holds when no other does.
-type Group struct {
-	Name  string `yaml:"name" json:"name"`
-	Order int    `yaml:"order,omitempty" json:"order,omitempty"`
-	Last  bool   `yaml:"last,omitempty" json:"last,omitempty"`
+// IsExclusive reports whether the rule takes the item: as its file says,
+// else a recipe rule does and a rule of GitHub writes does not. Only a
+// rule on issues or PRs has an item to take.
+func (r *Rule) IsExclusive() bool {
+	if r.On != OnIssue && r.On != OnPR {
+		return false
+	}
+	if r.Exclusive != nil {
+		return *r.Exclusive
+	}
+	return r.Run.Recipe != ""
 }
 
 // Labels matches an item's labels: any of Any, all of All, none of None.
@@ -247,10 +259,6 @@ type Policy struct {
 	// IdentityPin pins the run to the bot that owns the item's sandbox;
 	// unset is on.
 	IdentityPin *bool `yaml:"identity-pin,omitempty" json:"identity-pin,omitempty"`
-	// Before is a group the rule is evaluated ahead of on an item, every
-	// time: its writes are what the group's rules see (inherit-labels
-	// before pr-care).
-	Before string `yaml:"before,omitempty" json:"before,omitempty"`
 	// SkipCooldown queues the rule's task inside the cooldown of the rule
 	// whose task it is (nudge stepping a workflow at once).
 	SkipCooldown bool `yaml:"skip-cooldown,omitempty" json:"skip-cooldown,omitempty"`
@@ -641,30 +649,26 @@ func (r *Rule) Validate() error {
 			return fail("expect %q: want open, head (on pr) or no-linked-pr (on issue)", e)
 		}
 	}
-	if g := r.Group; g != nil {
-		if g.Name == "" {
-			return fail("group needs a name")
-		}
-		if (g.Order > 0) == g.Last {
-			return fail("group %s: give an order above 0 or last, one of them", g.Name)
-		}
+	listed := r.On == OnIssue || r.On == OnPR
+	switch {
+	case r.Order < 0:
+		return fail("order %d: want above 0", r.Order)
+	case !listed && (r.Order != 0 || r.Exclusive != nil):
+		return fail("order and exclusive are for rules on %s or %s", OnIssue, OnPR)
+	case listed && r.IsExclusive() && r.Order == 0:
+		return fail("a rule that takes the item needs an order")
 	}
 	return nil
 }
 
-// Set is a rule set: names unique, groups consistent.
+// Set is a rule set: names unique, orders unique per kind of item.
 type Set []*Rule
 
-// Validate checks every rule and the set: unique names; in a group, one
-// kind of item, unique orders and at most one last rule.
+// Validate checks every rule and the set: unique names, and no two rules
+// on one kind of item in the same place.
 func (s Set) Validate() error {
 	names := map[string]bool{}
-	type member struct {
-		on    string
-		order map[int]string
-		last  string
-	}
-	groups := map[string]*member{}
+	orders := map[string]map[int]string{}
 	for _, r := range s {
 		if err := r.Validate(); err != nil {
 			return err
@@ -673,61 +677,33 @@ func (s Set) Validate() error {
 			return fmt.Errorf("two rules are named %s", r.Name)
 		}
 		names[r.Name] = true
-		if r.Group == nil {
+		if r.Order == 0 {
 			continue
 		}
-		g := groups[r.Group.Name]
-		if g == nil {
-			g = &member{on: r.On, order: map[int]string{}}
-			groups[r.Group.Name] = g
+		if orders[r.On] == nil {
+			orders[r.On] = map[int]string{}
 		}
-		if g.on != r.On {
-			return fmt.Errorf("group %s holds rules on %s and on %s", r.Group.Name, g.on, r.On)
+		if other := orders[r.On][r.Order]; other != "" {
+			return fmt.Errorf("rules %s and %s on %s share order %d", other, r.Name, r.On, r.Order)
 		}
-		switch {
-		case r.Group.Last && g.last != "":
-			return fmt.Errorf("group %s: %s and %s are both last", r.Group.Name, g.last, r.Name)
-		case r.Group.Last:
-			g.last = r.Name
-		case g.order[r.Group.Order] != "":
-			return fmt.Errorf("group %s: %s and %s share order %d", r.Group.Name, g.order[r.Group.Order], r.Name, r.Group.Order)
-		default:
-			g.order[r.Group.Order] = r.Name
-		}
-	}
-	for _, r := range s {
-		if b := r.Policy.Before; b != "" {
-			g := groups[b]
-			switch {
-			case g == nil:
-				return fmt.Errorf("rule %s: policy.before: there is no group %s", r.Name, b)
-			case g.on != r.On:
-				return fmt.Errorf("rule %s: policy.before: group %s holds rules on %s, not %s", r.Name, b, g.on, r.On)
-			case r.Group != nil:
-				return fmt.Errorf("rule %s: policy.before: a rule in a group is ordered by it", r.Name)
-			}
-		}
+		orders[r.On][r.Order] = r.Name
 	}
 	return nil
 }
 
-// Groups are the set's groups, each its rules in order, the last one last,
-// by group name.
-func (s Set) Groups() map[string][]*Rule {
-	out := map[string][]*Rule{}
-	for _, r := range s {
-		if r.Group != nil {
-			out[r.Group.Name] = append(out[r.Group.Name], r)
+// Ordered is the set in order: by order, the rules without one after, by
+// name.
+func (s Set) Ordered() Set {
+	out := slices.Clone(s)
+	sort.SliceStable(out, func(i, j int) bool {
+		a, b := out[i], out[j]
+		if (a.Order == 0) != (b.Order == 0) {
+			return b.Order == 0
 		}
-	}
-	for _, rs := range out {
-		sort.SliceStable(rs, func(i, j int) bool {
-			a, b := rs[i].Group, rs[j].Group
-			if a.Last != b.Last {
-				return b.Last
-			}
+		if a.Order != b.Order {
 			return a.Order < b.Order
-		})
-	}
+		}
+		return a.Name < b.Name
+	})
 	return out
 }

@@ -101,7 +101,7 @@ readiness is what holds when none applies.
 
 ## Proposal
 
-### Rules, groups, sources, plugins
+### Rules, order, sources, plugins
 
 The engine has four kinds of thing.
 
@@ -122,17 +122,23 @@ as: {role: coder}
 policy: {cooldown: {success: 10m, failure: 20m}, phase: 3}
 ```
 
-**Groups** make rules on one item ordered and exclusive: of the rules
-in a group, the first whose condition holds is taken, none while a task
-of the item runs, and the rule ordered `last` holds when none other
-does. A rule says its place itself, as a GitHub Actions workflow names
-its `concurrency` group. PR care is one group:
+**Order** makes the rules on one kind of item one list, and some of
+them exclusive. Each rule says its place itself (`order`). A rule that
+**takes the item** (`exclusive`; a recipe rule unless it says otherwise)
+is decided only if none before it was and no task of the item runs: one
+task at a time per item, in priority order, across every rule. A rule
+that does not (label writes) decides on its own, and its writes are what
+the rules after it see. 2a had named groups (`group: {name, order}`,
+`last`, and `policy.before` to run ahead of one); with one task per item
+wanted across every rule, a group was one implicit lane per kind, and a
+second one only a way round it, so they are flattened into the list. PR
+care is the exclusive part of the PR list:
 
 ```yaml
 # .agents/rules/ci.yaml
 name: ci
 on: pr
-group: {name: pr-care, order: 30}      # comments 10, conflict 20, ci 30, review 40, ready last
+order: 30      # inherit-labels 5, inactive 7, comments 10, conflict 20, ci 30, review 40, ready 50
 when: {checks: failing}
 run: {recipe: care-ci, apply: post-replies}
 as: {role: author}
@@ -311,7 +317,6 @@ policy:
   give-up: {attempts: 3, since: [head, human, pause], then: stop}
   phase: 3              # ordering after the priority label
   identity-pin: true
-  before: pr-care       # evaluated ahead of a group, every time (inherit-labels)
   skip-cooldown: true   # queued inside its task's cooldown (nudge)
 ```
 
@@ -364,7 +369,7 @@ expect: [head]          # recorded when queued, checked before start
 
 Pushes are already safe (the push step leases against the head it last
 pushed); preconditions save the wasted run. With them, one task per
-group per item stays as today's guard against queuing work that the
+item stays as today's guard against queuing work that the
 first task's push will obsolete.
 
 ### Where rules live
@@ -375,7 +380,7 @@ repository's recipes:
 ```
 .agents/
   recipes/<name>.yaml    what to do                         (exists)
-  rules/<name>.yaml      when the overseer does it: a trigger, the recipe, its policy, its group
+  rules/<name>.yaml      when the overseer does it: a trigger, the recipe, its policy, its order
   watch.yaml             optional: the repository's settings, and no rules
 ```
 
@@ -421,11 +426,11 @@ repository's recipes:
   them. A mode that disables issues disables the rules on issues.
 - **The whole picture** is a command, not a file: `factory watch rules
   --url <repo>` prints the effective rules (built-ins merged with the
-  repository's), where each comes from, and each group in order, as
+  repository's), where each comes from, in the order the engine walks them, as
   `factory recipe list --url` does for recipes.
 
 **Why not one file.** The alternative is a single `.agents/watch.yaml`
-holding the settings, the sources, the groups and every rule. The same
+holding the settings, the sources, the order and every rule. The same
 five rules, both ways:
 
 ```
@@ -435,7 +440,7 @@ five rules, both ways:
    prs-assigned:                          │
      github: "is:pr assignee:{{pool}}"    │
      every: 2m                            │
- groups:                                  │ # groups: each rule says its place
+ groups:                                  │ # order: each rule says its place
    - name: pr-care                        │
      rules: [comments, conflict, ci,      │
              review]                      │
@@ -449,13 +454,13 @@ five rules, both ways:
    - name: comments                       │ # rules/comments.yaml
      on: pr                               │ name: comments
      from: [prs-assigned]                 │ on: pr
-     when: {feedback: new-trusted}        │ group: {name: pr-care, order: 10}
+     when: {feedback: new-trusted}        │ order: 10
      run: {recipe: care-comments}         │ when: {feedback: new-trusted}
    - name: ci                             │ run: {recipe: care-comments}
      on: pr                               │ # rules/ci.yaml
      when: {checks: failing}              │ name: ci
      run: {recipe: care-ci}               │ on: pr
-     policy: {give-up: {attempts: 3}}     │ group: {name: pr-care, order: 30}
+     policy: {give-up: {attempts: 3}}     │ order: 30
    - name: review                         │ when: {checks: failing}
      on: pr                               │ run: {recipe: care-ci}
      when: {checks: green,                │ policy: {give-up: {attempts: 3}}
@@ -473,7 +478,7 @@ five rules, both ways:
 |---|---|---|
 | familiar from | Kubernetes manifests, CI config | GitHub Actions (`.github/workflows/*`), `.agents/recipes/*` |
 | everything at once | by reading it | `factory watch rules --url` |
-| order between rules | one list per group | each rule's `group: {name, order}` |
+| order between rules | one list | each rule's `order` |
 | sources | declared, tunable | derived; cadence is the engine's |
 | add or remove a behaviour | edit a shared file | add or delete a file |
 | override one built-in | restate or patch an entry, which drifts | a file of the same name |
@@ -481,10 +486,9 @@ five rules, both ways:
 
 One file's strength, everything in one place, a command gives; its cost,
 every change an edit to a shared file that drifts from the built-ins, is
-structural. One file per rule costs the order of a group spread across
-files as numbers, and only groups have an order (PR care, today): the
-command prints each group in order, and loading refuses two rules of a
-group with the same order.
+structural. One file per rule costs the order spread across files as
+numbers: the command prints the rules in order, and loading refuses two
+rules on one kind with the same order.
 
 A trigger inside the recipe (an `auto:` beside its `on:`) is rejected:
 the same recipe is triggered differently by the overseer, a board's
@@ -531,7 +535,7 @@ its own feature, not each rule's:
 | risk | today | the engine |
 |---|---|---|
 | **its own writes trigger it** (labels, the start assignment, comments, reactions bump `updated_at`; inheritance changes a PR mid-evaluation) | a fix's "updated since" counts from the task's completion; PR rules key on the head; feedback is tracked by reactions; the stop label is re-checked after inheritance | events from the diff ignore the overseer's own writes (by actor); PR rules key on the head; an item is evaluated against one snapshot |
-| **stale work on one item** (decided at head `A`, run after `B`) | `HasActivePRTask`: nothing enqueued while a task of the PR is queued or running | one task per group per item, and preconditions checked at dispatch (The queue) |
+| **stale work on one item** (decided at head `A`, run after `B`) | `HasActivePRTask`: nothing enqueued while a task of the PR is queued or running | one task per item (the rules that take it), and preconditions checked at dispatch (The queue) |
 | **readiness while work is pending** | readiness checks its own conditions and no active task | `ready` evaluates its conditions, never "no rule matched", and none while a task is queued |
 | **counters reset on restart** (the process restarts every 5 minutes) | survives crudely: CI's three strikes are read from the bot's comments, comments' retries and the SHAs from `processed/` | `attempts` from the processed tasks, persisted with the queue; seeded once from the comment counts, so a PR mid-count is not given three more |
 | **a failed read decides** | fails closed: no issue scan without the open-PR cache, no GC pass without its caches, no PR evaluation on a history or checks error | predicates are true, false or unknown; unknown skips the item |
@@ -629,7 +633,7 @@ KCC, calls per pass drop and the tasks enqueued match a week before.
   and an `Env`, no calls, #2000); replay (2a-3: the scanners record each
   decision with its facts behind `rulesRecord`, and `factory watch rules
   replay` runs the rules on the records). In all:
-  the engine, the predicates and groups, and the built-in rules as
+  the engine, the predicates and the order, and the built-in rules as
   prebaked files (`factory/pkg/watch/rules/*.yaml`, embedded), read
   from the start, so there is no rules-in-Go stage to move off later;
   `factory watch rules` lists them; replay tests on recorded KCC

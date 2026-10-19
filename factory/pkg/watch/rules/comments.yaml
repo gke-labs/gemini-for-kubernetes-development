@@ -3,12 +3,12 @@
 # answered by its author and the replies posted (care-comments --apply
 # --action post-replies, api/recipe.go), as often as new feedback comes:
 # one queued task at a time, not once per head. After 3 runs on a head it
-# gives up: the stop label and a pause comment. First in the pr-care
-# group (prs/scanner.go evaluate).
+# gives up: the stop label and a pause comment. First of the PR rules
+# that take the item (prs/scanner.go evaluate).
 name: comments
 description: Answer new trusted feedback on the PR
 on: pr
-group: {name: pr-care, order: 10}
+order: 10
 when:
   author: pool
   any-of:

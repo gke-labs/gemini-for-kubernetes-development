@@ -1,6 +1,7 @@
 package rules
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -31,17 +32,26 @@ func TestBuiltinRulesParseAndValidate(t *testing.T) {
 	}
 }
 
-func TestBuiltinPRCareGroupOrder(t *testing.T) {
+// The PR rules in order, those that take the item marked: the label
+// sync and the pause first, then today's pr-care order.
+func TestBuiltinPROrder(t *testing.T) {
 	set, err := Builtin()
 	if err != nil {
 		t.Fatal(err)
 	}
 	var got []string
-	for _, r := range set.Groups()["pr-care"] {
-		got = append(got, r.Name)
+	for _, r := range set.Ordered() {
+		if r.On != OnPR {
+			continue
+		}
+		name := r.Name
+		if r.IsExclusive() {
+			name += "*"
+		}
+		got = append(got, name)
 	}
-	if want := "comments conflict ci review ready ready-unreview"; strings.Join(got, " ") != want {
-		t.Errorf("pr-care = %v, want %s", got, want)
+	if want := "inherit-labels inactive comments* conflict* ci* review* ready* ready-unreview* adopt-pr"; strings.Join(got, " ") != want {
+		t.Errorf("PR rules = %v, want %s", got, want)
 	}
 }
 
@@ -73,6 +83,7 @@ func TestBuiltinDefaults(t *testing.T) {
 const base = `
 name: r
 on: pr
+order: 1
 when:
   labels: {any: [overseer]}
 run:
@@ -103,8 +114,12 @@ func TestValidateErrors(t *testing.T) {
 		{"cooldown under the floor", base + "policy:\n  cooldown: {failure: 30s}\n", "policy.cooldown 30s is under the floor of 1m"},
 		{"bad duration", base + "policy:\n  cooldown: {success: soon}\n", `"soon" is not a duration`},
 		{"head on issue", strings.Replace(base, "on: pr", "on: issue", 1) + "expect: [head]\n", `expect "head"`},
-		{"group order and last", base + "group: {name: g, order: 1, last: true}\n", "give an order above 0 or last"},
-		{"group neither", base + "group: {name: g}\n", "give an order above 0 or last"},
+		{"group", base + "group: {name: g, order: 1}\n", "field group not found"},
+		{"exclusive without order", strings.Replace(base, "order: 1\n", "", 1), "a rule that takes the item needs an order"},
+		{"writes without order", "name: r\non: pr\nwhen: {labels: {any: [x]}}\nrun: {label: [y]}\n", ""},
+		{"exclusive writes without order", "name: r\non: pr\nexclusive: true\nwhen: {labels: {any: [x]}}\nrun: {label: [y]}\n", "needs an order"},
+		{"negative order", strings.Replace(base, "order: 1", "order: -1", 1), "want above 0"},
+		{"order on event", "name: r\non: event\norder: 1\nwhen: {event: linked-issue-closed}\nrun: {recipe: workflow}\nas: agent\n", "order and exclusive are for rules on issue or pr"},
 		{"event without event", "name: r\non: event\nwhen: {}\nrun: {recipe: workflow}\nas: agent\n", "needs when.event"},
 
 		// from: gone; on and when say which items a rule takes.
@@ -157,23 +172,18 @@ func mustParse(t *testing.T, s string) *Rule {
 }
 
 func TestSetValidate(t *testing.T) {
-	member := func(name, group string) *Rule {
-		return mustParse(t, strings.Replace(base, "name: r", "name: "+name, 1)+group)
+	member := func(name string, order int) *Rule {
+		return mustParse(t, strings.Replace(strings.Replace(base, "name: r", "name: "+name, 1), "order: 1", fmt.Sprintf("order: %d", order), 1))
 	}
 	for _, tc := range []struct {
 		name string
 		set  Set
 		want string
 	}{
-		{"ok", Set{member("a", "group: {name: g, order: 1}\n"), member("b", "group: {name: g, order: 2}\n"), member("c", "group: {name: g, last: true}\n")}, ""},
-		{"duplicate name", Set{member("a", ""), member("a", "")}, "two rules are named a"},
-		{"duplicate order", Set{member("a", "group: {name: g, order: 1}\n"), member("b", "group: {name: g, order: 1}\n")}, "a and b share order 1"},
-		{"two last", Set{member("a", "group: {name: g, last: true}\n"), member("b", "group: {name: g, last: true}\n")}, "a and b are both last"},
-		{"mixed kinds", Set{member("a", "group: {name: g, order: 1}\n"), mustParse(t, "name: b\non: issue\ngroup: {name: g, order: 2}\nwhen: {labels: {any: [x]}}\nrun: {label: [y]}\n")}, "holds rules on pr and on issue"},
-		{"invalid member", Set{member("a", "group: {name: g}\n")}, "rule a: group g: give an order above 0 or last"},
-		{"before a group", Set{member("a", "group: {name: g, order: 1}\n"), member("b", "policy: {before: g}\n")}, ""},
-		{"before no group", Set{member("b", "policy: {before: g}\n")}, "there is no group g"},
-		{"before from a group", Set{member("a", "group: {name: g, order: 1}\n"), member("b", "group: {name: h, order: 1}\npolicy: {before: g}\n")}, "a rule in a group is ordered by it"},
+		{"ok", Set{member("a", 1), member("b", 2)}, ""},
+		{"duplicate name", Set{member("a", 1), member("a", 2)}, "two rules are named a"},
+		{"duplicate order", Set{member("a", 1), member("b", 1)}, "rules a and b on pr share order 1"},
+		{"same order, other kind", Set{member("a", 1), mustParse(t, "name: b\non: issue\norder: 1\nwhen: {labels: {any: [x]}}\nrun: {label: [y]}\n")}, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			err := tc.set.Validate()
@@ -190,16 +200,18 @@ func TestSetValidate(t *testing.T) {
 	}
 }
 
-func TestGroupsOrder(t *testing.T) {
-	r := func(name, group string) *Rule {
-		return mustParse(t, strings.Replace(base, "name: r", "name: "+name, 1)+group)
+func TestOrdered(t *testing.T) {
+	r := func(name string, order int) *Rule {
+		x := mustParse(t, strings.Replace(base, "name: r", "name: "+name, 1))
+		x.Order = order
+		return x
 	}
-	set := Set{r("last", "group: {name: g, last: true}\n"), r("thirty", "group: {name: g, order: 30}\n"), r("ten", "group: {name: g, order: 10}\n")}
+	set := Set{r("none-b", 0), r("thirty", 30), r("none-a", 0), r("ten", 10)}
 	var got []string
-	for _, x := range set.Groups()["g"] {
+	for _, x := range set.Ordered() {
 		got = append(got, x.Name)
 	}
-	if want := "ten thirty last"; strings.Join(got, " ") != want {
+	if want := "ten thirty none-a none-b"; strings.Join(got, " ") != want {
 		t.Errorf("order = %v, want %s", got, want)
 	}
 }
@@ -221,10 +233,10 @@ func TestOverlay(t *testing.T) {
 	repo, err := Load(fstest.MapFS{
 		"review.yaml":   {Data: []byte("name: review\nenabled: false\n")},
 		"inactive.yaml": {Data: []byte("name: inactive\nenabled: true\n")},
-		"ci.yaml": {Data: []byte("name: ci\non: pr\ngroup: {name: pr-care, order: 30}\n" +
+		"ci.yaml": {Data: []byte("name: ci\non: pr\norder: 30\n" +
 			"when: {labels: {any: [\"{{trigger}}\"]}, checks: failing}\nrun: {recipe: care-ci}\nas: author\n" +
 			"policy: {give-up: {attempts: 5}}\n")},
-		"docs.yaml": {Data: []byte("name: docs\non: issue\nwhen: {labels: {any: [docs]}}\nrun: {recipe: fix}\nas: coder\n")},
+		"docs.yaml": {Data: []byte("name: docs\non: issue\norder: 30\nwhen: {labels: {any: [docs]}}\nrun: {recipe: fix}\nas: coder\n")},
 		"README.md": {Data: []byte("not a rule")},
 	})
 	if err != nil {
@@ -262,7 +274,7 @@ func TestOverlay(t *testing.T) {
 
 	for name, files := range map[string]fstest.MapFS{
 		"toggle of a rule factory lacks": {"nope.yaml": {Data: []byte("name: nope\nenabled: false\n")}},
-		"a replacement under the floor": {"ci.yaml": {Data: []byte("name: ci\non: pr\ngroup: {name: pr-care, order: 30}\n" +
+		"a replacement under the floor": {"ci.yaml": {Data: []byte("name: ci\non: pr\norder: 30\n" +
 			"when: {labels: {any: [x]}}\nrun: {recipe: care-ci}\nas: author\npolicy: {give-up: {attempts: 50}}\n")}},
 		"a name only, no enabled": {"review.yaml": {Data: []byte("name: review\n")}},
 	} {

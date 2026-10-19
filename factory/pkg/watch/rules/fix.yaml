@@ -17,6 +17,7 @@
 name: fix
 description: Fix an issue the overseer is pointed at and open the PR
 on: issue
+order: 20
 when:
   fanout-held: false
   linked-pr: none
