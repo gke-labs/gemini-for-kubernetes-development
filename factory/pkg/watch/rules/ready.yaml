@@ -15,7 +15,6 @@
 name: ready
 description: Hand a ready PR to the humans
 on: pr
-from: [labelled, assigned]
 group: {name: pr-care, order: 50}
 when:
   author: pool

@@ -5,7 +5,6 @@
 name: inherit-labels
 description: Copy the closing issues' labels onto the PR
 on: pr
-from: [labelled, assigned]
 when:
   author: pool
   labels: {none: ["*/ready-for-human"]}

@@ -39,23 +39,6 @@ const (
 	OnEvent = "event"
 )
 
-// The listings a rule's items come from (Rule.From).
-const (
-	// FromLabelled is the open items with the trigger label.
-	FromLabelled = "labelled"
-	// FromAssigned is the open items assigned to a bot of the pool.
-	FromAssigned = "assigned"
-	// FromOpenedByWatcher is the open issues the watcher's own login
-	// opened (a workflow's, a chore's, a fan-out's).
-	FromOpenedByWatcher = "opened-by-watcher"
-)
-
-// fromKinds are the listings each kind of rule may come from.
-var fromKinds = map[string][]string{
-	OnIssue: {FromLabelled, FromAssigned, FromOpenedByWatcher},
-	OnPR:    {FromLabelled, FromAssigned},
-}
-
 // Floors a rule's policy cannot go past: a repository's rule that drops its
 // give-up or its cooldown would loop (design: Compared to today).
 const (
@@ -76,11 +59,6 @@ type Rule struct {
 	// file sets it, and a repository's file of the same name with only a
 	// name and enabled turns factory's rule on or off (IsToggle, Overlay).
 	Enabled *bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
-	// From are the listings the rule's items come from, any of them: the
-	// overseer's own ways of being pointed at an item (FromLabelled,
-	// FromAssigned, FromOpenedByWatcher). Unset, the rule's predicates must
-	// narrow the listing themselves.
-	From []string `yaml:"from,omitempty" json:"from,omitempty"`
 	// Group makes the rule one of an ordered, exclusive set on an item.
 	Group *Group `yaml:"group,omitempty" json:"group,omitempty"`
 	// When is the condition: every predicate set must hold.
@@ -512,25 +490,6 @@ func (w When) validate(on string, nested bool) error {
 	return nil
 }
 
-// narrows is whether a listing can find the items the predicates hold for
-// without listing every open item: a set narrows by itself, or every way
-// into it (any-of) does.
-func (w When) narrows() bool {
-	if w.Assignee == "pool" || w.Assignee == "owner" || w.Author != "" || w.OpenedBy != "" ||
-		(w.Labels != nil && (len(w.Labels.Any) > 0 || len(w.Labels.All) > 0)) {
-		return true
-	}
-	if len(w.AnyOf) == 0 {
-		return false
-	}
-	for _, alt := range w.AnyOf {
-		if !alt.narrows() {
-			return false
-		}
-	}
-	return true
-}
-
 // placeholderRe finds a {{name}} in a rule's strings.
 var placeholderRe = regexp.MustCompile(`\{\{[^}]*\}\}`)
 
@@ -615,18 +574,6 @@ func (r *Rule) Validate() error {
 		if err := checkEnum(field, value); err != nil {
 			return fail("%v", err)
 		}
-	}
-	// A rule on issues or PRs is listed from GitHub: it needs a predicate a
-	// listing narrows on, or it would list every open item (design: the
-	// GitHub cost and the repository's rules risks). With any-of, every
-	// way in must narrow.
-	for _, f := range r.From {
-		if !slices.Contains(fromKinds[r.On], f) {
-			return fail("from: %q is not a listing of rules on %s (%s)", f, r.On, strings.Join(fromKinds[r.On], ", "))
-		}
-	}
-	if (r.On == OnIssue || r.On == OnPR) && len(r.From) == 0 && !r.When.narrows() {
-		return fail("give from, or a predicate a listing can narrow on: labels (any or all), assignee (pool or owner), author or opened-by - in every any-of set, if not beside them")
 	}
 	if r.On == OnEvent && r.When.Event == "" {
 		return fail("a rule on events needs when.event")

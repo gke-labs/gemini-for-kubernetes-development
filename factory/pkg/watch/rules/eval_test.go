@@ -67,7 +67,6 @@ func TestDecideIssues(t *testing.T) {
 		{"labelled", issue(nil), "fix run"},
 		{"opened by the watcher, unlabelled (adoption)", issue(func(it *Item) { it.Labels, it.Author = nil, "argus-watcher-bot" }), "fix run"},
 		{"assigned to the pool, unlabelled", issue(func(it *Item) { it.Labels, it.Assignees = nil, []string{"lovelace-coder-bot"} }), "fix run"},
-		{"none of the overseer's", issue(func(it *Item) { it.Labels = []string{"bug"} }), ""},
 		{"an open PR closes it (13173 after #14055)", issue(func(it *Item) { it.LinkedPR = "open" }), ""},
 		{"stopped", issue(func(it *Item) { it.Labels = append(it.Labels, "overseer/stop") }), ""},
 		{"fixed 5m ago: cooldown", issue(func(it *Item) { it.Runs = []PastRun{fixed(5*time.Minute, false)}; it.UpdatedAt = ago(time.Minute) }), ""},
@@ -125,7 +124,6 @@ func TestDecidePRs(t *testing.T) {
 		{"feedback and failing checks: comments first", pr(func(it *Item) { it.Checks, it.NewTrustedFeedback = "failing", true }), "comments run"},
 		{"conflicting", pr(func(it *Item) { m := false; it.Mergeable = &m }), "conflict run"},
 		{"a task running: the group waits", pr(func(it *Item) { it.Checks, it.TaskActive = "failing", true }), ""},
-		{"neither labelled nor assigned", pr(func(it *Item) { it.Labels, it.Assignees = nil, nil }), ""},
 		{"assigned only", pr(func(it *Item) { it.Labels, it.Checks = nil, "failing" }), "ci run"},
 		{"ci 3 times since the head: give up", pr(func(it *Item) {
 			it.Checks = "failing"

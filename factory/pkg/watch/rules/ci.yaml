@@ -9,7 +9,6 @@ name: ci
 description: Investigate and fix failing checks
 on: pr
 group: {name: pr-care, order: 30}
-from: [labelled, assigned]
 when:
   author: pool
   checks: failing

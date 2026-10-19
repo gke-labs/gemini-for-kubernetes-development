@@ -214,9 +214,9 @@ func printWatchRules(out io.Writer, set rules.Set, output string) error {
 		return fmt.Errorf("unknown output format %q (want yaml or json)", output)
 	}
 	w := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(w, "NAME\tON\tFROM\tGROUP\tRUN\tAS\tPOLICY\tSOURCE\tENABLED")
+	fmt.Fprintln(w, "NAME\tON\tGROUP\tRUN\tAS\tPOLICY\tSOURCE\tENABLED")
 	for _, r := range ordered {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", r.Name, r.On, orDash(strings.Join(r.From, ",")), ruleGroup(r), ruleRun(r), orDash(r.As), rulePolicy(r), orDash(r.Source), ruleEnabled(r))
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", r.Name, r.On, ruleGroup(r), ruleRun(r), orDash(r.As), rulePolicy(r), orDash(r.Source), ruleEnabled(r))
 	}
 	return w.Flush()
 }

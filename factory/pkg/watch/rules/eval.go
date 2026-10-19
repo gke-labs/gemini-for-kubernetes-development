@@ -164,8 +164,8 @@ func (w Writes) empty() bool {
 //
 //   - a stopped item (the stop label) gets nothing: the stop label is a
 //     gate on every rule;
-//   - only the enabled rules of the item's kind are looked at, each only
-//     on an item from one of its listings (From);
+//   - only the enabled rules of the item's kind are looked at (the item
+//     is one the watch tracks: the scanners list no others);
 //   - the rules ordered before a group go first, and their label writes
 //     are what the rules after them see;
 //   - every rule of no group decides on its own;
@@ -189,7 +189,7 @@ func (s Set) Decide(it Item, env Env) []Decision {
 	}
 	var mine Set
 	for _, r := range s {
-		if r.On == it.Kind && r.IsEnabled() && fromListing(r, it, env) {
+		if r.On == it.Kind && r.IsEnabled() {
 			mine = append(mine, r)
 		}
 	}
@@ -244,31 +244,6 @@ func (s Set) Decide(it Item, env Env) []Decision {
 		}
 	}
 	return out
-}
-
-// fromListing is whether the item is in one of the rule's listings; a rule
-// with none takes every item of its kind.
-func fromListing(r *Rule, it Item, env Env) bool {
-	if len(r.From) == 0 {
-		return true
-	}
-	for _, f := range r.From {
-		switch f {
-		case FromLabelled:
-			if hasLabel(it.Labels, env.Prefixes, env.Trigger) {
-				return true
-			}
-		case FromAssigned:
-			if anyIn(it.Assignees, env.Pool) {
-				return true
-			}
-		case FromOpenedByWatcher:
-			if env.Watcher != "" && strings.EqualFold(it.Author, env.Watcher) {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 // decide is one rule's decision for the item, if it makes one.

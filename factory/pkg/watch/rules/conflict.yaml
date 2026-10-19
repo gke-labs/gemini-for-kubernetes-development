@@ -6,7 +6,6 @@ name: conflict
 description: Rebase a PR that conflicts with its base
 on: pr
 group: {name: pr-care, order: 20}
-from: [labelled, assigned]
 when:
   author: pool
   mergeable: false

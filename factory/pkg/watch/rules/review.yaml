@@ -11,7 +11,6 @@ name: review
 description: Review a green PR that wants a review
 on: pr
 group: {name: pr-care, order: 40}
-from: [labelled, assigned]
 when:
   author: pool
   checks: green

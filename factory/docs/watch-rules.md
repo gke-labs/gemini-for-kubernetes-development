@@ -47,7 +47,6 @@ factory watch rules --dir .         # with this checkout's .agents/rules/ laid o
 name: fix                    # unique; names the file
 description: Fix an issue the overseer is pointed at and open the PR
 on: issue                    # the kind of item the rule looks at
-from: [labelled, assigned, opened-by-watcher]   # the listings its items come from: any of them
 when:                        # the condition: every predicate set must hold
   fanout-held: false         #   no fan-out holds it back
   linked-pr: none            #   no open PR closes it or is linked to it
@@ -67,8 +66,8 @@ policy:
 expect: [open, no-linked-pr] # checked again when the task is about to start
 ```
 
-Read aloud: *for an issue that is labelled, assigned to the bot pool, or
-opened by the overseer's own login; not held back by a fan-out; with no open
+Read aloud: *for an issue the overseer tracks (see [Which items a rule
+sees](#which-items-a-rule-sees)); not held back by a fan-out; with no open
 PR; naming no workflow; and changed since the last fix that succeeded - once
 the last fix is 10 minutes old (20 after a failure), queue the fix recipe as
 a coder bot, open the PR with the issue's labels when it ends, and drop the
@@ -84,7 +83,6 @@ task if the issue closes or a PR appears before it starts.*
 | `description` | string | What the rule is for, in a line. |
 | `on` | `issue`, `pr`, `schedule`, `event` | The kind of item. `schedule` is an `.agents/` agent definition whose schedule is due; `event` is something the watch derives rather than lists (today `linked-issue-closed`). |
 | `enabled` | `true`, `false`; unset is on | A rule shipped off says `enabled: false`. See [Turning rules on and off](#turning-rules-on-and-off). |
-| `from` | `labelled`, `assigned`; on issues also `opened-by-watcher` | The listings the rule's items come from, any of them. See [`from`](#from-the-listings). |
 | `group` | `{name: <group>, order: <n>}` or `{name: <group>, last: true}` | Makes the rule one of an ordered, exclusive set on an item. See [Groups](#groups). |
 | `when` | predicates | The condition. See [`when`](#when-the-predicates). |
 | `run` | a recipe, or GitHub writes | The action. See [`run`](#run-the-action). |
@@ -94,20 +92,21 @@ task if the issue closes or a PR appears before it starts.*
 
 ---
 
-## `from`: the listings
+## Which items a rule sees
 
-| listing | items |
+The watch tracks a fixed set of open items, from the overseer's settings,
+not from the rules:
+
+| tracked because | items |
 |---|---|
-| `labelled` | open items with the trigger label (`overseer`, or the overseer's own) |
-| `assigned` | open items assigned to a bot of the pool |
-| `opened-by-watcher` | open issues the watcher's own login opened (a workflow's, a chore's, a fan-out's children) |
+| labelled | open issues and PRs with the trigger label (`overseer`, or the overseer's own) |
+| assigned | open issues and PRs assigned to a bot of the pool |
+| opened by the watcher | open issues the watcher's own login opened (a workflow's, a chore's, a fan-out's children) |
 
-An item is looked at only if it came from one of the rule's listings. The
-listings are what the watch's one scan lists, so they are also what keeps a
-rule from looking at every open item. A rule without `from` must narrow the
-listing with a predicate instead: `labels` (`any` or `all`), `assignee:
-pool|owner`, `author` or `opened-by`; in every `any-of` set, if not beside
-them. A rule that narrows nothing is an error.
+A rule sees every tracked item of its `on` kind, and `when` narrows that:
+`labels`, `assignee`, `author`, `opened-by`, in `any-of` if need be. A rule
+cannot widen the set; an item the overseer should look at gets the trigger
+label or a pool assignee.
 
 ---
 
@@ -317,8 +316,8 @@ gathered - it makes no GitHub calls:
 
 1. **Gates on every rule.** An issue or PR with the stop label gets nothing,
    and neither does a PR in the merge queue.
-2. **The rules that apply.** The enabled rules of the item's kind, each only
-   if the item came from one of its `from` listings.
+2. **The rules that apply.** The enabled rules of the item's kind (the item
+   is one the watch tracks).
 3. **Before the groups.** The rules ordered `before` a group decide first;
    their label writes are what the rest see. A stop label written here ends
    the decision.
@@ -376,7 +375,6 @@ A repository rule that asks for a review of every green bot PR labelled
 name: review-on-label
 description: Review a green bot PR labelled needs-review
 on: pr
-from: [labelled, assigned]
 when:
   author: pool
   labels: {all: [needs-review]}
@@ -398,8 +396,6 @@ Rules are checked strictly when they load:
 - `run` is a built-in recipe or GitHub writes, not both, and not neither;
 - a recipe runs as `coder`, `agent`, `reviewer` or `author`; writes are the
   watcher's;
-- a rule on issues or PRs narrows its listing (`from`, or a narrowing
-  predicate);
 - the floors: `attempts.max` and `give-up.attempts` at most 10, a cooldown
   at least 1m - a rule cannot loop on an item;
 - a placeholder the engine does not fill in where it is used is an error;
