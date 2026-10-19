@@ -144,7 +144,22 @@ func (s *Scanner) canInvestigatePR(
 	return state.lastInvestigatedSHA != headSHA ||
 		s.lastInvestigationFailed(filename) ||
 		isExplicitlyAssigned ||
-		time.Since(state.lastInvestigatedTime) > investigationRetryAfter
+		time.Since(s.lastInvestigated(filename, state)) > investigationRetryAfter
+}
+
+// lastInvestigated is when the last investigation of the pull request
+// ended: what investigationRetryAfter counts from. The state's time is
+// when this process queued it (a restart rebuilds it from the processed
+// task's end); the processed task's end, when it is later, is the one to
+// count from - two hours since the failure was last looked at, not since
+// the look was queued. On KCC PR 13982 an investigation queued at 23:16
+// that ended at 23:43 was queued again at 01:17, 1h34m after it ended.
+func (s *Scanner) lastInvestigated(filename string, state prState) time.Time {
+	t := state.lastInvestigatedTime
+	if last := s.queue.GetProcessedTask(filename); last != nil && last.CommitSHA == state.lastInvestigatedSHA && last.CompletedAt.After(t) {
+		t = last.CompletedAt
+	}
+	return t
 }
 
 // investigationAttempts is how many times the watcher has investigated the
@@ -212,7 +227,7 @@ func (s *Scanner) handlePRInvestigate(
 	if state.lastInvestigatedSHA == pc.headSHA &&
 		!s.lastInvestigationFailed(filename) &&
 		!pc.isExplicitlyAssigned &&
-		time.Since(state.lastInvestigatedTime) <= investigationRetryAfter {
+		time.Since(s.lastInvestigated(filename, state)) <= investigationRetryAfter {
 		return true
 	}
 
