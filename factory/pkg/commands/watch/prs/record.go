@@ -15,7 +15,7 @@ import (
 // runHistory is the queue's record of the runs that ended, when it keeps
 // one (the TaskQueueManager does).
 type runHistory interface {
-	RunStarts(filename string) []time.Time
+	EndedRuns(filename string) []api.EndedRun
 }
 
 // prTaskRules are the rules a PR's task files run, by their suffix.
@@ -77,16 +77,16 @@ func (s *Scanner) recordRuns(num int) {
 	h, _ := s.queue.(runHistory)
 	for _, t := range prTaskRules {
 		filename := fmt.Sprintf("task-pr-%d-%s.yaml", num, t.suffix)
-		var starts []time.Time
+		var ended []rules.PastRun
 		if h != nil {
-			starts = h.RunStarts(filename)
+			ended = pastRuns(h.EndedRuns(filename))
 		}
 		var lastStart, lastEnd time.Time
 		failed, head := false, ""
 		if last := s.queue.GetProcessedTask(filename); last != nil {
 			lastStart, lastEnd, failed, head = last.StartedAt, last.CompletedAt, last.Status == api.StatusFailed, last.CommitSHA
 		}
-		runs := rules.PastRuns(t.rule, starts, lastStart, lastEnd, failed, head)
+		runs := rules.PastRuns(t.rule, ended, lastStart, lastEnd, failed, head)
 		queued := s.queue.TaskExists(filename)
 		s.rec.Fill(func(it *rules.Item) {
 			it.Runs = append(it.Runs, runs...)
@@ -106,8 +106,8 @@ func (s *Scanner) recordHistory(pr *githubv39.PullRequest, history *prHistory, h
 	}
 	review := s.automatedReviewOfHead(history.reviews, headSHA, history.lastCommitTime)
 	activity := getLastPRActivityTime(pr, history.comments, history.reviews, history.revCommentsMap, s.cfg.GitHubLogin, s.cfg.AllowlistedBots, s.cfg.TrustedLogins, s.cfg.TriggerLabel)
-	human := humanSpokeAt(history.comments, s.cfg.BotUsers, s.cfg.GitHubLogin, s.cfg.AllowlistedBots, s.cfg.TrustedLogins, s.cfg.TriggerLabel)
-	paused := pausedAt(history.comments, s.cfg.BotUsers, s.cfg.GitHubLogin, s.cfg.TriggerLabel)
+	human := conventions.HumanSpokeAt(history.comments, s.cfg.BotUsers, s.cfg.GitHubLogin, s.cfg.AllowlistedBots, s.cfg.TrustedLogins, s.cfg.TriggerLabel)
+	paused := conventions.PausedAt(history.comments, s.cfg.BotUsers, s.cfg.GitHubLogin, s.cfg.TriggerLabel)
 	s.rec.Fill(func(it *rules.Item) {
 		it.ReviewedAtHead = review != nil
 		it.ChangesRequested = review != nil && review.GetState() == "CHANGES_REQUESTED"
@@ -116,6 +116,15 @@ func (s *Scanner) recordHistory(pr *githubv39.PullRequest, history *prHistory, h
 		it.HumanSpokeAt = human
 		it.PausedAt = paused
 	})
+}
+
+// pastRuns are the queue's ended runs as the rules read them.
+func pastRuns(ended []api.EndedRun) []rules.PastRun {
+	out := make([]rules.PastRun, 0, len(ended))
+	for _, r := range ended {
+		out = append(out, rules.PastRun{StartedAt: r.StartedAt, Failed: r.Failed})
+	}
+	return out
 }
 
 func labelNames(labels []*githubv39.Label) []string {

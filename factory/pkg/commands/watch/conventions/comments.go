@@ -211,3 +211,49 @@ func resolveIfAwaiting(interpreter *ReactionInterpreter, desc string, list func(
 		klog.Warningf("Failed to resolve reaction on %s: %v", desc, err)
 	}
 }
+
+// HumanSpokeAt is when a trusted human, not a pool bot or the watcher,
+// last commented on the issue or pull request (a comment with the ignore
+// prefix is not one), zero if none has: a give-up's "since human".
+func HumanSpokeAt(comments []*githubv39.IssueComment, allBotUsers []string, githubLogin string, bots, trustedLogins []string, triggerLabel string) time.Time {
+	var t time.Time
+	for _, c := range comments {
+		isHuman := !isPoolBot(c.GetUser(), allBotUsers) && !ShouldIgnoreUser(c.GetUser(), githubLogin, bots) &&
+			IsTrustedAuthor(c.GetUser(), c.GetAuthorAssociation(), trustedLogins)
+		if isHuman && !HasIgnorePrefix(c.GetBody(), triggerLabel) && c.GetCreatedAt().After(t) {
+			t = c.GetCreatedAt()
+		}
+	}
+	return t
+}
+
+// PausedAt is when the watcher last put the issue or pull request on hold: its
+// latest comment, or a pool bot's, that attaches the stop label (every
+// give-up and the inactivity pause name the label they attach), zero if
+// none has. Unlike investigationResetTime's pause it does not hang on one
+// give-up's wording.
+func PausedAt(comments []*githubv39.IssueComment, allBotUsers []string, githubLogin, triggerLabel string) time.Time {
+	var t time.Time
+	for _, c := range comments {
+		u := c.GetUser()
+		if !strings.EqualFold(u.GetLogin(), githubLogin) && !isPoolBot(u, allBotUsers) {
+			continue
+		}
+		for _, l := range StopLabels(triggerLabel) {
+			if strings.Contains(c.GetBody(), "`"+l+"`") && c.GetCreatedAt().After(t) {
+				t = c.GetCreatedAt()
+			}
+		}
+	}
+	return t
+}
+
+// isPoolBot is whether u is one of the pool's bots.
+func isPoolBot(u *githubv39.User, allBotUsers []string) bool {
+	for _, bot := range allBotUsers {
+		if strings.EqualFold(u.GetLogin(), bot) {
+			return true
+		}
+	}
+	return false
+}

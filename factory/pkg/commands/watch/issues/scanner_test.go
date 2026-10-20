@@ -30,6 +30,14 @@ type fakeQueue struct {
 	removed   []int
 	// cooldowns are the tasks noted as held back, by file name.
 	cooldowns map[string]api.Cooldown
+	// ended are the runs that ended, by file name (runHistory).
+	ended map[string][]api.EndedRun
+}
+
+func (q *fakeQueue) EndedRuns(filename string) []api.EndedRun {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return q.ended[filename]
 }
 
 func newFakeQueue() *fakeQueue {

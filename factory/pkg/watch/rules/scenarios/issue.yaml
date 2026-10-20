@@ -34,3 +34,46 @@ item:
   updatedAt: 2026-10-20T09:00:00Z
   runs: [{rule: fix, startedAt: 2026-10-20T10:00:00Z, endedAt: 2026-10-20T10:30:00Z}]
 expect: []
+---
+name: a fix that failed 3 times gives up (the stop label and a comment)
+env: {now: 2026-10-20T12:00:00Z}
+item:
+  kind: issue
+  number: 107
+  labels: [overseer]
+  author: someone
+  updatedAt: 2026-10-20T08:00:00Z
+  runs:
+    - {rule: fix, startedAt: 2026-10-20T09:00:00Z, endedAt: 2026-10-20T09:20:00Z, failed: true}
+    - {rule: fix, startedAt: 2026-10-20T10:00:00Z, endedAt: 2026-10-20T10:20:00Z, failed: true}
+    - {rule: fix, startedAt: 2026-10-20T11:00:00Z, endedAt: 2026-10-20T11:20:00Z, failed: true}
+expect: [fix give-up]
+---
+name: a human's comment after the failures starts the count again
+env: {now: 2026-10-20T12:00:00Z}
+item:
+  kind: issue
+  number: 108
+  labels: [overseer]
+  author: someone
+  updatedAt: 2026-10-20T10:40:00Z
+  humanSpokeAt: 2026-10-20T10:40:00Z
+  runs:
+    - {rule: fix, startedAt: 2026-10-20T09:00:00Z, endedAt: 2026-10-20T09:20:00Z, failed: true}
+    - {rule: fix, startedAt: 2026-10-20T10:00:00Z, endedAt: 2026-10-20T10:20:00Z, failed: true}
+    - {rule: fix, startedAt: 2026-10-20T11:00:00Z, endedAt: 2026-10-20T11:20:00Z, failed: true}
+expect: [fix run]
+---
+name: "a fix that succeeded in between: 2 failures, not 3, no give-up"
+env: {now: 2026-10-20T12:00:00Z}
+item:
+  kind: issue
+  number: 109
+  labels: [overseer]
+  author: someone
+  updatedAt: 2026-10-20T10:30:00Z
+  runs:
+    - {rule: fix, startedAt: 2026-10-20T09:00:00Z, endedAt: 2026-10-20T09:20:00Z, failed: true}
+    - {rule: fix, startedAt: 2026-10-20T10:00:00Z, endedAt: 2026-10-20T10:20:00Z}
+    - {rule: fix, startedAt: 2026-10-20T11:00:00Z, endedAt: 2026-10-20T11:20:00Z, failed: true}
+expect: [fix run]

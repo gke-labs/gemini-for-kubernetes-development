@@ -68,4 +68,15 @@ func TestRunsSince(t *testing.T) {
 	if got := mgr.RunsSince(name, now.Add(-2*time.Hour)); got != 2 {
 		t.Errorf("runs in the last 2h after one more ended and one was dropped = %d, want 2", got)
 	}
+
+	// The runs keep their outcomes, oldest first: the journal's, then the
+	// one that ended now.
+	ended := mgr.EndedRuns(name)
+	var outcomes []bool
+	for _, r := range ended {
+		outcomes = append(outcomes, r.Failed)
+	}
+	if len(outcomes) != 3 || outcomes[0] || !outcomes[1] || !outcomes[2] {
+		t.Errorf("ended runs failed = %v, want [false true true]", outcomes)
+	}
 }

@@ -276,16 +276,18 @@ func (w *Watcher) prListings() prs.Listings {
 // that queues workflow runs on its behalf shares.
 func (w *Watcher) issueScannerConfig() issues.Config {
 	return issues.Config{
-		Interval:       issues.DefaultInterval,
-		SweepInterval:  issues.DefaultSweepInterval,
-		TriggerLabel:   w.triggerLabel,
-		TargetAssignee: w.targetAssignee,
-		GitHubLogin:    w.githubLogin,
-		BotUsers:       w.allBotUsers,
-		ScanLimit:      w.ScanLimit,
-		MinNumber:      w.minIssueNumber(),
-		PrimeOpenPRs:   !w.prsEnabled(),
-		DryRun:         w.loopDryRun(w.IssueMode),
+		Interval:        issues.DefaultInterval,
+		SweepInterval:   issues.DefaultSweepInterval,
+		TriggerLabel:    w.triggerLabel,
+		TargetAssignee:  w.targetAssignee,
+		GitHubLogin:     w.githubLogin,
+		BotUsers:        w.allBotUsers,
+		AllowlistedBots: w.allowlistedBots(),
+		TrustedLogins:   w.cfg.TrustedLogins(),
+		ScanLimit:       w.ScanLimit,
+		MinNumber:       w.minIssueNumber(),
+		PrimeOpenPRs:    !w.prsEnabled(),
+		DryRun:          w.loopDryRun(w.IssueMode),
 	}
 }
 

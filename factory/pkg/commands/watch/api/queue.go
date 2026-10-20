@@ -185,6 +185,13 @@ type JournalEvent struct {
 	DurationSecond   float64       `json:"durationSeconds,omitempty"`
 }
 
+// EndedRun is a run of a task that ended, as the queue's journal keeps it:
+// when it started and whether it failed.
+type EndedRun struct {
+	StartedAt time.Time
+	Failed    bool
+}
+
 // IsPRTask reports whether a given task type corresponds to an automated PR task.
 func IsPRTask(taskType TaskType) bool {
 	switch taskType {

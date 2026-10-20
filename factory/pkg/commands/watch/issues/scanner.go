@@ -143,6 +143,10 @@ type Config struct {
 	GitHubLogin string
 	// BotUsers is the pool of bot accounts whose assigned issues are scanned.
 	BotUsers []string
+	// AllowlistedBots and TrustedLogins tell a trusted human's comment from
+	// the others, as on a pull request: where a give-up's count starts.
+	AllowlistedBots []string
+	TrustedLogins   []string
 	// ScanLimit caps the page size of the fast queries. Defaults to defaultScanLimit.
 	ScanLimit int
 	// MinNumber skips issues numbered below it, which is how a deployment
@@ -582,13 +586,22 @@ func (s *Scanner) queueTask(ctx context.Context, issue *githubv39.Issue, refIssu
 	// The scanner's own answer here is yes: the record keeps it beside the
 	// engine's, so a veto shows in the shadow instead of agreeing with
 	// itself.
+	// An engine's give-up stops the issue instead: the rule has run its
+	// failed attempts out since a human last spoke on it or it was last
+	// paused.
 	if s.rec != nil && s.rules.Takes(rule, labelNames(issue.Labels)) {
 		s.rec.Handed(rule, true)
-	}
-	if s.rec != nil && s.rules.Takes(rule, labelNames(issue.Labels)) &&
-		!rules.Decided(s.rules.Decide(*s.rec.Item, s.rulesEnv()), rule) {
-		klog.Infof("Skipping issue #%d: the rules engine does not decide %s", num, rule)
-		return
+		s.recordSpoken(ctx, num)
+		d, ok := decisionOf(s.rules.Decide(*s.rec.Item, s.rulesEnv()), rule)
+		switch {
+		case !ok:
+			klog.Infof("Skipping issue #%d: the rules engine does not decide %s", num, rule)
+			return
+		case d.Outcome == rules.OutcomeGiveUp:
+			s.rec.Decided(rule, rules.OutcomeGiveUp)
+			s.giveUp(ctx, num, rule, d.Writes.Comment)
+			return
+		}
 	}
 	s.rec.Decided(rule, rules.OutcomeRun)
 	if s.cfg.DryRun {
@@ -697,6 +710,32 @@ func (s *Scanner) stopForUnavailableWorkflow(ctx context.Context, num int, wf is
 	}
 	if err := s.gh.AddComment(ctx, num, unavailableWorkflowComment(wf, stopLabel)); err != nil {
 		klog.Errorf("Failed to comment on issue #%d about its unavailable workflow: %v", num, err)
+	}
+}
+
+// giveUp stops an issue whose rule the engine gave up on: the stop label,
+// the issue's queued tasks dropped, and the rule's comment, which names the
+// label (what PausedAt reads as the pause a later count starts from).
+func (s *Scanner) giveUp(ctx context.Context, num int, rule, comment string) {
+	stopLabel := conventions.StopLabel(s.cfg.TriggerLabel)
+	if comment == "" {
+		comment = fmt.Sprintf("Pausing: the %s rule has run out of attempts.", rule)
+	}
+	body := fmt.Sprintf("🤖 %s I have attached the `%s` label to pause automated processing.\n\nTo try again, remove the `%s` label (and say what to do differently in a comment).", comment, stopLabel, stopLabel)
+	if s.cfg.DryRun {
+		fmt.Printf("[DRYRUN] Would add label '%s' to issue #%d and comment: %s\n", stopLabel, num, body)
+		return
+	}
+	klog.Infof("Stopping issue #%d: the rules engine gives up on %s", num, rule)
+	if err := s.gh.AddLabels(ctx, num, []string{stopLabel}); err != nil {
+		klog.Errorf("Failed to add stop label '%s' to issue #%d: %v", stopLabel, num, err)
+		return
+	}
+	if err := s.queue.RemovePendingTasksForNumber(num); err != nil {
+		klog.Warningf("Failed to withdraw pending tasks for issue #%d: %v", num, err)
+	}
+	if err := s.gh.AddComment(ctx, num, body); err != nil {
+		klog.Errorf("Failed to comment on issue #%d that %s gives up: %v", num, rule, err)
 	}
 }
 

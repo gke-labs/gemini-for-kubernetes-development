@@ -3,9 +3,11 @@ package issues
 import (
 	"context"
 	"fmt"
+	"slices"
 	"time"
 
 	githubv39 "github.com/google/go-github/v39/github"
+	"k8s.io/klog/v2"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/api"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/conventions"
@@ -15,7 +17,7 @@ import (
 // runHistory is the queue's record of the runs that ended, when it keeps
 // one (the TaskQueueManager does).
 type runHistory interface {
-	RunStarts(filename string) []time.Time
+	EndedRuns(filename string) []api.EndedRun
 }
 
 // rulesEnv is the overseer's side of a rules decision, as the scanner sees
@@ -54,17 +56,54 @@ func (s *Scanner) recordRuns(rule, filename string) {
 	if s.rec == nil {
 		return
 	}
-	var starts []time.Time
+	var ended []rules.PastRun
 	if h, ok := s.queue.(runHistory); ok {
-		starts = h.RunStarts(filename)
+		ended = pastRuns(h.EndedRuns(filename))
 	}
 	var lastStart, lastEnd time.Time
 	failed := false
 	if last := s.queue.GetProcessedTask(filename); last != nil {
 		lastStart, lastEnd, failed = last.StartedAt, last.CompletedAt, last.Status == api.StatusFailed
 	}
-	runs := rules.PastRuns(rule, starts, lastStart, lastEnd, failed, "")
+	runs := rules.PastRuns(rule, ended, lastStart, lastEnd, failed, "")
 	s.rec.Fill(func(it *rules.Item) { it.Runs = append(it.Runs, runs...) })
+}
+
+// recordSpoken adds when a trusted human last spoke on the issue and when
+// the watcher last paused it: where a give-up's count starts. Only an issue
+// with a failed run has a count to start; the others are spared reading
+// its comments.
+func (s *Scanner) recordSpoken(ctx context.Context, num int) {
+	if s.rec == nil || !slices.ContainsFunc(s.rec.Item.Runs, func(r rules.PastRun) bool { return r.Failed }) {
+		return
+	}
+	comments, err := s.gh.ListIssueComments(ctx, num)
+	if err != nil {
+		klog.Warningf("Reading the comments of issue #%d for its give-up: %v", num, err)
+		return
+	}
+	human := conventions.HumanSpokeAt(comments, s.cfg.BotUsers, s.cfg.GitHubLogin, s.cfg.AllowlistedBots, s.cfg.TrustedLogins, s.cfg.TriggerLabel)
+	paused := conventions.PausedAt(comments, s.cfg.BotUsers, s.cfg.GitHubLogin, s.cfg.TriggerLabel)
+	s.rec.Fill(func(it *rules.Item) { it.HumanSpokeAt, it.PausedAt = human, paused })
+}
+
+// decisionOf is the decision on rule among ds, if there is one.
+func decisionOf(ds []rules.Decision, rule string) (rules.Decision, bool) {
+	for _, d := range ds {
+		if d.Rule == rule {
+			return d, true
+		}
+	}
+	return rules.Decision{}, false
+}
+
+// pastRuns are the queue's ended runs as the rules read them.
+func pastRuns(ended []api.EndedRun) []rules.PastRun {
+	out := make([]rules.PastRun, 0, len(ended))
+	for _, r := range ended {
+		out = append(out, rules.PastRun{StartedAt: r.StartedAt, Failed: r.Failed})
+	}
+	return out
 }
 
 func labelNames(labels []*githubv39.Label) []string {

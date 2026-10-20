@@ -41,7 +41,7 @@ func TestWatchRulesTable(t *testing.T) {
 	for _, sub := range []string{
 		"10 exclusive", "50 exclusive",
 		"care-comments → post-replies", "fix → open-pr",
-		"dedupe=update cooldown=10m/20m phase=3",
+		"dedupe=update cooldown=10m/20m give-up=3/human+pause phase=3",
 		"give-up=3/head",
 	} {
 		if !strings.Contains(out, sub) {

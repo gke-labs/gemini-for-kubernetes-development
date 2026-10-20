@@ -50,12 +50,17 @@ func TestRecorderAppendsAndRollsOver(t *testing.T) {
 func TestPastRuns(t *testing.T) {
 	t0 := now.Add(-3 * time.Hour)
 	starts := []time.Time{t0, t0.Add(time.Hour), t0.Add(2 * time.Hour)}
-	runs := PastRuns("ci", starts, starts[2], starts[2].Add(10*time.Minute), true, "h2")
+	ended := []PastRun{{StartedAt: starts[0], Failed: true}, {StartedAt: starts[1]}, {StartedAt: starts[2]}}
+	runs := PastRuns("ci", ended, starts[2], starts[2].Add(10*time.Minute), true, "h2")
 	if len(runs) != 3 || !runs[2].Failed || runs[2].Head != "h2" || !runs[2].EndedAt.Equal(starts[2].Add(10*time.Minute)) {
 		t.Errorf("runs = %+v", runs)
 	}
+	// The journal's outcomes are kept for the earlier runs, not only the last.
+	if !runs[0].Failed || runs[1].Failed || runs[0].Rule != "ci" {
+		t.Errorf("earlier runs = %+v", runs[:2])
+	}
 	// The last run newer than the journal's: added.
-	if runs := PastRuns("ci", starts[:2], starts[2], starts[2].Add(time.Minute), false, ""); len(runs) != 3 {
+	if runs := PastRuns("ci", ended[:2], starts[2], starts[2].Add(time.Minute), false, ""); len(runs) != 3 {
 		t.Errorf("runs = %+v", runs)
 	}
 	// No journal: the last run alone; nothing at all: none.
