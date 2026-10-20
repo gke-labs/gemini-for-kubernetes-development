@@ -35,6 +35,8 @@ List the rules, with a checkout's `.agents/rules/` laid over factory's:
 factory watch rules                 # table: NAME ON ORDER RUN AS POLICY SOURCE ENABLED
 factory watch rules -o yaml         # every rule, whole
 factory watch rules --dir .         # with this checkout's .agents/rules/ laid over
+factory watch rules --flow          # how the PR rules are applied, top to bottom (or: --flow issue)
+factory watch rules explain <URL>   # one PR or issue through the rules, rule by rule
 ```
 
 ---
@@ -441,6 +443,42 @@ Rules are checked strictly when they load:
 - a rule that takes the item has an `order`; `order` and `exclusive` are
   only for rules on issues and PRs;
 - in a set: unique names; no two rules on one kind share an `order`.
+
+---
+
+## Seeing how the rules apply
+
+`factory watch rules --flow [pr|issue|schedule|event]` draws a kind's rules
+in the order the engine walks them: the gates, then each rule with its
+`when`, what holds it back (`held`: dedupe and cooldown), its give-up, and
+what it does. `●` marks the rules that take the item.
+
+`factory watch rules explain <PR or issue URL>` walks one item through the
+rules and says, for each, what it decides or why not:
+
+```
+PR o/r#7  (facts the overseer's record of 2026-10-19T13:00:00Z)
+facts   author ada-coder-bot · labels overseer · head abc1234 · checks failing · mergeable true · …
+
+  5   inherit-labels  ⏸  held: its writes would change nothing
+  7   inactive        ✗  inactive-for: '{{pr-inactivity-timeout}}' (has no inactivity timeout set)
+ 10 ● comments        ✗  any-of: [{feedback: new-trusted}, {last-run: failed}]
+ 20 ● conflict        ✗  mergeable: false (has mergeable true)
+ 30 ● ci              ✓  run care-ci → post-replies
+ 40 ● review          –  skipped: ci took the item
+
+decides ci run
+```
+
+`✓` decided, `✗` a predicate of its `when` failed (with what the item has),
+`⏸` its policy held it back, `–` skipped (off, a task active, an earlier
+rule took the item). By default the facts are read live, as today's scanner
+reads them, with a GitHub client that refuses every write and the
+overseer's settings from the flags (`--pool`, `--watcher`, `--trigger`,
+`--inactivity`); the run history behind cooldowns and give-ups is the
+overseer's, so `--record decisions.jsonl` explains the overseer's own last
+record of the item instead, history and settings included. `-o json` gives
+the record and the explanation.
 
 ---
 

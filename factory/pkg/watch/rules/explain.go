@@ -1,0 +1,356 @@
+package rules
+
+import (
+	"fmt"
+	"reflect"
+	"slices"
+	"strings"
+	"time"
+
+	"gopkg.in/yaml.v3"
+)
+
+// Step is one rule's part in what the set decides for an item: it decided
+// (Decision), was not looked at (Skipped), its condition did not hold
+// (Failed), or its policy held it back (Held).
+type Step struct {
+	Rule      string `json:"rule"`
+	Exclusive bool   `json:"exclusive,omitempty"`
+	// Decision is what the rule decided, when it did.
+	Decision *Decision `json:"decision,omitempty"`
+	// Skipped says why the rule was not looked at: it is off, a task of
+	// the item is active, an earlier rule took the item, its own task is
+	// queued, or the walk ended before it.
+	Skipped string `json:"skipped,omitempty"`
+	// Failed are the predicates of its when that do not hold, each with
+	// what the item has.
+	Failed []string `json:"failed,omitempty"`
+	// Held says why its policy held it back, its when holding.
+	Held string `json:"held,omitempty"`
+	// Ends is set on a rule whose writes stop the item: the walk ends.
+	Ends bool `json:"ends,omitempty"`
+}
+
+// Explanation is what the set decides for an item, rule by rule.
+type Explanation struct {
+	// Gate is the engine's gate that kept every rule off the item, when
+	// one did: "has the stop label", "is in the merge queue".
+	Gate  string `json:"gate,omitempty"`
+	Steps []Step `json:"steps"`
+}
+
+// Decisions are the decisions of the explanation's steps, in order.
+func (e Explanation) Decisions() []Decision {
+	var out []Decision
+	for _, st := range e.Steps {
+		if st.Decision != nil {
+			out = append(out, *st.Decision)
+		}
+	}
+	return out
+}
+
+// Explain is Decide, rule by rule: every rule on the item's kind, in the
+// order the engine walks them, with what it decided or why it did not.
+// Decide is Explain's decisions, so the two cannot disagree.
+func (s Set) Explain(it Item, env Env) Explanation {
+	var ex Explanation
+	if it.Kind == OnIssue || it.Kind == OnPR {
+		if hasLabel(it.Labels, env.Prefixes, "*/stop") {
+			ex.Gate = "has the stop label"
+		}
+	}
+	if ex.Gate == "" && it.Kind == OnPR && it.MergeQueue {
+		ex.Gate = "is in the merge queue"
+	}
+	labels := slices.Clone(it.Labels)
+	taken, ended := "", false
+	for _, r := range s.Ordered() {
+		if r.On != it.Kind {
+			continue
+		}
+		st := Step{Rule: r.Name, Exclusive: r.IsExclusive()}
+		switch {
+		case ex.Gate != "":
+			st.Skipped = "the item " + ex.Gate
+		case !r.IsEnabled():
+			st.Skipped = "off"
+		case ended:
+			st.Skipped = "the walk ended: the stop label"
+		case st.Exclusive && taken != "":
+			st.Skipped = taken + " took the item"
+		case st.Exclusive && it.TaskActive:
+			st.Skipped = "a task of the item is queued or running"
+		default:
+			cur := it
+			cur.Labels = labels
+			st = explainRule(r, cur, env, st)
+		}
+		if d := st.Decision; d != nil {
+			if st.Exclusive {
+				taken = r.Name
+			} else {
+				labels = applyLabels(labels, d.Writes)
+				if d.Writes.Stop || hasLabel(labels, env.Prefixes, "*/stop") {
+					st.Ends, ended = true, true
+				}
+			}
+		}
+		ex.Steps = append(ex.Steps, st)
+	}
+	return ex
+}
+
+// explainRule is one rule's step for the item, the walk having reached it.
+func explainRule(r *Rule, it Item, env Env, st Step) Step {
+	if slices.Contains(it.Queued, r.Name) {
+		st.Skipped = "its task is queued or running"
+		return st
+	}
+	runs := rulesRuns(r.Name, it.Runs)
+	if st.Failed = r.When.failing(r, it, env, runs); len(st.Failed) > 0 {
+		return st
+	}
+	// The give-up is decided on the condition: a rule that would run, but
+	// has run its attempts out.
+	if g := r.Policy.GiveUp; g != nil && countSince(runs, since(g.Since, it)) >= g.Attempts {
+		d := Decision{Rule: r.Name, Kind: it.Kind, Number: it.Number, Outcome: OutcomeGiveUp}
+		d.Writes = Writes{Stop: true, Comment: g.Comment}
+		st.Decision = &d
+		return st
+	}
+	if st.Held = policyHolds(r, it, env, runs); st.Held != "" {
+		return st
+	}
+	d := Decision{Rule: r.Name, Kind: it.Kind, Number: it.Number, Outcome: OutcomeRun}
+	if r.Run.Recipe != "" {
+		d.Recipe, d.Apply = r.Run.Recipe, r.Run.Apply
+		if len(r.Run.Inputs) > 0 {
+			d.Inputs = map[string]string{}
+			for k, v := range r.Run.Inputs {
+				d.Inputs[k] = fillInput(v, it, env)
+			}
+		}
+		st.Decision = &d
+		return st
+	}
+	d.Writes = resolveWrites(r.Run, it, env)
+	if d.Writes.empty() {
+		st.Held = "its writes would change nothing"
+		return st
+	}
+	st.Decision = &d
+	return st
+}
+
+// failing are the predicates of w that do not hold for the item, each as
+// written and with what the item has: each predicate is held on its own,
+// by holds, so a predicate reads the same here as when deciding.
+func (w When) failing(r *Rule, it Item, env Env, runs []PastRun) []string {
+	var out []string
+	v := reflect.ValueOf(w)
+	for i := range v.NumField() {
+		f := v.Field(i)
+		if f.IsZero() {
+			continue
+		}
+		var one When
+		reflect.ValueOf(&one).Elem().Field(i).Set(f)
+		if one.holds(r, it, env, runs) {
+			continue
+		}
+		name, _, _ := strings.Cut(v.Type().Field(i).Tag.Get("yaml"), ",")
+		desc := one.String()
+		if has := factOf(name, it, env, runs); has != "" {
+			desc += " (has " + has + ")"
+		}
+		out = append(out, desc)
+	}
+	return out
+}
+
+// factOf is what the item has for a predicate, as the predicate reads it,
+// or "" when there is nothing short to say.
+func factOf(predicate string, it Item, env Env, runs []PastRun) string {
+	switch predicate {
+	case "labels":
+		if len(it.Labels) == 0 {
+			return "no labels"
+		}
+		return strings.Join(it.Labels, ", ")
+	case "assignee":
+		if len(it.Assignees) == 0 {
+			return "nobody assigned"
+		}
+		return "assigned " + strings.Join(it.Assignees, ", ")
+	case "author", "opened-by":
+		return "author " + orNone(it.Author)
+	case "last-run":
+		last, ok := lastRun(runs)
+		switch {
+		case !ok:
+			return "no run"
+		case last.Failed:
+			return "the last run failed, on " + short(last.Head)
+		}
+		return "the last run succeeded"
+	case "linked-pr":
+		return "linked-pr " + orNone(it.LinkedPR)
+	case "workflow":
+		return "workflow " + orNone(it.Workflow)
+	case "fanout":
+		return fmt.Sprintf("fanout %t", it.FanoutParent)
+	case "checks":
+		if it.Checks == "" {
+			return "checks not read"
+		}
+		return "checks " + it.Checks
+	case "mergeable":
+		if it.Mergeable == nil {
+			return "mergeable not computed yet"
+		}
+		return fmt.Sprintf("mergeable %t", *it.Mergeable)
+	case "feedback":
+		if it.NewTrustedFeedback {
+			return "new trusted feedback"
+		}
+		return "no new feedback"
+	case "closes":
+		var labels []string
+		for _, c := range it.Closes {
+			labels = append(labels, c.Labels...)
+		}
+		if len(labels) == 0 {
+			return "closing issues without labels"
+		}
+		return "closing issues labelled " + strings.Join(labels, ", ")
+	case "reviewed-at-head":
+		return fmt.Sprintf("reviewed-at-head %t", it.ReviewedAtHead)
+	case "changes-requested":
+		return fmt.Sprintf("changes-requested %t", it.ChangesRequested)
+	case "approved":
+		return fmt.Sprintf("approved %t", it.Approved)
+	case "draft":
+		return fmt.Sprintf("draft %t", it.Draft)
+	case "inactive-for":
+		if env.PRInactivityTimeout <= 0 {
+			return "no inactivity timeout set"
+		}
+		if it.LastTrustedActivity.IsZero() {
+			return "no trusted activity read"
+		}
+		return "inactive " + human(env.Now.Sub(it.LastTrustedActivity))
+	case "due":
+		return fmt.Sprintf("due %t", it.Due)
+	case "event":
+		return "event " + orNone(it.Event)
+	}
+	return ""
+}
+
+// policyHolds says why the rule's dedupe or cooldown holds it back now,
+// "" when they let it run.
+func policyHolds(r *Rule, it Item, env Env, runs []PastRun) string {
+	last, ok := lastRun(runs)
+	if !ok {
+		return ""
+	}
+	if r.Policy.Dedupe == "head" && it.Head != "" && last.Head == it.Head && !last.Failed {
+		return "dedupe: head: it already ran on " + short(it.Head)
+	}
+	// Once per update: not again until the item changed after the last run
+	// that succeeded; a failed run says nothing about the item, and retries
+	// once its cooldown is over (the issue scanner's processed times leave
+	// failed tasks out).
+	if r.Policy.Dedupe == "update" {
+		if good, ok := lastRun(slices.DeleteFunc(slices.Clone(runs), func(r PastRun) bool { return r.Failed })); ok && !it.UpdatedAt.After(good.EndedAt) {
+			return "dedupe: update: not updated since its last good run ended " + good.EndedAt.UTC().Format(time.RFC3339)
+		}
+	}
+	c := r.Policy.Cooldown
+	if c == nil {
+		return ""
+	}
+	wait, after := c.Success, "a success"
+	if last.Failed {
+		wait, after = c.Failure, "a failure"
+	}
+	d := wait.Duration
+	if wait.Ref == "{{workflow-cooldown}}" {
+		d = it.WorkflowCooldown
+		if d == 0 {
+			d = defaultWorkflowCooldown
+		}
+	}
+	if d == 0 || env.Now.Sub(last.EndedAt) >= d {
+		return ""
+	}
+	if slices.Contains(c.ResetOn, "head") && it.Head != "" && last.Head != it.Head {
+		return ""
+	}
+	if c.SkipWhen != nil && c.SkipWhen.holds(r, it, env, runs) {
+		return ""
+	}
+	return fmt.Sprintf("cooldown: %s left of %s after %s", human(d-env.Now.Sub(last.EndedAt)), human(d), after)
+}
+
+// String is the condition as a rule file writes it, on one line, any-of
+// last.
+func (w When) String() string {
+	alts := w.AnyOf
+	w.AnyOf = nil
+	s := flow(w)
+	if s == "" && len(alts) == 0 {
+		return ""
+	}
+	if len(alts) > 0 {
+		any := flow(When{AnyOf: alts})
+		if s == "" {
+			return any
+		}
+		s += ", " + any
+	}
+	return s
+}
+
+// flow is v as YAML on one line, without the outer braces.
+func flow(v any) string {
+	var n yaml.Node
+	if err := n.Encode(v); err != nil {
+		return fmt.Sprint(v)
+	}
+	var setFlow func(*yaml.Node)
+	setFlow = func(n *yaml.Node) {
+		if n.Kind == yaml.MappingNode || n.Kind == yaml.SequenceNode {
+			n.Style = yaml.FlowStyle
+		}
+		for _, c := range n.Content {
+			setFlow(c)
+		}
+	}
+	setFlow(&n)
+	b, err := yaml.Marshal(&n)
+	if err != nil {
+		return fmt.Sprint(v)
+	}
+	s := strings.TrimSpace(string(b))
+	return strings.TrimSuffix(strings.TrimPrefix(s, "{"), "}")
+}
+
+// human is a duration to the minute, without zero units: 36m, 2h, 1h12m.
+func human(d time.Duration) string {
+	d = d.Round(time.Minute)
+	if d < time.Minute {
+		return "under a minute"
+	}
+	s := d.String()
+	s = strings.TrimSuffix(s, "0s")
+	return strings.TrimSuffix(s, "h0m") + map[bool]string{true: "h", false: ""}[strings.HasSuffix(s, "h0m")]
+}
+
+func short(sha string) string {
+	if len(sha) > 7 {
+		return sha[:7]
+	}
+	return sha
+}

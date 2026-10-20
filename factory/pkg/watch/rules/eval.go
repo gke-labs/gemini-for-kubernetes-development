@@ -173,84 +173,7 @@ func (w Writes) empty() bool {
 // whose give-up count is reached decides OutcomeGiveUp instead. A rule of
 // GitHub writes decides only when its writes change something.
 func (s Set) Decide(it Item, env Env) []Decision {
-	if it.Kind == OnIssue || it.Kind == OnPR {
-		if hasLabel(it.Labels, env.Prefixes, "*/stop") {
-			return nil
-		}
-	}
-	// A PR in the merge queue is out of the overseer's hands: a push now
-	// would only knock it back out.
-	if it.Kind == OnPR && it.MergeQueue {
-		return nil
-	}
-	var mine Set
-	for _, r := range s {
-		if r.On == it.Kind && r.IsEnabled() {
-			mine = append(mine, r)
-		}
-	}
-	var out []Decision
-	labels := slices.Clone(it.Labels)
-	taken := false
-	for _, r := range mine.Ordered() {
-		exclusive := r.IsExclusive()
-		if exclusive && (taken || it.TaskActive) {
-			continue
-		}
-		cur := it
-		cur.Labels = labels
-		d, ok := decide(r, cur, env)
-		if !ok {
-			continue
-		}
-		out = append(out, d)
-		if exclusive {
-			taken = true
-			continue
-		}
-		labels = applyLabels(labels, d.Writes)
-		if d.Writes.Stop || hasLabel(labels, env.Prefixes, "*/stop") {
-			break
-		}
-	}
-	return out
-}
-
-// decide is one rule's decision for the item, if it makes one.
-func decide(r *Rule, it Item, env Env) (Decision, bool) {
-	if slices.Contains(it.Queued, r.Name) {
-		return Decision{}, false
-	}
-	runs := rulesRuns(r.Name, it.Runs)
-	// The give-up is decided on the rest of the condition: a rule that
-	// would run, but has run its attempts out.
-	if !r.When.holds(r, it, env, runs) {
-		return Decision{}, false
-	}
-	if g := r.Policy.GiveUp; g != nil && countSince(runs, since(g.Since, it)) >= g.Attempts {
-		d := Decision{Rule: r.Name, Kind: it.Kind, Number: it.Number, Outcome: OutcomeGiveUp}
-		d.Writes = Writes{Stop: true, Comment: g.Comment}
-		return d, true
-	}
-	if !policyAllows(r, it, env, runs) {
-		return Decision{}, false
-	}
-	d := Decision{Rule: r.Name, Kind: it.Kind, Number: it.Number, Outcome: OutcomeRun}
-	if r.Run.Recipe != "" {
-		d.Recipe, d.Apply = r.Run.Recipe, r.Run.Apply
-		if len(r.Run.Inputs) > 0 {
-			d.Inputs = map[string]string{}
-			for k, v := range r.Run.Inputs {
-				d.Inputs[k] = fillInput(v, it, env)
-			}
-		}
-		return d, true
-	}
-	d.Writes = resolveWrites(r.Run, it, env)
-	if d.Writes.empty() {
-		return Decision{}, false
-	}
-	return d, true
+	return s.Explain(it, env).Decisions()
 }
 
 // holds is whether every predicate set holds for the item.
@@ -360,51 +283,6 @@ func (w When) holds(r *Rule, it Item, env Env, runs []PastRun) bool {
 		}
 	}
 	return true
-}
-
-// policyAllows is whether the rule's dedupe and cooldown let it run now.
-func policyAllows(r *Rule, it Item, env Env, runs []PastRun) bool {
-	last, ok := lastRun(runs)
-	if !ok {
-		return true
-	}
-	if r.Policy.Dedupe == "head" && it.Head != "" && last.Head == it.Head && !last.Failed {
-		return false
-	}
-	// Once per update: not again until the item changed after the last run
-	// that succeeded; a failed run says nothing about the item, and retries
-	// once its cooldown is over (the issue scanner's processed times leave
-	// failed tasks out).
-	if r.Policy.Dedupe == "update" {
-		if good, ok := lastRun(slices.DeleteFunc(slices.Clone(runs), func(r PastRun) bool { return r.Failed })); ok && !it.UpdatedAt.After(good.EndedAt) {
-			return false
-		}
-	}
-	c := r.Policy.Cooldown
-	if c == nil {
-		return true
-	}
-	wait := c.Success
-	if last.Failed {
-		wait = c.Failure
-	}
-	d := wait.Duration
-	if wait.Ref == "{{workflow-cooldown}}" {
-		d = it.WorkflowCooldown
-		if d == 0 {
-			d = defaultWorkflowCooldown
-		}
-	}
-	if d == 0 || env.Now.Sub(last.EndedAt) >= d {
-		return true
-	}
-	if slices.Contains(c.ResetOn, "head") && it.Head != "" && last.Head != it.Head {
-		return true
-	}
-	if c.SkipWhen != nil && c.SkipWhen.holds(r, it, env, runs) {
-		return true
-	}
-	return false
 }
 
 // defaultWorkflowCooldown is a workflow definition's cooldown when it sets

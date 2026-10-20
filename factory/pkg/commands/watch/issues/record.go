@@ -1,6 +1,8 @@
 package issues
 
 import (
+	"context"
+	"fmt"
 	"time"
 
 	githubv39 "github.com/google/go-github/v39/github"
@@ -79,4 +81,32 @@ func logins(users []*githubv39.User) []string {
 		out = append(out, u.GetLogin())
 	}
 	return out
+}
+
+// Record evaluates one issue, as a scan would, and returns the facts its
+// evaluation recorded: what the rules decide on (factory watch rules
+// explain). It lists the open pull requests itself, as the issue scan reads
+// them from the cache, to tell whether one closes the issue. The scanner
+// should be dry-run: what it would write or queue is no part of the record,
+// and it takes the scanner's recorder for the evaluation.
+func (s *Scanner) Record(ctx context.Context, num int) (*rules.Record, error) {
+	issue, err := s.gh.GetIssue(ctx, num)
+	if err != nil {
+		return nil, err
+	}
+	if issue.PullRequestLinks != nil {
+		return nil, fmt.Errorf("#%d is a pull request, not an issue", num)
+	}
+	prs, err := s.gh.ListOpenPRs(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("listing open pull requests: %w", err)
+	}
+	s.entities.UpdateOpenPRs(prs)
+	var got *rules.Record
+	s.recorder = rules.NewSinkRecorder(func(rec rules.Record) { got = &rec })
+	s.queueTask(ctx, issue, s.entities.GetReferencedIssuesMap())
+	if got == nil {
+		return nil, fmt.Errorf("#%d left no record (below the scanner's number floor?)", num)
+	}
+	return got, nil
 }
