@@ -452,6 +452,9 @@ func (s *Scanner) queueTask(ctx context.Context, issue *githubv39.Issue, refIssu
 			klog.V(2).Infof("Skipping issue #%d: its workflow %s is unavailable and the workflow-missing rule is disabled", num, wf.Path)
 			return
 		}
+		if s.rec != nil && s.rules.Takes("workflow-missing", labelNames(issue.Labels)) {
+			s.rec.Handed("workflow-missing", true)
+		}
 		if s.rec != nil && s.rules.Takes("workflow-missing", labelNames(issue.Labels)) &&
 			!rules.Decided(s.rules.Decide(*s.rec.Item, s.rulesEnv()), "workflow-missing") {
 			klog.Infof("Skipping issue #%d: the rules engine does not decide workflow-missing", num)
@@ -576,6 +579,12 @@ func (s *Scanner) queueTask(ctx context.Context, issue *githubv39.Issue, refIssu
 	// engine, on the facts gathered above, decides it too: it confirms
 	// the scanner's decision (the facts are gathered cheapest first, and
 	// stop at the first that says no).
+	// The scanner's own answer here is yes: the record keeps it beside the
+	// engine's, so a veto shows in the shadow instead of agreeing with
+	// itself.
+	if s.rec != nil && s.rules.Takes(rule, labelNames(issue.Labels)) {
+		s.rec.Handed(rule, true)
+	}
 	if s.rec != nil && s.rules.Takes(rule, labelNames(issue.Labels)) &&
 		!rules.Decided(s.rules.Decide(*s.rec.Item, s.rulesEnv()), rule) {
 		klog.Infof("Skipping issue #%d: the rules engine does not decide %s", num, rule)
