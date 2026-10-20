@@ -514,6 +514,26 @@ decide the same. To compare them:
 Next, shadow mode runs the same comparison live, and the overseer's view
 shows the disagreements per rule (the design's Phase 2b).
 
+3. **Hand rules over, on a canary first.** On the Overseer:
+
+   ```yaml
+   rules:
+     engine: on
+     use: {conflict: engine, ci: engine, review: engine}
+     canaryLabel: overseer/rules-canary
+     canaryPercent: 20
+   ```
+
+   The engine decides those rules only on PRs labelled
+   `overseer/rules-canary`. With `canaryPercent`, the watch labels that share
+   of the pool's PRs itself (the same ones every pass, by number; never one a
+   person took the label off; not one handed to the humans), so the canary
+   is public: `is:pr is:open label:overseer/rules-canary`. Add the label by
+   hand to include a PR. On those PRs the record keeps what the scanner's
+   own condition would have picked, so the overseer's view (`ci by engine N`)
+   and `factory watch rules replay` still compare them, and
+   `factory watch rules explain <PR> --record decisions.jsonl` shows each.
+
 ---
 
 ## The prebaked rules

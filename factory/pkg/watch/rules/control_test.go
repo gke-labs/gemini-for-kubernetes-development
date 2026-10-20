@@ -74,3 +74,56 @@ func TestParseUseAndList(t *testing.T) {
 		t.Errorf("list = %q", got)
 	}
 }
+
+// The canary percent picks the same items every time, about that share of
+// them, and needs a label to put on.
+func TestControlCanary(t *testing.T) {
+	set, _ := Builtin()
+	c, err := NewControl("on", map[string]string{"ci": UseEngine}, "overseer/rules-canary", nil, set)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Canary(7) {
+		t.Error("0%: an item picked")
+	}
+	if err := c.SetCanaryPercent(20); err != nil {
+		t.Fatal(err)
+	}
+	// Another watch, or the next one after a restart, picks the same.
+	again, _ := NewControl("on", map[string]string{"ci": UseEngine}, "overseer/rules-canary", nil, set)
+	if err := again.SetCanaryPercent(20); err != nil {
+		t.Fatal(err)
+	}
+	picked := 0
+	for n := 1; n <= 10000; n++ {
+		got := c.Canary(n)
+		if got {
+			picked++
+		}
+		if again.Canary(n) != got {
+			t.Fatalf("#%d picked by one watch and not the other", n)
+		}
+	}
+	if picked < 1700 || picked > 2300 {
+		t.Errorf("20%% picked %d of 10000", picked)
+	}
+	if err := c.SetCanaryPercent(100); err != nil || !c.Canary(12345) {
+		t.Errorf("100%%: %v, picked %v", err, c.Canary(12345))
+	}
+	if !strings.Contains(c.String(), "the watch labels 100% of them") {
+		t.Errorf("String = %q", c.String())
+	}
+	for _, p := range []int{-1, 101} {
+		if err := c.SetCanaryPercent(p); err == nil {
+			t.Errorf("percent %d accepted", p)
+		}
+	}
+	nolabel, _ := NewControl("on", map[string]string{"ci": UseEngine}, "", nil, set)
+	if err := nolabel.SetCanaryPercent(20); err == nil || !strings.Contains(err.Error(), "needs a canary label") {
+		t.Errorf("no label: %v", err)
+	}
+	var none *Control
+	if err := none.SetCanaryPercent(20); err == nil {
+		t.Error("nil control took a percent")
+	}
+}

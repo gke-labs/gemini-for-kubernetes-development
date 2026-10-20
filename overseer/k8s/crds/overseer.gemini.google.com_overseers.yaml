@@ -110,6 +110,10 @@ spec:
                 properties:
                   canaryLabel:
                     type: string
+                  canaryPercent:
+                    maximum: 100
+                    minimum: 0
+                    type: integer
                   disabled:
                     items:
                       type: string

@@ -604,6 +604,7 @@ spec:
       ci: engine
       comments: legacy
     canaryLabel: overseer/engine   # optional: the engine takes a rule only on items with this label
+    canaryPercent: 20              # optional: the watch puts canaryLabel on 20% of the PRs itself
 ```
 
 - **`off`:** the scanners only, as today; the engine's code ships and
@@ -621,6 +622,15 @@ spec:
 - **`canaryLabel`:** a rule the engine has taken applies only to items
   with the label, so a few chosen issues and PRs go first while the rest
   stay on the scanners.
+- **`canaryPercent`:** the watch picks the canary itself and labels it in
+  public, so it can be filtered on GitHub (`is:pr label:<canaryLabel>`):
+  while evaluating a pool's PR (not stopped, not in the merge queue, not
+  handed to the humans), it adds `canaryLabel` when the PR's number hashes
+  into the percent - the same PRs every pass and after a restart, new ones
+  at the same rate - unless the PR's timeline shows a person took the
+  label off before, which is final. The label goes on the PR the engine
+  is about to see, so it takes the PR that pass. People can still add the
+  label by hand. PRs only for now.
 
 **What says it works:** every task records `decidedBy: legacy|engine`;
 the overseer's view counts, per rule, tasks queued, dropped by a
@@ -766,7 +776,7 @@ so `disabled: [stop]` changes nothing.
   rule is its outcomes.
 - An issue rule on the engine can only lose work: its regressions are
   fixes and workflows that did not happen.
-- `use`, `canaryLabel` and `disabled` reach the watch as `WATCH_RULES_*`
+- `use`, `canaryLabel`, `canaryPercent` and `disabled` reach the watch as `WATCH_RULES_*`
   environment, so changing them restarts the pod (a safe upgrade on
   KCC); the canary label itself is read every scan, so labelling an item
   moves it with no restart.

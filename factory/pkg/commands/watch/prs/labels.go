@@ -2,6 +2,8 @@ package prs
 
 import (
 	"context"
+	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -289,4 +291,46 @@ func (s *Scanner) getMissingHumanAssigneesForPR(prAssignees []*githubv39.User, r
 		}
 	}
 	return missing
+}
+
+// labelCanary puts the rules' canary label on a pull request the rules
+// pick for it (rules.Control.Canary: a share of them, by number) and that
+// lacks it, so the pull requests the engine decides for are public and can
+// be filtered on GitHub. One a person took the label off is never labelled
+// again: its timeline says so. A pull request already handed to the humans
+// is left alone. On success the label is on prIssue for this evaluation,
+// so the engine takes the pull request in the same pass.
+func (s *Scanner) labelCanary(ctx context.Context, prIssue *githubv39.Issue) {
+	num := prIssue.GetNumber()
+	if !s.rules.Canary(num) {
+		return
+	}
+	label := s.rules.CanaryLabel
+	names := labelNames(prIssue.Labels)
+	if slices.ContainsFunc(names, func(l string) bool {
+		return strings.EqualFold(l, label) || isReadyForHumanLabel(l, s.cfg.TriggerLabel)
+	}) {
+		return
+	}
+	timeline, _, err := s.gh.ListIssueTimeline(ctx, num)
+	if err != nil {
+		klog.Warningf("Not labelling PR #%d %s: reading its timeline: %v", num, label, err)
+		return
+	}
+	for _, e := range timeline {
+		if e.GetEvent() == "unlabeled" && strings.EqualFold(e.GetLabel().GetName(), label) {
+			klog.V(2).Infof("Not labelling PR #%d %s: a person took it off", num, label)
+			return
+		}
+	}
+	if s.cfg.DryRun {
+		fmt.Printf("[DRYRUN] Would label PR #%d %s (the rules' canary)\n", num, label)
+		return
+	}
+	if err := s.gh.AddLabels(ctx, num, []string{label}); err != nil {
+		klog.Errorf("Failed to label PR #%d %s: %v", num, label, err)
+		return
+	}
+	klog.Infof("Labelled PR #%d %s: the rules' canary", num, label)
+	prIssue.Labels = append(prIssue.Labels, &githubv39.Label{Name: githubv39.String(label)})
 }

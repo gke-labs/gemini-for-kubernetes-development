@@ -102,6 +102,10 @@ type Flags struct {
 	// handed only on items carrying this label; the rest stay the
 	// scanners'.
 	RulesCanaryLabel string
+	// RulesCanaryPercent has the PR scanner put RulesCanaryLabel on that
+	// share of the pull requests it works on, chosen by number
+	// (rules.Control.Canary).
+	RulesCanaryPercent int
 	// RulesDisabled are rules the watch does not act on at all, through
 	// the scanners or the engine: the operator's emergency switch
 	// ("review,ci").
@@ -237,7 +241,7 @@ func NewWatcher(rootFlags common.RootFlags, flags Flags) *Watcher {
 // is not one) leave the rules off with a warning rather than stop the
 // watch: the scanners alone, every rule on.
 func (w *Watcher) newRulesControl() *rules.Control {
-	if w.RulesEngine == "" && w.RulesUse == "" && w.RulesCanaryLabel == "" && w.RulesDisabled == "" {
+	if w.RulesEngine == "" && w.RulesUse == "" && w.RulesCanaryLabel == "" && w.RulesCanaryPercent == 0 && w.RulesDisabled == "" {
 		return nil
 	}
 	set, err := rules.Builtin()
@@ -249,6 +253,10 @@ func (w *Watcher) newRulesControl() *rules.Control {
 	if err == nil {
 		var c *rules.Control
 		if c, err = rules.NewControl(w.RulesEngine, use, w.RulesCanaryLabel, rules.ParseList(w.RulesDisabled), set); err == nil {
+			if err = c.SetCanaryPercent(w.RulesCanaryPercent); err != nil {
+				klog.Warningf("Watch rules settings: %v; running without the rules", err)
+				return nil
+			}
 			klog.Infof("Watch %s", c)
 			return c
 		}

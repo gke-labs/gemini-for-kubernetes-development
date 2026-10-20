@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -252,5 +253,60 @@ func assertRecorded(t *testing.T, path string, wants ...string) {
 		if !strings.Contains(string(b), w) {
 			t.Errorf("record lacks %s:\n%s", w, b)
 		}
+	}
+}
+
+// The canary: a pull request the rules pick by number gets the canary label,
+// so the engine takes it in the same pass; one a person took the label off,
+// one handed to the humans, or a dry run, does not.
+func TestEvaluate_LabelsTheCanary(t *testing.T) {
+	base, _ := rules.Builtin()
+	control := func(t *testing.T, percent int) *rules.Control {
+		c, err := rules.NewControl("on", map[string]string{"ci": "engine"}, "factory/rules-canary", nil, base)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := c.SetCanaryPercent(percent); err != nil {
+			t.Fatal(err)
+		}
+		return c
+	}
+	removed := []*githubv39.Timeline{{Event: githubv39.String("unlabeled"), Label: &githubv39.Label{Name: githubv39.String("factory/rules-canary")}}}
+	for _, tc := range []struct {
+		name     string
+		percent  int
+		timeline []*githubv39.Timeline
+		ready    bool
+		dryRun   bool
+		want     bool
+	}{
+		{"picked: labelled", 100, nil, false, false, true},
+		{"not picked (0%)", 0, nil, false, false, false},
+		{"a person took it off: not again", 100, removed, false, false, false},
+		{"handed to the humans: left alone", 100, nil, true, false, false},
+		{"dry run: nothing written", 100, nil, false, true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := &prFixture{num: 31, headSHA: "sha-31", updated: time.Now(), pending: true, timeline: tc.timeline, readyForHuman: tc.ready}
+			s, _ := newTestScanner(t, t.TempDir(), testOpts{
+				GitHub: f.start(t), BotUsers: []string{"bot1"}, GitHubLogin: "bot1", TriggerLabel: "factory",
+				Recorder: rules.NewRecorder(filepath.Join(t.TempDir(), "d.jsonl"), 0, nil),
+				Rules:    control(t, tc.percent),
+			})
+			s.cfg.DryRun = tc.dryRun
+			f.mu.Lock()
+			listed := f.listingIssueLocked()
+			f.mu.Unlock()
+			s.evaluate(context.Background(), listed)
+			f.mu.Lock()
+			got := slices.Contains(f.added, "factory/rules-canary")
+			f.mu.Unlock()
+			if got != tc.want {
+				t.Errorf("labelled %v, want %v (added %v)", got, tc.want, f.added)
+			}
+			if inPR := slices.ContainsFunc(listed.Labels, func(l *githubv39.Label) bool { return l.GetName() == "factory/rules-canary" }); inPR != tc.want {
+				t.Errorf("label on the evaluated PR %v, want %v (the engine takes it this pass)", inPR, tc.want)
+			}
+		})
 	}
 }
