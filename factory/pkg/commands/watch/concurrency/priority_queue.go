@@ -179,6 +179,16 @@ func (pq *TaskPriorityQueue) HasActivePRTask(prNumber int) bool {
 	return false
 }
 
+// HasMatching reports whether any task in the queue satisfies predicate.
+func (pq *TaskPriorityQueue) HasMatching(predicate func(filename string, task *api.QueueTask) bool) bool {
+	for fn, node := range pq.byFilename {
+		if predicate(fn, node.task) {
+			return true
+		}
+	}
+	return false
+}
+
 // RemoveMatching removes all tasks satisfying the predicate function and returns their filenames.
 func (pq *TaskPriorityQueue) RemoveMatching(predicate func(filename string, task *api.QueueTask) bool) []string {
 	var matched []string

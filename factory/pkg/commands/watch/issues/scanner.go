@@ -59,6 +59,9 @@ const (
 type Queue interface {
 	// TaskExists reports whether a task with the given file name is queued or running.
 	TaskExists(filename string) bool
+	// HasActiveIssueTask reports whether any task for the issue is queued
+	// or running: its fix or a workflow step, whichever it is.
+	HasActiveIssueTask(number int) bool
 	// Enqueue adds a task to the queue under the given file name.
 	Enqueue(filename string, task *api.QueueTask) error
 	// RemovePendingTasksForNumber drops the not-yet-started tasks targeting an issue.
@@ -416,6 +419,16 @@ func (s *Scanner) queueTask(ctx context.Context, issue *githubv39.Issue, refIssu
 
 	if s.queue.TaskExists(filename) {
 		s.rec.Fill(func(it *rules.Item) { it.Queued = append(it.Queued, rule) })
+		return
+	}
+	// One task per issue at a time, whatever the rule: a fix queued or
+	// running holds back a workflow its edited body now names, and the
+	// other way round (they run in different sandboxes, so nothing else
+	// would keep them apart). The rules hold back the same way
+	// (Item.TaskActive), as for a pull request.
+	if s.queue.HasActiveIssueTask(num) {
+		s.rec.Fill(func(it *rules.Item) { it.TaskActive = true })
+		klog.Infof("Skipping issue #%d: another task of the issue is queued or running", num)
 		return
 	}
 

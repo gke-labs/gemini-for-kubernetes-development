@@ -290,3 +290,42 @@ func TestQueueTask_MissingWorkflowIsARule(t *testing.T) {
 		t.Errorf("disabled: decided %v, labelled %v; want neither", rec.Decided, fake.labels)
 	}
 }
+
+// One task per issue at a time, whatever the rule: a queued fix holds back
+// a workflow its edited body now names, and a queued workflow step holds
+// back a fix once the body no longer names it. The record says a task is
+// active, and the rules then decide nothing either.
+func TestQueueTask_OneTaskPerIssue(t *testing.T) {
+	set, err := rules.Builtin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name, queued, body string
+	}{
+		{"a fix queued, the body now names a workflow", issueTaskFilename(12, ""), "Run this: .agents/workflows/greenfield.md"},
+		{"a workflow step queued, the body no longer names it", issueTaskFilename(12, "greenfield"), "please fix"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := &workflowGitHub{contents: map[string]string{
+				".agents/workflows/greenfield.md": "---\nname: greenfield\nmode: workflow\n---\nprompt\n",
+			}}
+			var rec rules.Record
+			s, queue, _ := newScanner(t, Config{}, Deps{GitHub: fake.client(t),
+				Recorder: rules.NewSinkRecorder(func(r rules.Record) { rec = r })})
+			queue.existing[tc.queued] = true
+
+			s.queueTasks(context.Background(), []*githubv39.Issue{workflowIssue(12, tc.body)}, map[int]bool{})
+
+			if len(queue.enqueued) != 0 {
+				t.Errorf("queued %v beside %s, want nothing", keys(queue.enqueued), tc.queued)
+			}
+			if !rec.Item.TaskActive || len(rec.Decided) != 0 {
+				t.Errorf("record: task active %v, decided %v; want active and nothing", rec.Item.TaskActive, rec.Decided)
+			}
+			if ds := set.Decide(rec.Item, rec.Env); len(ds) != 0 {
+				t.Errorf("the rules decide %+v, want nothing while a task is active", ds)
+			}
+		})
+	}
+}
