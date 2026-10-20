@@ -69,6 +69,17 @@ type OverseerRules struct {
 	// +kubebuilder:validation:Optional
 	CanaryLabel string `json:"canaryLabel,omitempty"`
 
+	// CanaryPercent has the watcher put CanaryLabel on that share of the
+	// pull requests it works on, chosen by number (the same ones every
+	// pass; new ones at the same rate), so the canary is public and can
+	// be filtered on GitHub. A pull request a person took the label off is
+	// never labelled again. 0, the default, labels none; it needs
+	// CanaryLabel.
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=100
+	// +kubebuilder:validation:Optional
+	CanaryPercent int `json:"canaryPercent,omitempty"`
+
 	// Disabled are rules the watcher does not act on at all, through its
 	// scanners or the engine: the operator's emergency switch.
 	// +kubebuilder:validation:Optional

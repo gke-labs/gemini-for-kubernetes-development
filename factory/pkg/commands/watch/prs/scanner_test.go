@@ -1352,6 +1352,10 @@ type prFixture struct {
 	readyForHuman bool
 	// checkErr makes the check-runs listing fail with a 500 error.
 	checkErr bool
+	// timeline is the pull request's timeline.
+	timeline []*githubv39.Timeline
+	// added are the labels the scanner added, in order.
+	added []string
 	// failing makes the head commit's CI report a failed check run.
 	failing bool
 	// comments are the pull request's issue comments.
@@ -1474,7 +1478,19 @@ func (f *prFixture) route(w http.ResponseWriter, r *http.Request) {
 
 	case fmt.Sprintf("%s/issues/%d/labels", base, f.num):
 		// Label reads and writes both land here, and both answer with a list.
+		if r.Method == http.MethodPost {
+			var labels []string
+			_ = json.NewDecoder(r.Body).Decode(&labels)
+			f.added = append(f.added, labels...)
+		}
 		_ = json.NewEncoder(w).Encode([]*githubv39.Label{})
+
+	case fmt.Sprintf("%s/issues/%d/timeline", base, f.num):
+		timeline := f.timeline
+		if timeline == nil {
+			timeline = []*githubv39.Timeline{}
+		}
+		_ = json.NewEncoder(w).Encode(timeline)
 
 	default:
 		// Referenced issue reads, assignee writes and anything else the

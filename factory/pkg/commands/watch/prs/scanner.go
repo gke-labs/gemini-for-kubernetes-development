@@ -530,6 +530,8 @@ func (s *Scanner) evaluate(ctx context.Context, prIssue *githubv39.Issue) {
 		return
 	}
 
+	s.labelCanary(ctx, prIssue)
+
 	// The issues this pull request closes are wanted by the label sync, the
 	// review opt-in check and the review prompt. Resolving them through one
 	// shared fetcher is what stops the same issue being fetched three times in

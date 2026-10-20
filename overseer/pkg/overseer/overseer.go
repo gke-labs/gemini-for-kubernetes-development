@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
@@ -615,8 +616,8 @@ func newOverseerSandboxFromOverseer(o *overseerv1alpha1.Overseer, name, namespac
 }
 
 // rulesEnv is spec.rules for the watcher: WATCH_RULES_ENGINE (when not
-// off), WATCH_RULES_USE (rule=engine,...), WATCH_RULES_CANARY_LABEL and
-// WATCH_RULES_DISABLED, each only when set.
+// off), WATCH_RULES_USE (rule=engine,...), WATCH_RULES_CANARY_LABEL,
+// WATCH_RULES_CANARY_PERCENT and WATCH_RULES_DISABLED, each only when set.
 func rulesEnv(r *overseerv1alpha1.OverseerRules) []interface{} {
 	if r == nil {
 		return nil
@@ -637,6 +638,9 @@ func rulesEnv(r *overseerv1alpha1.OverseerRules) []interface{} {
 	sort.Strings(use)
 	add("WATCH_RULES_USE", strings.Join(use, ","))
 	add("WATCH_RULES_CANARY_LABEL", r.CanaryLabel)
+	if r.CanaryPercent > 0 {
+		add("WATCH_RULES_CANARY_PERCENT", strconv.Itoa(r.CanaryPercent))
+	}
 	add("WATCH_RULES_DISABLED", strings.Join(r.Disabled, ","))
 	return env
 }

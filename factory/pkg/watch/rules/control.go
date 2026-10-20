@@ -2,6 +2,7 @@ package rules
 
 import (
 	"fmt"
+	"hash/fnv"
 	"slices"
 	"sort"
 	"strings"
@@ -34,7 +35,10 @@ type Control struct {
 	Engine      string
 	Use         map[string]string
 	CanaryLabel string
-	Disabled    []string
+	// CanaryPercent is the share of items the watch puts CanaryLabel on
+	// itself (Canary); 0 labels none.
+	CanaryPercent int
+	Disabled      []string
 
 	// set is the rules the engine decides with: the prebaked ones, those
 	// Disabled turned off.
@@ -82,6 +86,33 @@ func NewControl(engine string, use map[string]string, canaryLabel string, disabl
 		return nil, err
 	}
 	return &Control{Engine: engine, Use: use, CanaryLabel: canaryLabel, Disabled: disabled, set: overlaid}, nil
+}
+
+// SetCanaryPercent sets the share of items the watch labels with the
+// canary label: 0 to 100, and only with a canary label to put on.
+func (c *Control) SetCanaryPercent(percent int) error {
+	switch {
+	case percent == 0:
+		return nil
+	case percent < 0 || percent > 100:
+		return fmt.Errorf("rules canary percent %d: want 0 to 100", percent)
+	case c == nil || c.CanaryLabel == "":
+		return fmt.Errorf("rules canary percent %d: needs a canary label to put on", percent)
+	}
+	c.CanaryPercent = percent
+	return nil
+}
+
+// Canary is whether the item numbered number is one the watch puts the
+// canary label on: its number's hash falls in CanaryPercent, so the same
+// items every pass, and new ones at the same rate.
+func (c *Control) Canary(number int) bool {
+	if c == nil || c.CanaryPercent <= 0 || c.CanaryLabel == "" || number <= 0 {
+		return false
+	}
+	h := fnv.New32a()
+	fmt.Fprintf(h, "%d", number)
+	return int(h.Sum32()%100) < c.CanaryPercent
 }
 
 // ParseUse reads "rule=engine,rule=legacy".
@@ -179,6 +210,9 @@ func (c *Control) String() string {
 		s += ", engine decides " + strings.Join(used, ",")
 		if c.CanaryLabel != "" {
 			s += " on items labelled " + c.CanaryLabel
+		}
+		if c.CanaryPercent > 0 {
+			s += fmt.Sprintf(" (the watch labels %d%% of them)", c.CanaryPercent)
 		}
 	}
 	if len(c.Disabled) > 0 {

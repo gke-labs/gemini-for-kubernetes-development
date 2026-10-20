@@ -2,6 +2,7 @@ package common
 
 import (
 	"os"
+	"strconv"
 	"time"
 
 	"k8s.io/klog/v2"
@@ -19,4 +20,14 @@ func GetEnvDuration(key string, defaultValue time.Duration) time.Duration {
 		return defaultValue
 	}
 	return d
+}
+
+// GetEnvInt returns the integer in the environment variable key, or
+// defaultValue when it is unset or not an integer.
+func GetEnvInt(key string, defaultValue int) int {
+	v, err := strconv.Atoi(os.Getenv(key))
+	if err != nil {
+		return defaultValue
+	}
+	return v
 }
