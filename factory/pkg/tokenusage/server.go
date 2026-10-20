@@ -35,6 +35,11 @@ func NewServer(storageRoot string) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
+	return NewServerForStore(store), nil
+}
+
+// NewServerForStore serves an open store.
+func NewServerForStore(store *Store) *Server {
 	s := &Server{store: store, mux: http.NewServeMux()}
 	s.mux.HandleFunc("POST /v1/usage", s.handleIngest)
 	s.mux.HandleFunc("POST /v1/subjects", s.handleSubjectIngest)
@@ -49,7 +54,7 @@ func NewServer(storageRoot string) (*Server, error) {
 	s.mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
-	return s, nil
+	return s
 }
 
 func (s *Server) handleUsageTools(w http.ResponseWriter, r *http.Request) {
