@@ -240,7 +240,7 @@ the engine does not offer. From today's rules:
 | on | predicates |
 |---|---|
 | any item | `labels: {any, all, none}`; `author: pool`; `assignee: pool\|not-pool\|none`; `last-run: failed` (the rule's last run on the item, on its head when deduped by head) |
-| issue | `linked-pr: none\|open`; `workflow: none\|any`; `opened-by: watcher`; `fanout` (a fan-out's parent; a child is an ordinary issue, created only when it is to be worked on) |
+| issue | `linked-pr: none\|open`; `workflow: none\|any\|missing`; `opened-by: watcher`; `fanout` (a fan-out's parent; a child is an ordinary issue, created only when it is to be worked on) |
 | PR | `checks: failing\|pending\|green`; `mergeable`; `feedback: new-trusted\|none`; `closes: {labels}` (the labels of the issues it closes, between them); `reviewed-at-head`; `approved`; `draft`; `inactive-for: <duration>` |
 | sandbox | `item: closed`; `age: <duration>`; `idle: <duration>`; `requires-human` |
 | any | `any-of: [<predicates>, …]` |
