@@ -1406,6 +1406,9 @@ func (f *prFixture) route(w http.ResponseWriter, r *http.Request) {
 	case base + "/pulls":
 		_ = json.NewEncoder(w).Encode([]*githubv39.PullRequest{})
 
+	case fmt.Sprintf("%s/issues/%d", base, f.num):
+		_ = json.NewEncoder(w).Encode(f.listingIssueLocked())
+
 	case fmt.Sprintf("%s/pulls/%d", base, f.num):
 		_ = json.NewEncoder(w).Encode(&githubv39.PullRequest{
 			Number:    githubv39.Int(f.num),

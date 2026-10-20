@@ -24,8 +24,9 @@ import (
 // what today's watch does written as rules (factory/design/watch-rules.md).
 func newWatchRulesCommand() *cobra.Command {
 	var repoURL, dir, output string
+	var flow bool
 	cmd := &cobra.Command{
-		Use:   "rules [--dir <checkout>] [--url <repo>]",
+		Use:   "rules [--dir <checkout>] [--url <repo>] [--flow [pr|issue|schedule|event]]",
 		Short: "List the watch's rules: what each looks at, runs, and as whom",
 		Long: `List the watch's rules: factory's prebaked rules, one per file, each a
 condition on an issue, a PR, a schedule or an event, and the action taken
@@ -51,9 +52,17 @@ later; today it lists factory's.
 Policy floors: give-up and attempts at most 10, a cooldown at least 1m.`,
 		Example: `  factory watch rules
   factory watch rules -o yaml
-  factory watch rules --dir .`,
-		Args: cobra.NoArgs,
-		RunE: func(c *cobra.Command, _ []string) error {
+  factory watch rules --dir .
+  factory watch rules --flow            # how the PR rules are applied
+  factory watch rules --flow issue
+  factory watch rules explain https://github.com/o/r/pull/7 --record decisions.jsonl`,
+		Args: func(c *cobra.Command, args []string) error {
+			if flow {
+				return cobra.MaximumNArgs(1)(c, args)
+			}
+			return cobra.NoArgs(c, args)
+		},
+		RunE: func(c *cobra.Command, args []string) error {
 			set, err := rules.Builtin()
 			if err != nil {
 				return err
@@ -63,13 +72,22 @@ Policy floors: give-up and attempts at most 10, a cooldown at least 1m.`,
 					return err
 				}
 			}
+			if flow {
+				kind := rules.OnPR
+				if len(args) == 1 {
+					kind = args[0]
+				}
+				return printRulesFlow(c.OutOrStdout(), set, kind)
+			}
 			return printWatchRules(c.OutOrStdout(), set, output)
 		},
 	}
 	cmd.AddCommand(newWatchRulesReplayCommand())
+	cmd.AddCommand(newWatchRulesExplainCommand())
 	cmd.Flags().StringVarP(&output, "output", "o", "", "Output format: yaml or json (the whole rules)")
 	cmd.Flags().StringVar(&dir, "dir", "", "A local checkout whose .agents/rules/ to lay over factory's rules")
 	cmd.Flags().StringVar(&repoURL, "url", "", "A repository URL (its own rules come later; factory's are listed)")
+	cmd.Flags().BoolVar(&flow, "flow", false, "Draw how the rules on a kind of item are applied: pr (the default), or the kind given (issue, schedule, event)")
 	return cmd
 }
 

@@ -45,6 +45,8 @@ type Recorder struct {
 	maxBytes int64
 	// shadow, when set, compares every record with the rules' decision.
 	shadow *Shadow
+	// sink, when set, is handed every record (NewSinkRecorder).
+	sink func(Record)
 
 	mu sync.Mutex
 	// last is each item's last record written: its fingerprint and when.
@@ -74,6 +76,12 @@ func NewRecorder(path string, maxBytes int64, shadow *Shadow) *Recorder {
 		maxBytes = DefaultRecordBytes
 	}
 	return &Recorder{path: path, maxBytes: maxBytes, shadow: shadow, last: map[string]lastRecord{}}
+}
+
+// NewSinkRecorder hands every record to sink, and writes none: what a
+// one-off look at an item (factory watch rules explain) records.
+func NewSinkRecorder(sink func(Record)) *Recorder {
+	return &Recorder{sink: sink, last: map[string]lastRecord{}}
 }
 
 // repeat reports whether rec is the same as its item's last record, but
@@ -111,6 +119,9 @@ func (r *Recorder) Write(rec Record) {
 		return
 	}
 	r.shadow.Observe(rec)
+	if r.sink != nil {
+		r.sink(rec)
+	}
 	if r.path == "" {
 		return
 	}

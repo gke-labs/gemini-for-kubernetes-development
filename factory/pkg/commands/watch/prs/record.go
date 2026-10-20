@@ -194,3 +194,25 @@ func (s *Scanner) picksReadiness(prIssue *githubv39.Issue) bool {
 	}
 	return true
 }
+
+// Record evaluates one pull request, as a scan would, and returns the
+// facts its evaluation recorded: what the rules decide on (factory watch
+// rules explain). The scanner should be dry-run: what it would write or
+// queue is no part of the record, and it takes the scanner's recorder for
+// the evaluation.
+func (s *Scanner) Record(ctx context.Context, num int) (*rules.Record, error) {
+	issue, err := s.gh.GetIssue(ctx, num)
+	if err != nil {
+		return nil, err
+	}
+	if issue.PullRequestLinks == nil {
+		return nil, fmt.Errorf("#%d is an issue, not a pull request", num)
+	}
+	var got *rules.Record
+	s.recorder = rules.NewSinkRecorder(func(rec rules.Record) { got = &rec })
+	s.evaluate(ctx, issue)
+	if got == nil {
+		return nil, fmt.Errorf("#%d left no record (below the scanner's number floor?)", num)
+	}
+	return got, nil
+}

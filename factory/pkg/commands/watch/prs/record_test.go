@@ -66,3 +66,17 @@ func TestEvaluate_RecordsDecisionsTheRulesReplay(t *testing.T) {
 		})
 	}
 }
+
+// Record evaluates one pull request and returns the facts it recorded,
+// the decisions left to the rules (factory watch rules explain).
+func TestRecordOnePR(t *testing.T) {
+	f := &prFixture{num: 21, headSHA: "sha-21", updated: time.Now(), pending: true}
+	s, _ := newTestScanner(t, t.TempDir(), testOpts{GitHub: f.start(t), BotUsers: []string{"bot1"}, GitHubLogin: "bot1", TriggerLabel: "factory"})
+	rec, err := s.Record(context.Background(), 21)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if it := rec.Item; it.Kind != rules.OnPR || it.Number != 21 || it.Checks != "pending" || it.Head != "sha-21" || it.Author != "bot1" {
+		t.Errorf("item = %+v", it)
+	}
+}
