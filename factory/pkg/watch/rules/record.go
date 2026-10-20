@@ -32,6 +32,18 @@ type Record struct {
 	// for (its sandbox busy, or needing a person): the replay does not
 	// compare it.
 	Gate string `json:"gate,omitempty"`
+	// Handed are the rules the engine decided for the scanner on the item
+	// (rules.Control.Takes), each with what the scanner's own condition
+	// said: on those Decided is the engine's, so this is what is left to
+	// compare.
+	Handed []Handed `json:"handed,omitempty"`
+}
+
+// Handed is a rule the engine decided for the scanner, and whether the
+// scanner's own condition would have taken it.
+type Handed struct {
+	Rule   string `json:"rule"`
+	Legacy bool   `json:"legacy"`
 }
 
 // Recorder appends Records to a JSON-lines file, rolling it over to
@@ -183,6 +195,15 @@ func (rc *Recording) Gated(why string) {
 }
 
 // Finish writes the record, once.
+// Handed records that the engine decided rule for the scanner, and what
+// the scanner's own condition said.
+func (rc *Recording) Handed(rule string, legacy bool) {
+	if rc == nil {
+		return
+	}
+	rc.rec.Handed = append(rc.rec.Handed, Handed{Rule: rule, Legacy: legacy})
+}
+
 func (rc *Recording) Finish() {
 	if rc == nil || rc.done {
 		return
@@ -233,6 +254,10 @@ type ReplayResult struct {
 	// ByRule counts, per rule, the records where the rule was decided by
 	// one side and not the other.
 	ByRule map[string]int
+	// Handed counts, per rule the engine decided for the scanner, the
+	// records it did so on and those where the scanner's own condition
+	// said otherwise.
+	Handed map[string]HandedTally `json:",omitempty"`
 }
 
 // ReplayDiff is one record whose decisions differ.
@@ -263,6 +288,15 @@ func (s Set) Replay(in io.Reader) (ReplayResult, error) {
 			continue
 		}
 		res.Compared++
+		for rule, t := range handedTally(s, rec) {
+			if res.Handed == nil {
+				res.Handed = map[string]HandedTally{}
+			}
+			h := res.Handed[rule]
+			h.Decided += t.Decided
+			h.Differ += t.Differ
+			res.Handed[rule] = h
+		}
 		engine, scanner, same := compare(s, rec)
 		if same {
 			continue

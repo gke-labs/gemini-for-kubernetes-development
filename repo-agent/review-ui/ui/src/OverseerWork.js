@@ -282,6 +282,13 @@ export function ShadowBar({ shadow, onShowItem }) {
               bg={t.differ ? RUN_STYLE.failed.bg : RUN_STYLE.queued.bg} />
           </span>
         ))}
+        {shadowRules(shadow).filter(([, t]) => t.handed).map(([rule, t]) => (
+          <span key={`${rule}-handed`} title={`The engine decides ${rule} for the scanner: on ${t.handed.decided} decisions, the scanner's own condition said otherwise on ${t.handed.differ}`}>
+            <Chip text={t.handed.differ ? `${rule} by engine ${t.handed.differ}✗` : `${rule} by engine ${t.handed.decided}`}
+              color={t.handed.differ ? RUN_STYLE.failed.color : RUN_STYLE.queued.color}
+              bg={t.handed.differ ? RUN_STYLE.failed.bg : RUN_STYLE.queued.bg} />
+          </span>
+        ))}
         {(shadow.recent || []).length > 0 && (
           <button type="button" className="btn btn-sm" aria-expanded={open} onClick={() => setOpen(o => !o)}>
             {open ? 'Hide differences' : `Differences (${shadow.recent.length})`}

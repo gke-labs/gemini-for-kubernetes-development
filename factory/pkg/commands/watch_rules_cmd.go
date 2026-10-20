@@ -141,6 +141,15 @@ counted, not compared.
 				for r, n := range res.ByRule {
 					total.ByRule[r] += n
 				}
+				for r, t := range res.Handed {
+					if total.Handed == nil {
+						total.Handed = map[string]rules.HandedTally{}
+					}
+					h := total.Handed[r]
+					h.Decided += t.Decided
+					h.Differ += t.Differ
+					total.Handed[r] = h
+				}
 			}
 			return printReplay(c.OutOrStdout(), total, output, show)
 		},
@@ -165,6 +174,15 @@ func printReplay(out io.Writer, res rules.ReplayResult, output string, show int)
 	}
 	fmt.Fprintf(out, "%d decisions compared, %d agree, %d differ; %d held back by a gate outside the rules.\n",
 		res.Compared, res.Compared-len(res.Diffs), len(res.Diffs), res.Gated)
+	handed := make([]string, 0, len(res.Handed))
+	for r := range res.Handed {
+		handed = append(handed, r)
+	}
+	sort.Strings(handed)
+	for _, r := range handed {
+		t := res.Handed[r]
+		fmt.Fprintf(out, "%s decided by the engine on %d, the scanner's own condition differs on %d.\n", r, t.Decided, t.Differ)
+	}
 	if len(res.Diffs) == 0 {
 		return nil
 	}

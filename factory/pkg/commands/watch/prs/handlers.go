@@ -196,11 +196,19 @@ func (s *Scanner) lastInvestigationFailed(filename string) bool {
 // been reached. It reports whether the phase completed cleanly; a false return
 // means a sandbox probe or enqueue failed and the pull request must be looked
 // at again next cycle.
+//
+// engine is the rules engine's decision on ci when it decides the rule for
+// the scanner (rules.Control.Takes), "" when the scanner decides: on
+// OutcomeGiveUp the watch gives up as it always has, and on OutcomeRun the
+// engine's give-up and cooldown stand in for the handler's own, so the two
+// counts cannot disagree; the queued task and the busy sandbox are still
+// checked here.
 func (s *Scanner) handlePRInvestigate(
 	ctx context.Context,
 	pc *prContext,
 	checkAnalysis prCheckAnalysis,
 	comments []*githubv39.IssueComment,
+	engine string,
 ) bool {
 	num := pc.prIssue.GetNumber()
 	state := s.state.get(num)
@@ -210,21 +218,12 @@ func (s *Scanner) handlePRInvestigate(
 		return true
 	}
 
-	investigationCount := s.investigationAttempts(num, comments, pc.lastCommitTime)
-	if investigationCount >= maxInvestigations {
-		stopLabel := conventions.StopLabel(s.cfg.TriggerLabel)
-		if !s.cfg.DryRun {
-			s.comment(ctx, num, fmt.Sprintf("🤖 AI Factory has attempted to investigate/fix CI check failures for this pull request %d times since the last commit or update without success. To prevent infinite loops, I am pausing automated investigation and attaching the `%s` label.\n\nTo request another attempt or resume automated processing, please remove the `%s` label from this pull request (and/or push a new commit or leave a comment).", maxInvestigations, stopLabel, stopLabel))
-			if err := s.gh.AddLabels(ctx, num, []string{stopLabel}); err != nil {
-				klog.Errorf("Failed to add stop label '%s' to PR #%d: %v", stopLabel, num, err)
-			}
-		}
-		s.rec.Decided("ci", rules.OutcomeGiveUp)
-		klog.Infof("Skipping PR #%d investigate because it has reached the maximum retry limit (%d attempts since last update) and applying stop label '%s'.", num, maxInvestigations, stopLabel)
+	if engine == rules.OutcomeGiveUp || (engine == "" && s.investigationAttempts(num, comments, pc.lastCommitTime) >= maxInvestigations) {
+		s.giveUpInvestigating(ctx, num)
 		return true
 	}
 
-	if state.lastInvestigatedSHA == pc.headSHA &&
+	if engine == "" && state.lastInvestigatedSHA == pc.headSHA &&
 		!s.lastInvestigationFailed(filename) &&
 		!pc.isExplicitlyAssigned &&
 		time.Since(s.lastInvestigated(filename, state)) <= investigationRetryAfter {
@@ -282,6 +281,21 @@ func (s *Scanner) handlePRInvestigate(
 		return false
 	}
 	return true
+}
+
+// giveUpInvestigating puts a pull request whose CI the watch has tried to
+// fix too often on hold: the stop label, and a comment saying so (its
+// wording is what investigationResetTime reads as a pause).
+func (s *Scanner) giveUpInvestigating(ctx context.Context, num int) {
+	stopLabel := conventions.StopLabel(s.cfg.TriggerLabel)
+	if !s.cfg.DryRun {
+		s.comment(ctx, num, fmt.Sprintf("🤖 AI Factory has attempted to investigate/fix CI check failures for this pull request %d times since the last commit or update without success. To prevent infinite loops, I am pausing automated investigation and attaching the `%s` label.\n\nTo request another attempt or resume automated processing, please remove the `%s` label from this pull request (and/or push a new commit or leave a comment).", maxInvestigations, stopLabel, stopLabel))
+		if err := s.gh.AddLabels(ctx, num, []string{stopLabel}); err != nil {
+			klog.Errorf("Failed to add stop label '%s' to PR #%d: %v", stopLabel, num, err)
+		}
+	}
+	s.rec.Decided("ci", rules.OutcomeGiveUp)
+	klog.Infof("Skipping PR #%d investigate because it has reached the maximum retry limit (%d attempts since last update) and applying stop label '%s'.", num, maxInvestigations, stopLabel)
 }
 
 // shouldRetryComments reports whether the previous address-comments task

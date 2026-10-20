@@ -653,6 +653,17 @@ func (s *Scanner) evaluate(ctx context.Context, prIssue *githubv39.Issue) {
 	s.engineCare = nil
 	if s.rules.TakesAny(labelNames(prIssue.Labels), prCareRules...) {
 		s.engineCare = s.engineDecide()
+		legacyPick := ""
+		for _, c := range []struct {
+			rule string
+			ok   bool
+		}{{"comments", shouldAddressComments}, {"conflict", isConflicting}, {"ci", canInvestigate}, {"review", canReview}} {
+			if c.ok {
+				legacyPick = c.rule
+				break
+			}
+		}
+		s.recordHanded(prIssue, legacyPick)
 	}
 	completed := true
 	switch {
@@ -668,7 +679,7 @@ func (s *Scanner) evaluate(ctx context.Context, prIssue *githubv39.Issue) {
 		return
 
 	case s.picks("ci", prIssue, canInvestigate):
-		completed = s.handlePRInvestigate(ctx, pc, checkAnalysis, history.comments)
+		completed = s.handlePRInvestigate(ctx, pc, checkAnalysis, history.comments, s.engineOutcome("ci", prIssue))
 
 	case s.picks("review", prIssue, canReview):
 		completed = s.handlePRReview(ctx, pc, checkAnalysis.checkRuns)
