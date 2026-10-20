@@ -541,7 +541,7 @@ shows the disagreements per rule (the design's Phase 2b).
    The engine decides those rules only on PRs labelled
    `overseer/rules-canary`. With `canaryPercent`, the watch labels that share
    of the pool's PRs itself (the same ones every pass, by number; never one a
-   person took the label off; not one handed to the humans), so the canary
+   person took the label off; handed to the humans or not), so the canary
    is public: `is:pr is:open label:overseer/rules-canary`. Add the label by
    hand to include a PR. On those PRs the record keeps what the scanner's
    own condition would have picked, so the overseer's view (`ci by engine N`)

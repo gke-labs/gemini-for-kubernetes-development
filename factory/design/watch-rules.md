@@ -624,8 +624,8 @@ spec:
   stay on the scanners.
 - **`canaryPercent`:** the watch picks the canary itself and labels it in
   public, so it can be filtered on GitHub (`is:pr label:<canaryLabel>`):
-  while evaluating a pool's PR (not stopped, not in the merge queue, not
-  handed to the humans), it adds `canaryLabel` when the PR's number hashes
+  while evaluating a pool's PR (not stopped, not in the merge queue), it
+  adds `canaryLabel` when the PR's number hashes
   into the percent - the same PRs every pass and after a restart, new ones
   at the same rate - unless the PR's timeline shows a person took the
   label off before, which is final. The label goes on the PR the engine

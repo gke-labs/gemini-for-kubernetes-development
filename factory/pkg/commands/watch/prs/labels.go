@@ -297,9 +297,10 @@ func (s *Scanner) getMissingHumanAssigneesForPR(prAssignees []*githubv39.User, r
 // pick for it (rules.Control.Canary: a share of them, by number) and that
 // lacks it, so the pull requests the engine decides for are public and can
 // be filtered on GitHub. One a person took the label off is never labelled
-// again: its timeline says so. A pull request already handed to the humans
-// is left alone. On success the label is on prIssue for this evaluation,
-// so the engine takes the pull request in the same pass.
+// again: its timeline says so. A pull request handed to the humans is
+// picked as any other: conflict and ci act on it too (a rebase keeps it
+// mergeable). On success the label is on prIssue for this evaluation, so
+// the engine takes the pull request in the same pass.
 func (s *Scanner) labelCanary(ctx context.Context, prIssue *githubv39.Issue) {
 	num := prIssue.GetNumber()
 	if !s.rules.Canary(num) {
@@ -307,9 +308,7 @@ func (s *Scanner) labelCanary(ctx context.Context, prIssue *githubv39.Issue) {
 	}
 	label := s.rules.CanaryLabel
 	names := labelNames(prIssue.Labels)
-	if slices.ContainsFunc(names, func(l string) bool {
-		return strings.EqualFold(l, label) || isReadyForHumanLabel(l, s.cfg.TriggerLabel)
-	}) {
+	if slices.ContainsFunc(names, func(l string) bool { return strings.EqualFold(l, label) }) {
 		return
 	}
 	timeline, _, err := s.gh.ListIssueTimeline(ctx, num)

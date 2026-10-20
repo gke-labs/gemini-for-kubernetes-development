@@ -257,8 +257,8 @@ func assertRecorded(t *testing.T, path string, wants ...string) {
 }
 
 // The canary: a pull request the rules pick by number gets the canary label,
-// so the engine takes it in the same pass; one a person took the label off,
-// one handed to the humans, or a dry run, does not.
+// so the engine takes it in the same pass, handed to the humans or not; one
+// a person took the label off, or a dry run, does not.
 func TestEvaluate_LabelsTheCanary(t *testing.T) {
 	base, _ := rules.Builtin()
 	control := func(t *testing.T, percent int) *rules.Control {
@@ -283,7 +283,7 @@ func TestEvaluate_LabelsTheCanary(t *testing.T) {
 		{"picked: labelled", 100, nil, false, false, true},
 		{"not picked (0%)", 0, nil, false, false, false},
 		{"a person took it off: not again", 100, removed, false, false, false},
-		{"handed to the humans: left alone", 100, nil, true, false, false},
+		{"handed to the humans: picked as any other", 100, nil, true, false, true},
 		{"dry run: nothing written", 100, nil, false, true, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
