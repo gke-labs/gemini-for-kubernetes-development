@@ -722,3 +722,28 @@ func TestPostRepliesRewritesThePR(t *testing.T) {
 		}
 	})
 }
+
+// A PR body's release-note block keeps its closing fence (KCC #14121 lost
+// it), and a care run that puts back a fence the PR's body lost is a
+// rewrite of the body, not the same text.
+func TestChangeBodyKeepsItsLastFence(t *testing.T) {
+	raw := "change:\n  title: t\n  body: |\n    Fixes #1\n\n    ```release-note\n    NONE\n    ```\n"
+	doc, err := Wrap("Change", raw, Target{URL: "https://github.com/o/r/pull/12"}, Source{Task: "care-1", Recipe: "care-ci"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	broken := "Fixes #1\n\n```release-note\nNONE"
+	if err := doc.KeepTitle("t", broken); err != nil {
+		t.Fatal(err)
+	}
+	c, err := doc.changeSpec()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasSuffix(c.Body, "```release-note\nNONE\n```") {
+		t.Errorf("body lost its closing fence:\n%s", c.Body)
+	}
+	if len(c.Rewrites) != 1 || c.Rewrites[0] != "body" {
+		t.Errorf("rewrites = %v, want [body]: the fence put back is a change", c.Rewrites)
+	}
+}

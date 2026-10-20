@@ -237,3 +237,21 @@ func TestParseApplyFailure(t *testing.T) {
 		}
 	}
 }
+
+// A reply fenced in full is unwrapped; plain YAML that ends in a fence of
+// its own, inside a block scalar, keeps it.
+func TestCleanAgentYAML(t *testing.T) {
+	for _, tc := range []struct{ name, raw, want string }{
+		{"fenced yaml", "```yaml\nchange:\n  report: ok\n```\n", "change:\n  report: ok"},
+		{"fenced, no language", "```\nchange:\n  report: ok\n```", "change:\n  report: ok"},
+		{"words before it", "Here it is:\nchange:\n  report: ok\n", "change:\n  report: ok"},
+		{"a body ending in its own fence", "change:\n  body: |\n    Fixes #1\n\n    ```release-note\n    NONE\n    ```\n", "change:\n  body: |\n    Fixes #1\n\n    ```release-note\n    NONE\n    ```"},
+		{"words, then a fenced reply", "Here:\n```yaml\nchange:\n  report: ok\n```", "change:\n  report: ok"},
+		{"words, then plain yaml ending in its own fence", "Here:\nchange:\n  body: |\n    ```release-note\n    NONE\n    ```", "change:\n  body: |\n    ```release-note\n    NONE\n    ```"},
+		{"fenced, with a body ending in its own fence", "```yaml\nchange:\n  body: |\n    ```release-note\n    NONE\n    ```\n```", "change:\n  body: |\n    ```release-note\n    NONE\n    ```"},
+	} {
+		if got := CleanAgentYAML(tc.raw, "change:"); got != tc.want {
+			t.Errorf("%s:\ngot  %q\nwant %q", tc.name, got, tc.want)
+		}
+	}
+}
