@@ -411,3 +411,33 @@ func TestEvaluate_EngineRetriesCommentsPastTheHandlersCount(t *testing.T) {
 		t.Error("the handler gave up on its own count")
 	}
 }
+
+// Batch C: on a pull request the engine decides ready, ready-unreview,
+// inherit-labels and inactive for, the record keeps what the scanner's
+// own conditions said, so the shadow still compares them: here a green,
+// unreviewed PR that wants no review is ready, has nothing to inherit, and
+// is not idle.
+func TestEvaluate_RecordsBatchCHanded(t *testing.T) {
+	base, _ := rules.Builtin()
+	c, err := rules.NewControl("on", map[string]string{"ready": "engine", "ready-unreview": "engine", "inherit-labels": "engine", "inactive": "engine"}, "", nil, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := &prFixture{num: 51, headSHA: "sha-51", updated: time.Now()}
+	record := filepath.Join(t.TempDir(), "d.jsonl")
+	s, _ := newTestScanner(t, t.TempDir(), testOpts{
+		GitHub: f.start(t), BotUsers: []string{"bot1"}, GitHubLogin: "bot1", TriggerLabel: "factory",
+		Recorder: rules.NewRecorder(record, 0, nil),
+		Rules:    c,
+	})
+	f.mu.Lock()
+	listed := f.listingIssueLocked()
+	f.mu.Unlock()
+	s.evaluate(context.Background(), listed)
+	assertRecorded(t, record,
+		`{"rule":"inherit-labels","legacy":false}`,
+		`{"rule":"inactive","legacy":false}`,
+		`{"rule":"ready","legacy":true}`,
+		`{"rule":"ready-unreview","legacy":false}`,
+		`"ready run"`)
+}

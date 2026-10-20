@@ -541,6 +541,7 @@ func (s *Scanner) evaluate(ctx context.Context, prIssue *githubv39.Issue) {
 
 	// Sync labels from referenced parent issues to the PR, then re-check: the
 	// stop label may have been inherited by the sync we just performed.
+	s.recordHandedStep("inherit-labels", prIssue, len(getMissingLabelsForPR(prIssue.Labels, refs.all(ctx), s.cfg.TriggerLabel)) > 0)
 	if s.decides("inherit-labels", prIssue, true) {
 		s.syncReferencedIssueLabels(ctx, pr, prIssue, refs)
 	}
@@ -579,6 +580,10 @@ func (s *Scanner) evaluate(ctx context.Context, prIssue *githubv39.Issue) {
 	state := s.state.get(num)
 	s.recordHistory(pr, history, headSHA)
 
+	if s.takes("inactive", prIssue) {
+		_, inactive := s.inactiveSince(pr, history)
+		s.recordHandedStep("inactive", prIssue, inactive)
+	}
 	if s.decides("inactive", prIssue, true) && s.pauseIfInactive(ctx, pr, prIssue, history, headSHA) {
 		return
 	}
@@ -687,6 +692,12 @@ func (s *Scanner) evaluate(ctx context.Context, prIssue *githubv39.Issue) {
 		completed = s.handlePRReview(ctx, pc, checkAnalysis.checkRuns)
 	}
 
+	if s.takes("ready", prIssue) || s.takes("ready-unreview", prIssue) {
+		ready := s.readyForHuman(ctx, pc, checkAnalysis, hasUnresolvedComments, history, isConflicting) && s.gh.Ready()
+		already := hasReadyForHumanLabel(prIssue.Labels, s.cfg.TriggerLabel)
+		s.recordHandedStep("ready", prIssue, ready && !already)
+		s.recordHandedStep("ready-unreview", prIssue, ready && already && len(getReviewLabels(prIssue.Labels, s.cfg.TriggerLabel)) > 0)
+	}
 	if s.picksReadiness(prIssue) {
 		s.reconcileReadiness(ctx, pc, checkAnalysis, hasUnresolvedComments, history, isConflicting, assignedBot)
 	}
@@ -715,6 +726,26 @@ func (s *Scanner) recordEvaluation(prIssue *githubv39.Issue, pr *githubv39.PullR
 	s.state.set(num, state)
 }
 
+// readyForHuman is whether the pull request is ready to hand to the
+// humans: it merges, its checks are green, no feedback waits, no task of it
+// is active, its review (if one is wanted) is done at its head, and it is
+// open, neither stopped nor a draft.
+func (s *Scanner) readyForHuman(ctx context.Context, pc *prContext, checkAnalysis prCheckAnalysis, hasPendingComments bool, history *prHistory, isConflicting bool) bool {
+	isReviewRequired := s.shouldAutoReviewPR(ctx, pc.prIssue, pc.refIssues)
+	hasBotReviewOnHead := s.hasCompletedBotReviewOnHead(history.reviews, pc.headSHA, history.lastCommitTime)
+	reviewSatisfied := !isReviewRequired || hasBotReviewOnHead
+	return !isConflicting &&
+		pc.pr.GetMergeable() &&
+		!checkAnalysis.hasFailure &&
+		!checkAnalysis.hasPending &&
+		!hasPendingComments &&
+		!s.queue.HasActivePRTask(pc.prIssue.GetNumber()) &&
+		reviewSatisfied &&
+		!conventions.HasStopLabel(pc.prIssue.Labels, s.cfg.TriggerLabel) &&
+		!pc.pr.GetDraft() &&
+		pc.pr.GetState() == "open"
+}
+
 // reconcileReadiness decides whether a pull request is ready for a human and
 // applies the consequences: adding the ready-for-human label, removing any
 // review label, inheriting human assignees from the parent issues, and
@@ -734,23 +765,7 @@ func (s *Scanner) reconcileReadiness(
 	assignedBot string,
 ) {
 	num := pc.prIssue.GetNumber()
-
-	isReviewRequired := s.shouldAutoReviewPR(ctx, pc.prIssue, pc.refIssues)
-	hasBotReviewOnHead := s.hasCompletedBotReviewOnHead(history.reviews, pc.headSHA, history.lastCommitTime)
-	reviewSatisfied := !isReviewRequired || hasBotReviewOnHead
-
-	isReadyForHuman := !isConflicting &&
-		pc.pr.GetMergeable() &&
-		!checkAnalysis.hasFailure &&
-		!checkAnalysis.hasPending &&
-		!hasPendingComments &&
-		!s.queue.HasActivePRTask(num) &&
-		reviewSatisfied &&
-		!conventions.HasStopLabel(pc.prIssue.Labels, s.cfg.TriggerLabel) &&
-		!pc.pr.GetDraft() &&
-		pc.pr.GetState() == "open"
-
-	if !isReadyForHuman || !s.gh.Ready() || pc.prIssue == nil {
+	if !s.readyForHuman(ctx, pc, checkAnalysis, hasPendingComments, history, isConflicting) || !s.gh.Ready() || pc.prIssue == nil {
 		return
 	}
 
