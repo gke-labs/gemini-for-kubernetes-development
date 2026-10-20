@@ -27,12 +27,19 @@ import (
 	"os"
 	"path"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
 	githubv39 "github.com/google/go-github/v39/github"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/klog/v2"
 
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/clients"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/k8s"
+	factorysandbox "github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/sandbox"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/spool"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/taskapi"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/tokenusage"
@@ -195,19 +202,39 @@ func readTaskToolTelemetry(read TaskFileReader) (*ToolTelemetry, error) {
 	return &telemetry, nil
 }
 
-// HarvestTaskFiles is HarvestTask reading the task directory's files with
-// read, whichever way it reaches the sandbox.
+// HarvestTaskFiles publishes a task's usage and its trace, reading the
+// task directory's files with read, whichever way it reaches the sandbox.
+// Best-effort: failures are logged.
 func HarvestTaskFiles(ctx context.Context, taskDir string, read TaskFileReader, meta Meta) {
+	_ = harvestTask(ctx, taskDir, read, meta)
+}
+
+// harvestTask publishes a task's usage and its trace, and returns the
+// first error that kept either from the collector (logged too).
+func harvestTask(ctx context.Context, taskDir string, read TaskFileReader, meta Meta) error {
 	if !Enabled() {
-		return
+		return nil
 	}
-	stats, err := readTaskUsage(read, taskDir)
+	err := harvestUsage(ctx, taskDir, read, meta)
 	if err != nil {
 		klog.Warningf("usagereport: %v", err)
-		return
+	}
+	if terr := harvestTrace(ctx, taskDir, read, meta); terr != nil {
+		klog.Warningf("usagereport: %v", terr)
+		if err == nil {
+			err = terr
+		}
+	}
+	return err
+}
+
+func harvestUsage(ctx context.Context, taskDir string, read TaskFileReader, meta Meta) error {
+	stats, err := readTaskUsage(read, taskDir)
+	if err != nil {
+		return err
 	}
 	if stats == nil {
-		return
+		return nil
 	}
 	taskType := meta.TaskType
 	if taskType == "" {
@@ -247,26 +274,132 @@ func HarvestTaskFiles(ctx context.Context, taskDir string, read TaskFileReader, 
 	}
 
 	if err := Publish(ctx, rec); err != nil {
-		klog.Warningf("usagereport: publishing usage for %s: %v", rec.Key, err)
-		return
+		return fmt.Errorf("publishing usage for %s: %w", rec.Key, err)
 	}
 	klog.V(2).Infof("usagereport: published usage for %s", rec.Key)
+	return nil
 }
 
-// HarvestSandbox harvests every task dir in a sandbox, through its task
-// server: the sweep right before a sandbox is deleted. Best-effort.
-func HarvestSandbox(ctx context.Context, namespace, sandboxName string, meta Meta) {
+// TraceFile is a task's session transcript (acpd's stream.ndjson), by the
+// name the task server serves it.
+const TraceFile = taskapi.SessionDir + "/stream.ndjson"
+
+// traceTimeout bounds one trace's upload: transcripts run to megabytes.
+const traceTimeout = 2 * time.Minute
+
+// harvestTrace sends the task's transcript to the collector, which
+// archives it. A task without one (a classic task, a sandbox whose task
+// server predates serving session files) has nothing to send, and a
+// collector without an archive keeps no traces.
+func harvestTrace(ctx context.Context, taskDir string, read TaskFileReader, meta Meta) error {
+	if meta.Sandbox == "" {
+		return nil
+	}
+	data, err := read(TraceFile)
+	if errors.Is(err, os.ErrNotExist) || (err == nil && len(data) == 0) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("reading %s of %s: %w", TraceFile, taskDir, err)
+	}
+	q := url.Values{"repo": {meta.Repo}}
+	if meta.Issue > 0 {
+		q.Set("issue", strconv.Itoa(meta.Issue))
+	}
+	if meta.PR > 0 {
+		q.Set("pr", strconv.Itoa(meta.PR))
+	}
+	taskType := meta.TaskType
+	if taskType == "" {
+		taskType = taskTypeFromDir(taskDir)
+	}
+	q.Set("taskType", taskType)
+	u := collectorURL() + "/v1/traces/" + url.PathEscape(meta.Sandbox) + "/" + url.PathEscape(path.Base(taskDir)) + "?" + q.Encode()
+
+	ctx, cancel := context.WithTimeout(ctx, traceTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, u, bytes.NewReader(data))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/x-ndjson")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("sending the trace of %s: %w", taskDir, err)
+	}
+	defer resp.Body.Close()
+	switch resp.StatusCode {
+	case http.StatusOK, http.StatusNotImplemented:
+		return nil
+	default:
+		return fmt.Errorf("sending the trace of %s: collector returned status %d", taskDir, resp.StatusCode)
+	}
+}
+
+// HarvestSandbox harvests every task dir in a sandbox, usage and traces,
+// through its task server: before a sandbox is suspended, while its pod
+// is up, and before it is deleted. A suspended sandbox harvested since its
+// last activity is not woken for it: nothing ran in it since. A harvest
+// that published everything marks the sandbox harvested
+// (AnnotationHarvestedAt). Best-effort; it reports whether the sandbox's
+// usage and traces are all in the collector.
+func HarvestSandbox(ctx context.Context, namespace, sandboxName string, meta Meta) bool {
 	if !Enabled() {
-		return
+		return false
+	}
+	if sb, err := getSandbox(ctx, namespace, sandboxName); err == nil && harvestedWhileSuspended(sb) {
+		klog.V(2).Infof("usagereport: sandbox %s is suspended and harvested since its last activity; not waking it", sandboxName)
+		return true
 	}
 	meta.Sandbox = sandboxName
 	sb, err := connectTasks(ctx, namespace, sandboxName)
 	if err != nil {
 		klog.Warningf("usagereport: connecting to sandbox %s's task server for usage sweep: %v", sandboxName, err)
-		return
+		return false
 	}
 	defer sb.Close()
-	harvestTasks(ctx, sb, meta)
+	if !harvestTasks(ctx, sb, meta) {
+		return false
+	}
+	if err := markHarvested(ctx, namespace, sandboxName, time.Now().UTC()); err != nil {
+		klog.Warningf("usagereport: marking sandbox %s harvested: %v", sandboxName, err)
+	}
+	return true
+}
+
+// harvestedWhileSuspended reports whether sb is scaled to zero and was
+// harvested no earlier than its last activity.
+func harvestedWhileSuspended(sb *unstructured.Unstructured) bool {
+	replicas, found, err := unstructured.NestedInt64(sb.Object, "spec", "replicas")
+	if err != nil || !found || replicas != 0 {
+		return false
+	}
+	at, err := time.Parse(time.RFC3339, sb.GetAnnotations()[factorysandbox.AnnotationHarvestedAt])
+	if err != nil {
+		return false
+	}
+	return !factorysandbox.LastActivity(sb).After(at)
+}
+
+// getSandbox reads a sandbox; a var for the tests.
+var getSandbox = func(ctx context.Context, namespace, name string) (*unstructured.Unstructured, error) {
+	kc, err := clients.NewKubernetesClient()
+	if err != nil {
+		return nil, err
+	}
+	return kc.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
+}
+
+// markHarvested sets AnnotationHarvestedAt on a sandbox; a var for the
+// tests.
+var markHarvested = func(ctx context.Context, namespace, name string, at time.Time) error {
+	kc, err := clients.NewKubernetesClient()
+	if err != nil {
+		return err
+	}
+	patch := fmt.Sprintf(`{"metadata":{"annotations":{%q:%q}}}`, factorysandbox.AnnotationHarvestedAt, at.Format(time.RFC3339))
+	_, err = kc.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Patch(ctx, name, types.MergePatchType, []byte(patch), metav1.PatchOptions{})
+	return err
 }
 
 // taskLister is what HarvestSandbox reads a sandbox's tasks through: its
@@ -284,19 +417,23 @@ var connectTasks = func(ctx context.Context, namespace, name string) (taskLister
 }
 
 // harvestTasks harvests each of the sandbox's task dirs, its task type
-// inferred from its name.
-func harvestTasks(ctx context.Context, sb taskLister, meta Meta) {
+// inferred from its name, and reports whether all of them were.
+func harvestTasks(ctx context.Context, sb taskLister, meta Meta) bool {
 	entries, err := sb.List(ctx)
 	if err != nil {
 		klog.Warningf("usagereport: listing the tasks in sandbox %s: %v", meta.Sandbox, err)
-		return
+		return false
 	}
+	ok := true
 	for _, e := range entries {
 		m := meta
 		m.TaskType = "" // infer per dir
 		id := e.ID
-		HarvestTaskFiles(ctx, spool.TaskDir(id), func(name string) ([]byte, error) { return sb.ReadFile(ctx, id, name) }, m)
+		if err := harvestTask(ctx, spool.TaskDir(id), func(name string) ([]byte, error) { return sb.ReadFile(ctx, id, name) }, m); err != nil {
+			ok = false
+		}
 	}
+	return ok
 }
 
 // taskTypeFromDir infers the task type from a task dir name such as

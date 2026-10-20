@@ -25,7 +25,11 @@ import (
 	"strings"
 	"testing"
 
+	"errors"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/spool"
+	"io"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"time"
 )
 
 func TestPublishAndMarkSummarized(t *testing.T) {
@@ -195,5 +199,133 @@ func TestHarvestSandboxThroughTheTaskServer(t *testing.T) {
 	}
 	if len(keys) != 2 || !fake.closed {
 		t.Errorf("posted %d records, closed %v", len(keys), fake.closed)
+	}
+}
+
+// The tests never reach a cluster: by default no sandbox can be read, and
+// marking one harvested is recorded.
+var marked []string
+
+func TestMain(m *testing.M) {
+	getSandbox = func(context.Context, string, string) (*unstructured.Unstructured, error) {
+		return nil, errors.New("no cluster in tests")
+	}
+	markHarvested = func(_ context.Context, ns, name string, _ time.Time) error {
+		marked = append(marked, ns+"/"+name)
+		return nil
+	}
+	os.Exit(m.Run())
+}
+
+// collector records the usage keys and trace PUTs it is sent, and answers
+// traces with traceStatus.
+func collector(t *testing.T, traceStatus int) (keys, traces *[]string) {
+	t.Helper()
+	keys, traces = &[]string{}, &[]string{}
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/usage":
+			var rec UsageRecord
+			_ = json.NewDecoder(r.Body).Decode(&rec)
+			*keys = append(*keys, rec.Key)
+		case r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, "/v1/traces/"):
+			body, _ := io.ReadAll(r.Body)
+			*traces = append(*traces, r.URL.Path+"?"+r.URL.RawQuery+" "+string(body))
+			w.WriteHeader(traceStatus)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(ts.Close)
+	t.Setenv("COLLECTOR_URL", ts.URL)
+	return keys, traces
+}
+
+func withTasks(t *testing.T, fake *fakeTasks) *bool {
+	t.Helper()
+	connected := false
+	prev := connectTasks
+	connectTasks = func(context.Context, string, string) (taskLister, error) {
+		connected = true
+		return fake, nil
+	}
+	t.Cleanup(func() { connectTasks = prev })
+	return &connected
+}
+
+func sessionTasks() *fakeTasks {
+	return &fakeTasks{
+		entries: []spool.Entry{
+			{Task: spool.Task{ID: "recipe-fix-20261020-100000-ab12"}},
+			{Task: spool.Task{ID: "fix-20261011-080000"}}, // a classic task: no session
+		},
+		files: map[string]string{
+			"recipe-fix-20261020-100000-ab12/session/stream.ndjson": `{"seq":1}` + "\n",
+		},
+	}
+}
+
+// One pass sends a task's usage and its transcript, and marks the sandbox
+// harvested once everything is in.
+func TestHarvestSandboxSendsTraces(t *testing.T) {
+	_, traces := collector(t, http.StatusOK)
+	withTasks(t, sessionTasks())
+	marked = nil
+	if !HarvestSandbox(context.Background(), "overseer-kcc", "fix-kcc-7", Meta{Repo: "o/r", PR: 7}) {
+		t.Fatal("HarvestSandbox reported a failure")
+	}
+	want := "/v1/traces/fix-kcc-7/recipe-fix-20261020-100000-ab12?pr=7&repo=o%2Fr&taskType=recipe {\"seq\":1}\n"
+	if len(*traces) != 1 || (*traces)[0] != want {
+		t.Errorf("traces sent = %q, want [%q]", *traces, want)
+	}
+	if len(marked) != 1 || marked[0] != "overseer-kcc/fix-kcc-7" {
+		t.Errorf("marked = %v", marked)
+	}
+}
+
+// A trace the collector refuses leaves the sandbox unmarked, so the next
+// pass tries again; a collector without an archive (501) wants none.
+func TestHarvestSandboxTraceFailures(t *testing.T) {
+	collector(t, http.StatusInsufficientStorage)
+	withTasks(t, sessionTasks())
+	marked = nil
+	if HarvestSandbox(context.Background(), "ns", "sb", Meta{Repo: "o/r"}) || len(marked) != 0 {
+		t.Errorf("a refused trace counted as harvested (marked %v)", marked)
+	}
+
+	collector(t, http.StatusNotImplemented)
+	if !HarvestSandbox(context.Background(), "ns", "sb", Meta{Repo: "o/r"}) || len(marked) != 1 {
+		t.Errorf("no archive: want harvested (marked %v)", marked)
+	}
+}
+
+// A suspended sandbox harvested since its last activity is not woken
+// before a delete; one active since is.
+func TestHarvestSandboxSkipsHarvestedSuspended(t *testing.T) {
+	collector(t, http.StatusOK)
+	connected := withTasks(t, sessionTasks())
+	sandbox := func(lastTask, harvested string) *unstructured.Unstructured {
+		sb := &unstructured.Unstructured{Object: map[string]any{"spec": map[string]any{"replicas": int64(0)}}}
+		sb.SetAnnotations(map[string]string{
+			"sandbox.gemini.google.com/last-task-time": lastTask,
+			"sandbox.gemini.google.com/harvested-at":   harvested,
+		})
+		return sb
+	}
+	prev := getSandbox
+	t.Cleanup(func() { getSandbox = prev })
+
+	getSandbox = func(context.Context, string, string) (*unstructured.Unstructured, error) {
+		return sandbox("2026-10-20T10:00:00Z", "2026-10-20T11:00:00Z"), nil
+	}
+	if !HarvestSandbox(context.Background(), "ns", "sb", Meta{Repo: "o/r"}) || *connected {
+		t.Errorf("woke a sandbox harvested since its last activity (connected %v)", *connected)
+	}
+
+	getSandbox = func(context.Context, string, string) (*unstructured.Unstructured, error) {
+		return sandbox("2026-10-20T12:00:00Z", "2026-10-20T11:00:00Z"), nil
+	}
+	if !HarvestSandbox(context.Background(), "ns", "sb", Meta{Repo: "o/r"}) || !*connected {
+		t.Errorf("skipped a sandbox active since its harvest")
 	}
 }

@@ -595,6 +595,11 @@ func (r *Reconciler) evictStaleSandbox(ctx context.Context, item *unstructured.U
 	return true
 }
 
+// preSuspendHarvestTimeout bounds the harvest before a suspension: the pod
+// is up, so it is quick, unless the pod is not ready, which it must not
+// wait out.
+const preSuspendHarvestTimeout = 3 * time.Minute
+
 // suspendIdleSandboxes scales idle sandboxes down to zero replicas, skipping
 // any sandbox leased by an in-flight task.
 //
@@ -618,7 +623,14 @@ func (r *Reconciler) suspendIdleSandboxes(ctx context.Context, items []unstructu
 		}
 
 		r.collect(name, "suspension", func() bool {
-			suspended, err := factorysandbox.SuspendSandboxIfIdle(ctx, r.sandboxes.kube, r.sandboxes.namespace, item, r.cfg.IdleTimeout, r.cfg.DryRun)
+			suspended, err := factorysandbox.SuspendSandboxIfIdle(ctx, r.sandboxes.kube, r.sandboxes.namespace, item, r.cfg.IdleTimeout, r.cfg.DryRun,
+				func(ctx context.Context) {
+					// Its pod is up now: harvesting later, before a delete,
+					// would have to wake it.
+					ctx, cancel := context.WithTimeout(ctx, preSuspendHarvestTimeout)
+					defer cancel()
+					usagereport.HarvestSandbox(ctx, r.sandboxes.namespace, name, common.SandboxUsageMeta(item, r.repoSlug()))
+				})
 			if err != nil {
 				klog.Errorf("Failed to suspend idle sandbox '%s': %v", name, err)
 			}

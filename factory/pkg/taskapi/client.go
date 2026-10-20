@@ -105,7 +105,14 @@ func (c *Client) Log(ctx context.Context, id string, offset int64, follow bool) 
 	return resp.Body, nil
 }
 
+// SessionDir is the task directory's session subdirectory. ReadFile reads
+// a file in it by its relative name, "session/stream.ndjson".
+const SessionDir = "session"
+
 func filePath(id, name string) string {
+	if rest, ok := strings.CutPrefix(name, SessionDir+"/"); ok {
+		return "/v1/tasks/" + url.PathEscape(id) + "/files/" + SessionDir + "/" + url.PathEscape(rest)
+	}
 	return "/v1/tasks/" + url.PathEscape(id) + "/files/" + url.PathEscape(name)
 }
 

@@ -379,3 +379,28 @@ func TestAwaitServerAsksAgainUntilItAnswers(t *testing.T) {
 		t.Fatalf("err = %v, want the last error", err)
 	}
 }
+
+// A task's session files are read by their relative name; nothing above
+// the session directory is.
+func TestReadSessionFile(t *testing.T) {
+	c, tasks := newTestServer(t)
+	ctx := context.Background()
+	resp, err := c.Post(ctx, post("fix-20261020-120000", "", `mkdir -p session && echo '{"seq":1}' > session/stream.ndjson`))
+	if err != nil {
+		t.Fatalf("Post: %v", err)
+	}
+	readLog(t, c, resp.Task.ID, 0)
+	data, err := c.ReadFile(ctx, resp.Task.ID, "session/stream.ndjson")
+	if err != nil || string(data) != "{\"seq\":1}\n" {
+		t.Fatalf("ReadFile session/stream.ndjson = %q, %v", data, err)
+	}
+	if _, err := c.ReadFile(ctx, resp.Task.ID, "session/record.json"); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("missing session file: %v, want os.ErrNotExist", err)
+	}
+	if err := os.WriteFile(filepath.Join(tasks, resp.Task.ID, "outside"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.ReadFile(ctx, resp.Task.ID, "session/../outside"); err == nil {
+		t.Errorf("session/../outside was served")
+	}
+}

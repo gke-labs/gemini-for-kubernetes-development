@@ -133,3 +133,25 @@ Per cluster, once:
    kubectl -n overseer-system rollout restart statefulset/token-usage
    ```
    The prefix must be unique per collector: two collectors on one prefix would overwrite each other's segments.
+
+---
+
+## 9. Traces
+
+A task's session transcript (acpd's `<taskDir>/session/stream.ndjson`) is harvested with its usage, in the same pass, and archived by the collector (`factory/pkg/tokenusage/traces.go`). It is the input for reviewing what the agent did after its sandbox is gone (design/retro.md).
+
+* **Read:** the task server serves the task's `session/` files (`GET /v1/tasks/{id}/files/session/{name}`); `ReadFile(id, "session/stream.ndjson")` reaches them. An older sandbox's task server answers 404, which reads as "no trace".
+* **Sent:** `PUT /v1/traces/{sandbox}/{task}?repo=&issue=&pr=&taskType=`, the transcript as the body. A collector without an archive answers 501 and keeps nothing: the PVC alone would only fill up.
+* **Spooled:** the collector masks credential shapes (`ghp_…`, `github_pat_…`, `AIza…`, `ya29.…`, `sk-ant-…`) line by line on the way in, writes the trace into a temporary directory and renames it into `/data/traces/<time>-<sandbox>-<task>/` whole. A trace whose content the archive already holds is not spooled again. One trace is capped at 256MiB (413), the spool at 512MiB (507: the harvester tries again on its next pass).
+* **Archived:** the flusher, before sealing the logs, uploads each spooled trace to `<prefix>/traces/<owner>/<repo>/<pr-N|issue-N|repo>/<sandbox>/<task>/stream.ndjson.gz`, indexes it in the `trace-index` log (sealed, segmented, snapshotted and replayed like the records log), then deletes it from the PVC. A later copy of the same task's trace overwrites the object.
+* **Read back:** `GET /v1/traces?repo=&issue=&pr=&sandbox=` lists the index (object name, size, sha256, when archived). The collector never serves a trace's content; readers go to the bucket.
+
+### When harvests run
+
+One pass sends a task's usage and its trace (`usagereport.HarvestTaskFiles` / `HarvestSandbox`):
+
+1. **At task end**, over the connection the recipe runner already has (`commands/recipe.go`).
+2. **Before an idle sandbox is suspended**, while its pod is still up (`SuspendSandboxIfIdle`'s `beforeSuspend`, bounded to 3 minutes), so a later delete does not have to wake it.
+3. **Before a delete** (the closed-PR, closed-issue and stale sweeps), as before.
+
+A sandbox pass that got everything into the collector sets `sandbox.gemini.google.com/harvested-at`. Before a delete, a sandbox that is suspended and harvested no earlier than its last activity (`sandbox.LastActivity`: creation, `completion-time`, `last-task-time`, `unpaused-at`) is not woken: nothing ran in it since. A failed pass leaves the annotation alone, so the next one tries again.
