@@ -3,6 +3,7 @@ package issues
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -43,6 +44,22 @@ func (q *fakeQueue) TaskExists(filename string) bool {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	return q.existing[filename]
+}
+
+func (q *fakeQueue) HasActiveIssueTask(number int) bool {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	for _, t := range q.enqueued {
+		if t != nil && t.Number == number && !api.IsPRTask(t.Type) {
+			return true
+		}
+	}
+	for fn := range q.existing {
+		if fn == fmt.Sprintf("task-issue-%d.yaml", number) || (strings.HasPrefix(fn, "task-workflow-") && strings.HasSuffix(fn, fmt.Sprintf("-issue-%d.yaml", number))) {
+			return true
+		}
+	}
+	return false
 }
 
 func (q *fakeQueue) Enqueue(filename string, task *api.QueueTask) error {

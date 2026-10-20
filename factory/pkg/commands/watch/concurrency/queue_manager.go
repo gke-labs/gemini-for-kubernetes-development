@@ -546,6 +546,57 @@ func (m *TaskQueueManager) TaskExists(filename string) bool {
 	return false
 }
 
+// HasActiveIssueTask reports whether any task for issue issueNumber is
+// queued or running: a fix (task-issue-N) or a workflow step
+// (task-workflow-<name>-issue-N), by the task's number or its file name.
+// The issue scanner queues nothing more for an issue while one is, as the
+// pull request scanner does for a pull request (HasActivePRTask).
+func (m *TaskQueueManager) HasActiveIssueTask(issueNumber int) bool {
+	if issueNumber <= 0 {
+		return false
+	}
+	isFor := func(filename string, t *api.QueueTask) bool {
+		if t != nil && t.Number == issueNumber && !api.IsPRTask(t.Type) {
+			return true
+		}
+		return issueTaskFile(filename, issueNumber)
+	}
+	m.mu.RLock()
+	if m.incoming.HasMatching(isFor) {
+		m.mu.RUnlock()
+		return true
+	}
+	for fn, t := range m.processing {
+		if isFor(fn, t) {
+			m.mu.RUnlock()
+			return true
+		}
+	}
+	m.mu.RUnlock()
+
+	for _, dir := range []string{m.incomingDir, m.processingDir} {
+		if dir == "" {
+			continue
+		}
+		files, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+		for _, f := range files {
+			if !f.IsDir() && issueTaskFile(f.Name(), issueNumber) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// issueTaskFile reports whether filename names a task for issue n.
+func issueTaskFile(filename string, n int) bool {
+	return filename == fmt.Sprintf("task-issue-%d.yaml", n) ||
+		(strings.HasPrefix(filename, "task-workflow-") && strings.HasSuffix(filename, fmt.Sprintf("-issue-%d.yaml", n)))
+}
+
 // HasActivePRTask reports whether any task for the given PR number is currently
 // pending in the incoming queue or executing in the processing queue.
 func (m *TaskQueueManager) HasActivePRTask(prNumber int) bool {

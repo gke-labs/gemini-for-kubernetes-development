@@ -331,7 +331,9 @@ The prebaked PR rules, in order:
 
 On issues, `workflow-missing` (5) stops an issue whose workflow cannot be
 loaded, which ends the walk; `workflow` (10) and `fix` (20) both take the item; their
-predicates (`workflow: any` and `workflow: none`) keep them apart. `ready`
+predicates (`workflow: any` and `workflow: none`) keep them apart. Like a PR, an issue gets
+one task at a time: while its fix or a workflow step is queued or running,
+neither rule decides (an edited body naming a workflow waits for the fix). `ready`
 writes labels but takes the item: it must not hold beside a care rule, nor
 while a task runs.
 

@@ -1078,3 +1078,34 @@ func TestProcessedTaskAccessors(t *testing.T) {
 		}
 	})
 }
+
+// An issue's task is its fix or a workflow step, queued or running, found by
+// the task's number or its file name; another issue's, or a PR's, is not.
+func TestTaskQueueManager_HasActiveIssueTask(t *testing.T) {
+	mgr, _ := setupTestQueueManager(t)
+	if err := mgr.Enqueue("task-issue-7.yaml", &api.QueueTask{Type: api.TypeIssueFix, Number: 7}); err != nil {
+		t.Fatal(err)
+	}
+	if err := mgr.Enqueue("task-workflow-greenfield-issue-9.yaml", &api.QueueTask{Type: api.TypeAgentChore, Number: 9}); err != nil {
+		t.Fatal(err)
+	}
+	if err := mgr.Enqueue("task-pr-11-investigate.yaml", &api.QueueTask{Type: api.TypePRInvestigate, Number: 11}); err != nil {
+		t.Fatal(err)
+	}
+	for n, want := range map[int]bool{7: true, 9: true, 11: false, 17: false, 70: false, 0: false} {
+		if got := mgr.HasActiveIssueTask(n); got != want {
+			t.Errorf("HasActiveIssueTask(%d) = %v, want %v", n, got, want)
+		}
+	}
+	// Running counts too.
+	fn, task, err := mgr.ClaimNextCandidate()
+	if err != nil || fn == "" {
+		t.Fatalf("claim: %q, %v", fn, err)
+	}
+	if err := mgr.StartTask(fn, task); err != nil {
+		t.Fatal(err)
+	}
+	if task.Number != 11 && !mgr.HasActiveIssueTask(task.Number) {
+		t.Errorf("the running task for #%d is not active", task.Number)
+	}
+}
