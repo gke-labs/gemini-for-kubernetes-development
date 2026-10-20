@@ -432,11 +432,25 @@ func (s *Scanner) queueTask(ctx context.Context, issue *githubv39.Issue, refIssu
 	wf = wf.check(ctx, s.gh)
 	switch wf.Status {
 	case common.WorkflowMissing, common.WorkflowUnusable:
+		s.rec.Fill(func(it *rules.Item) { it.WorkflowMissing = true })
+		// The workflow-missing rule: off, or the engine's and not decided
+		// by it, the issue is neither stopped nor stepped.
+		if s.rules.Off("workflow-missing") {
+			klog.V(2).Infof("Skipping issue #%d: its workflow %s is unavailable and the workflow-missing rule is disabled", num, wf.Path)
+			return
+		}
+		if s.rec != nil && s.rules.Takes("workflow-missing", labelNames(issue.Labels)) &&
+			!rules.Decided(s.rules.Decide(*s.rec.Item, s.rulesEnv()), "workflow-missing") {
+			klog.Infof("Skipping issue #%d: the rules engine does not decide workflow-missing", num)
+			return
+		}
+		s.rec.Decided("workflow-missing", rules.OutcomeRun)
 		s.stopForUnavailableWorkflow(ctx, num, wf)
 		return
 	case common.WorkflowUnresolved:
 		// Whether the definition exists is unknown, so neither run it nor
 		// stop the issue; the next cycle will look again.
+		s.rec.Gated("fetching its workflow failed")
 		klog.Warningf("Skipping issue #%d this cycle: could not fetch its workflow %s: %v", num, wf.Path, wf.Err)
 		return
 	}

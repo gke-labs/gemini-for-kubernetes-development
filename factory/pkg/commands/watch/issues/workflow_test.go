@@ -15,6 +15,7 @@ import (
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/api"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/watch/rules"
 )
 
 // workflowGitHub fakes the GitHub calls made while an issue naming a workflow
@@ -243,4 +244,49 @@ func TestQueueTask_WorkflowFetchedOnlyAfterGates(t *testing.T) {
 			t.Errorf("fetched the definition %d times for a workflow cooling down, want 1 (the cooldown lookup)", fake.contentsRequests)
 		}
 	})
+}
+
+// A workflow that cannot be loaded is the workflow-missing rule's: the
+// scanner records the fact and the decision, and the rules decide the
+// same; one that cannot be fetched is a gate, not compared; with the rule
+// disabled, the issue is neither stopped nor stepped.
+func TestQueueTask_MissingWorkflowIsARule(t *testing.T) {
+	set, err := rules.Builtin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	record := func(fake *workflowGitHub, control *rules.Control) rules.Record {
+		t.Helper()
+		var got rules.Record
+		s, _, _ := newScanner(t, Config{}, Deps{GitHub: fake.client(t), Rules: control,
+			Recorder: rules.NewSinkRecorder(func(rec rules.Record) { got = rec })})
+		s.queueTasks(context.Background(), []*githubv39.Issue{workflowIssue(12, "Run this: .agents/workflows/does-not-exist.md")}, map[int]bool{})
+		return got
+	}
+
+	missing := &workflowGitHub{}
+	rec := record(missing, nil)
+	if !rec.Item.WorkflowMissing || strings.Join(rec.Decided, ",") != "workflow-missing run" {
+		t.Errorf("record = missing %v, decided %v", rec.Item.WorkflowMissing, rec.Decided)
+	}
+	var engine []string
+	for _, d := range set.Decide(rec.Item, rec.Env) {
+		engine = append(engine, d.Rule+" "+d.Outcome)
+	}
+	if strings.Join(engine, ",") != "workflow-missing run" {
+		t.Errorf("the rules decide %v, want workflow-missing run", engine)
+	}
+
+	if rec := record(&workflowGitHub{contentsStatus: http.StatusInternalServerError}, nil); rec.Gate == "" || len(rec.Decided) != 0 {
+		t.Errorf("unresolved: gate %q, decided %v; want a gate and nothing", rec.Gate, rec.Decided)
+	}
+
+	off, err := rules.NewControl("", nil, "", []string{"workflow-missing"}, set)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake := &workflowGitHub{}
+	if rec := record(fake, off); len(rec.Decided) != 0 || len(fake.labels) != 0 {
+		t.Errorf("disabled: decided %v, labelled %v; want neither", rec.Decided, fake.labels)
+	}
 }

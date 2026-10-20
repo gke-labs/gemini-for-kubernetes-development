@@ -197,6 +197,9 @@ func factOf(predicate string, it Item, env Env, runs []PastRun) string {
 	case "linked-pr":
 		return "linked-pr " + orNone(it.LinkedPR)
 	case "workflow":
+		if it.WorkflowMissing {
+			return "workflow " + it.Workflow + ", which cannot be loaded"
+		}
 		return "workflow " + orNone(it.Workflow)
 	case "fanout":
 		return fmt.Sprintf("fanout %t", it.FanoutParent)
@@ -304,11 +307,11 @@ func (w When) String() string {
 		return ""
 	}
 	if len(alts) > 0 {
-		any := flow(When{AnyOf: alts})
+		anyOf := flow(When{AnyOf: alts})
 		if s == "" {
-			return any
+			return anyOf
 		}
-		s += ", " + any
+		s += ", " + anyOf
 	}
 	return s
 }

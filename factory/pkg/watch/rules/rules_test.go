@@ -14,7 +14,7 @@ func TestBuiltinRulesParseAndValidate(t *testing.T) {
 		t.Fatalf("Builtin: %v", err)
 	}
 	want := []string{"adopt-pr", "chore", "ci", "comments", "conflict", "fix", "inactive",
-		"inherit-labels", "nudge", "ready", "ready-unreview", "review", "stop", "workflow"}
+		"inherit-labels", "nudge", "ready", "ready-unreview", "review", "stop", "workflow", "workflow-missing"}
 	var got []string
 	for _, r := range set {
 		got = append(got, r.Name)

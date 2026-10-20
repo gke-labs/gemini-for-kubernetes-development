@@ -140,7 +140,7 @@ the merge queue get nothing from any rule.
 | predicate | values | holds when |
 |---|---|---|
 | `linked-pr` | `none`, `open` | no open PR closes or is linked to the issue; one does (a closing reference such as "Fixes #N", or GitHub's sidebar link) |
-| `workflow` | `none`, `any` | the issue's body names no workflow definition; it names one |
+| `workflow` | `none`, `any`, `missing` | the issue's body names no workflow definition; it names one it can load; it names one that cannot be loaded (missing, or not a workflow it can run) |
 | `opened-by` | `watcher` | the watcher's own login opened it |
 | `fanout` | `true`, `false` | it is a fan-out's parent (the fanout label): the fan-out controller's, never fixed itself. A child is an ordinary issue, created when it is to be worked on |
 
@@ -329,7 +329,8 @@ The prebaked PR rules, in order:
 | 60 | `ready-unreview` | yes (`exclusive: true`) | takes `*/review` off a PR already handed over |
 | - | `adopt-pr` | no | (off) |
 
-On issues, `workflow` (10) and `fix` (20) both take the item; their
+On issues, `workflow-missing` (5) stops an issue whose workflow cannot be
+loaded, which ends the walk; `workflow` (10) and `fix` (20) both take the item; their
 predicates (`workflow: any` and `workflow: none`) keep them apart. `ready`
 writes labels but takes the item: it must not hold beside a care rule, nor
 while a task runs.
@@ -518,7 +519,8 @@ shows the disagreements per rule (the design's Phase 2b).
 | rule | on | does |
 |---|---|---|
 | `fix` | issue | fixes an issue the overseer is pointed at and opens the PR |
-| `workflow` | issue | takes the next step of the workflow an issue names |
+| `workflow-missing` | issue | stops an issue whose workflow definition cannot be loaded, with a comment saying so |
+| `workflow` | issue | takes the next step of the workflow an issue names (held while an open PR closes the issue) |
 | `stop` | issue | (off: the stop label is an engine gate) drops an item's queued tasks |
 | `inherit-labels` | pr | copies the closing issues' labels onto the PR, ahead of the rules that take it |
 | `adopt-pr` | pr | (off) labels a bot PR no listing finds whose closing issue is the overseer's |

@@ -69,6 +69,8 @@ func TestDecideIssues(t *testing.T) {
 		{"assigned to the pool, unlabelled", issue(func(it *Item) { it.Labels, it.Assignees = nil, []string{"lovelace-coder-bot"} }), "fix run"},
 		{"an open PR closes it (13173 after #14055)", issue(func(it *Item) { it.LinkedPR = "open" }), ""},
 		{"stopped", issue(func(it *Item) { it.Labels = append(it.Labels, "overseer/stop") }), ""},
+		{"names a workflow it cannot load: stopped, not stepped or fixed", issue(func(it *Item) { it.Workflow, it.WorkflowMissing = "gone", true }), "workflow-missing run"},
+		{"names a workflow, an open PR closes it: held", issue(func(it *Item) { it.Workflow, it.LinkedPR = "kcc-example", "open" }), ""},
 		{"fixed 5m ago: cooldown", issue(func(it *Item) { it.Runs = []PastRun{fixed(5*time.Minute, false)}; it.UpdatedAt = ago(time.Minute) }), ""},
 		{"fixed 15m ago, updated since", issue(func(it *Item) { it.Runs = []PastRun{fixed(15*time.Minute, false)}; it.UpdatedAt = ago(time.Minute) }), "fix run"},
 		{"fixed 15m ago, not updated", issue(func(it *Item) { it.Runs = []PastRun{fixed(15*time.Minute, false)} }), ""},

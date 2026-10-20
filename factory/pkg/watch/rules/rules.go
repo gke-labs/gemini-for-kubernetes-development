@@ -170,7 +170,7 @@ type When struct {
 
 	// Issues.
 	LinkedPR string `yaml:"linked-pr,omitempty" json:"linked-pr,omitempty"` // none | open
-	Workflow string `yaml:"workflow,omitempty" json:"workflow,omitempty"`   // none | any
+	Workflow string `yaml:"workflow,omitempty" json:"workflow,omitempty"`   // none | any (one it can load) | missing (one it cannot)
 	OpenedBy string `yaml:"opened-by,omitempty" json:"opened-by,omitempty"` // watcher
 	// Fanout is whether the issue is a fan-out's parent (it carries the
 	// fanout label): the fan-out controller's, never fixed itself. Its
@@ -390,7 +390,7 @@ var enums = map[string][]string{
 	"assignee":  {"pool", "not-pool", "none"},
 	"author":    {"pool"},
 	"linked-pr": {"none", "open"},
-	"workflow":  {"none", "any"},
+	"workflow":  {"none", "any", "missing"},
 	"opened-by": {"watcher"},
 	"checks":    {"failing", "pending", "green"},
 	"feedback":  {"new-trusted", "none"},

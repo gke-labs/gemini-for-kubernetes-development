@@ -31,6 +31,9 @@ type Item struct {
 	LinkedPR string
 	// Workflow names the workflow definition the issue's body names.
 	Workflow string
+	// WorkflowMissing is that the definition it names cannot be loaded:
+	// missing, or not a workflow it can run.
+	WorkflowMissing bool
 	// WorkflowCooldown is that definition's cooldown, 0 for its default.
 	WorkflowCooldown time.Duration
 	// FanoutParent is whether the issue carries the fanout label.
@@ -217,7 +220,11 @@ func (w When) holds(r *Rule, it Item, env Env, runs []PastRun) bool {
 			return false
 		}
 	case "any":
-		if it.Workflow == "" {
+		if it.Workflow == "" || it.WorkflowMissing {
+			return false
+		}
+	case "missing":
+		if it.Workflow == "" || !it.WorkflowMissing {
 			return false
 		}
 	}
