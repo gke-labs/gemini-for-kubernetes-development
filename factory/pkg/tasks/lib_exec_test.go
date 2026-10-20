@@ -755,10 +755,16 @@ echo "RECORD=$(cat "$TASK_DIR/push.json" 2>/dev/null)"`
 		}
 	})
 
-	t.Run("no commit fails a start", func(t *testing.T) {
+	t.Run("no commit on a start pushes nothing and records it unchanged", func(t *testing.T) {
 		out, _, err := runLib(t, nil, setup, "pushToFork"+report)
-		if err == nil || !strings.Contains(out, "the fix made no change") {
-			t.Fatalf("want the push to fail with no change:\n%s", out)
+		if err != nil || !strings.Contains(out, "the fix made no change") {
+			t.Fatalf("want the push to succeed with no change: %v\n%s", err, out)
+		}
+		if !strings.Contains(out, "PUSHED=\n") {
+			t.Errorf("something was pushed:\n%s", out)
+		}
+		if !strings.Contains(out, `RECORD={"unchanged":true,"base":"`) {
+			t.Errorf("push.json does not say unchanged:\n%s", out)
 		}
 	})
 

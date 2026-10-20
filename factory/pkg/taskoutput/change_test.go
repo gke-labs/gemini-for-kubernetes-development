@@ -107,6 +107,8 @@ type fakePRs struct {
 	// whether it was closed.
 	comments []string
 	closed   bool
+	// issueComments are o/r#7's, the issue a fix is for.
+	issueComments []string
 }
 
 func (f *fakePRs) client(t *testing.T) *githubv39.Client {
@@ -154,6 +156,20 @@ func (f *fakePRs) client(t *testing.T) *githubv39.Client {
 		}
 		var out []githubv39.IssueComment
 		for _, b := range f.comments {
+			out = append(out, githubv39.IssueComment{Body: githubv39.String(b)})
+		}
+		_ = json.NewEncoder(w).Encode(out)
+	})
+	mux.HandleFunc("/repos/o/r/issues/7/comments", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			var c githubv39.IssueComment
+			_ = json.NewDecoder(r.Body).Decode(&c)
+			f.issueComments = append(f.issueComments, c.GetBody())
+			fmt.Fprint(w, `{}`)
+			return
+		}
+		var out []githubv39.IssueComment
+		for _, b := range f.issueComments {
 			out = append(out, githubv39.IssueComment{Body: githubv39.String(b)})
 		}
 		_ = json.NewEncoder(w).Encode(out)
@@ -745,5 +761,48 @@ func TestChangeBodyKeepsItsLastFence(t *testing.T) {
 	}
 	if len(c.Rewrites) != 1 || c.Rewrites[0] != "body" {
 		t.Errorf("rewrites = %v, want [body]: the fence put back is a change", c.Rewrites)
+	}
+}
+
+// A fix that should change nothing makes no commit and says why: the push
+// records it unchanged, and open-pr posts the why on the issue, once, and
+// opens no PR. No commit and no why is refused at the push.
+func TestOpenPRUnchanged(t *testing.T) {
+	ctx := context.Background()
+	const why = "change:\n  comment: |\n    Already fixed by #6 on main; nothing to change.\n"
+	doc, err := Wrap("Change", why, Target{URL: issueURL}, Source{Task: "fix-2", Recipe: "fix"})
+	if err != nil {
+		t.Fatalf("Wrap: %v", err)
+	}
+	if err := doc.SetPushed(Pushed{Unchanged: true, Base: "b0", Head: "b0"}); err != nil {
+		t.Fatalf("SetPushed: %v", err)
+	}
+	if err := doc.AddLabels([]string{"factory"}); err != nil {
+		t.Fatal(err)
+	}
+	f := &fakePRs{}
+	var out bytes.Buffer
+	for range 2 {
+		if err := ApplyAction(ctx, f.client(t), doc, "open-pr", false, &out); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(f.created) != 0 {
+		t.Errorf("opened %d PRs for a fix that changed nothing", len(f.created))
+	}
+	if len(f.issueComments) != 1 || !strings.HasPrefix(f.issueComments[0], "Already fixed by #6 on main") || !strings.Contains(f.issueComments[0], marker(doc)) {
+		t.Errorf("issue comments = %q, want the why once", f.issueComments)
+	}
+	if doc.Target.URL != issueURL {
+		t.Errorf("target = %s, want the issue still", doc.Target.URL)
+	}
+
+	// No commit and no why: the push is refused, and the task fails.
+	silent, err := Wrap("Change", agentChange, Target{URL: issueURL}, Source{Task: "fix-3"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := silent.SetPushed(Pushed{Unchanged: true, Base: "b0", Head: "b0"}); err == nil || !strings.Contains(err.Error(), "made no change") {
+		t.Errorf("an unchanged push with no comment: %v", err)
 	}
 }
