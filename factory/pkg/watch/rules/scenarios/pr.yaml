@@ -79,3 +79,54 @@ name: a PR from outside the pool is not the overseer's
 env: {pool: [ada-coder-bot], now: 2026-10-20T12:00:00Z}
 item: {kind: pr, number: 9, author: someone, labels: [overseer], head: h1, checks: failing, mergeable: true}
 expect: []
+---
+name: "new feedback after three answered rounds on the same head is answered (give-up counts failures)"
+env: {pool: [ada-coder-bot], now: 2026-10-20T12:00:00Z}
+item:
+  kind: pr
+  number: 10
+  author: ada-coder-bot
+  labels: [overseer]
+  head: h1
+  headChangedAt: 2026-10-20T05:00:00Z
+  checks: green
+  mergeable: true
+  newTrustedFeedback: true
+  humanSpokeAt: 2026-10-20T11:30:00Z
+  runs:
+    - {rule: comments, startedAt: 2026-10-20T06:00:00Z, endedAt: 2026-10-20T06:10:00Z, head: h1}
+    - {rule: comments, startedAt: 2026-10-20T08:00:00Z, endedAt: 2026-10-20T08:10:00Z, head: h1}
+    - {rule: comments, startedAt: 2026-10-20T10:00:00Z, endedAt: 2026-10-20T10:10:00Z, head: h1}
+expect: [comments run]
+---
+name: "three failed comments runs since the head and no new word: give up"
+env: {pool: [ada-coder-bot], now: 2026-10-20T12:00:00Z}
+item:
+  kind: pr
+  number: 11
+  author: ada-coder-bot
+  labels: [overseer]
+  head: h1
+  headChangedAt: 2026-10-20T05:00:00Z
+  checks: green
+  mergeable: true
+  humanSpokeAt: 2026-10-20T05:30:00Z
+  runs:
+    - {rule: comments, startedAt: 2026-10-20T06:00:00Z, endedAt: 2026-10-20T06:10:00Z, head: h1, failed: true}
+    - {rule: comments, startedAt: 2026-10-20T08:00:00Z, endedAt: 2026-10-20T08:10:00Z, head: h1, failed: true}
+    - {rule: comments, startedAt: 2026-10-20T10:00:00Z, endedAt: 2026-10-20T10:10:00Z, head: h1, failed: true}
+expect: [comments give-up]
+---
+name: "a failed comments run on this head is retried"
+env: {pool: [ada-coder-bot], now: 2026-10-20T12:00:00Z}
+item:
+  kind: pr
+  number: 12
+  author: ada-coder-bot
+  labels: [overseer]
+  head: h1
+  headChangedAt: 2026-10-20T05:00:00Z
+  checks: green
+  mergeable: true
+  runs: [{rule: comments, startedAt: 2026-10-20T10:00:00Z, endedAt: 2026-10-20T10:10:00Z, head: h1, failed: true}]
+expect: [comments run]

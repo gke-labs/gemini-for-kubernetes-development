@@ -323,7 +323,12 @@ func (s *Scanner) hasFailedCommentsOnHead(num int, headSHA string) bool {
 // It reports whether the phase completed cleanly; a false return means a
 // sandbox probe or enqueue failed and the pull request must be looked at again
 // next cycle.
-func (s *Scanner) handlePRComments(ctx context.Context, pc *prContext, commentAnalysis prCommentAnalysis, comments []*githubv39.IssueComment) bool {
+//
+// engine is the rules engine's decision on comments when it decides the
+// rule for the scanner, "" when the scanner decides: on OutcomeGiveUp the
+// watch gives up as it always has, and on OutcomeRun the engine's give-up
+// stands in for the handler's retry limit.
+func (s *Scanner) handlePRComments(ctx context.Context, pc *prContext, commentAnalysis prCommentAnalysis, comments []*githubv39.IssueComment, engine string) bool {
 	if os.Getenv("DRY_RUN") == "true" {
 		return true
 	}
@@ -333,6 +338,9 @@ func (s *Scanner) handlePRComments(ctx context.Context, pc *prContext, commentAn
 
 	if s.queue.TaskExists(filename) {
 		return true
+	}
+	if engine == rules.OutcomeGiveUp {
+		return s.giveUpAddressing(ctx, num, pc.headSHA)
 	}
 
 	var eventTime time.Time
@@ -358,17 +366,8 @@ func (s *Scanner) handlePRComments(ctx context.Context, pc *prContext, commentAn
 		last := s.queue.GetProcessedTask(filename)
 		if last != nil && last.RetryCount >= maxCommentRetries {
 			stopLabel := conventions.StopLabel(s.cfg.TriggerLabel)
-			if !hasCommentPauseAfter(comments, last.CompletedAt) {
-				if !s.cfg.DryRun {
-					if err := s.gh.AddLabels(ctx, num, []string{stopLabel}); err != nil {
-						klog.Errorf("Failed to add stop label '%s' to PR #%d: %v", stopLabel, num, err)
-						return false
-					}
-					s.comment(ctx, num, fmt.Sprintf("🤖 AI Factory has attempted to address review feedback for this pull request %d times since the last commit or update without success. To prevent infinite loops, I am pausing automated feedback addressing and attaching the `%s` label.\n\nTo request another attempt or resume automated processing, please remove the `%s` label from this pull request (and/or push a new commit or leave a comment).", maxCommentRetries, stopLabel, stopLabel))
-				}
-				s.rec.Decided("comments", rules.OutcomeGiveUp)
-				klog.Infof("Skipping PR #%d address-comments retry because it has reached the maximum retry limit (%d retries) for SHA %s and applying stop label '%s'.", num, maxCommentRetries, pc.headSHA, stopLabel)
-				return true
+			if engine == "" && !hasCommentPauseAfter(comments, last.CompletedAt) {
+				return s.giveUpAddressing(ctx, num, pc.headSHA)
 			}
 			// A pause comment was already posted after the last failure, and the
 			// stop label is no longer present on the PR: a human removed the label
@@ -440,6 +439,24 @@ func (s *Scanner) handlePRComments(ctx context.Context, pc *prContext, commentAn
 	}
 	state.lastCommentAddressedTime = task.EnqueuedAt
 	s.state.set(num, state)
+	return true
+}
+
+// giveUpAddressing puts a pull request whose feedback the watch has failed
+// to address too often on hold: the stop label, and a comment saying so
+// (its wording is what hasCommentPauseAfter reads). It reports whether it
+// completed.
+func (s *Scanner) giveUpAddressing(ctx context.Context, num int, headSHA string) bool {
+	stopLabel := conventions.StopLabel(s.cfg.TriggerLabel)
+	if !s.cfg.DryRun {
+		if err := s.gh.AddLabels(ctx, num, []string{stopLabel}); err != nil {
+			klog.Errorf("Failed to add stop label '%s' to PR #%d: %v", stopLabel, num, err)
+			return false
+		}
+		s.comment(ctx, num, fmt.Sprintf("🤖 AI Factory has attempted to address review feedback for this pull request %d times since the last commit or update without success. To prevent infinite loops, I am pausing automated feedback addressing and attaching the `%s` label.\n\nTo request another attempt or resume automated processing, please remove the `%s` label from this pull request (and/or push a new commit or leave a comment).", maxCommentRetries, stopLabel, stopLabel))
+	}
+	s.rec.Decided("comments", rules.OutcomeGiveUp)
+	klog.Infof("Skipping PR #%d address-comments retry because it has reached the maximum retry limit (%d retries) for SHA %s and applying stop label '%s'.", num, maxCommentRetries, headSHA, stopLabel)
 	return true
 }
 

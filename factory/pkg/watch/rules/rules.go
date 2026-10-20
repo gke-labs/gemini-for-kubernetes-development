@@ -256,9 +256,13 @@ type Cooldown struct {
 // GiveUp stops the rule on an item after Attempts runs since Since: the
 // stop label, and Comment saying why.
 type GiveUp struct {
-	Attempts int    `yaml:"attempts" json:"attempts"`
-	Since    Since  `yaml:"since,omitempty" json:"since,omitempty"`
-	Comment  string `yaml:"comment,omitempty" json:"comment,omitempty"`
+	Attempts int   `yaml:"attempts" json:"attempts"`
+	Since    Since `yaml:"since,omitempty" json:"since,omitempty"`
+	// Failed counts only the runs that failed: a rule that runs again on
+	// news (comments, on new feedback) gives up on failing, not on being
+	// asked.
+	Failed  bool   `yaml:"failed,omitempty" json:"failed,omitempty"`
+	Comment string `yaml:"comment,omitempty" json:"comment,omitempty"`
 }
 
 // Duration is a time.Duration written as Go writes one ("10m", "2h"), or

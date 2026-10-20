@@ -670,7 +670,7 @@ func (s *Scanner) evaluate(ctx context.Context, prIssue *githubv39.Issue) {
 	completed := true
 	switch {
 	case s.picks("comments", prIssue, shouldAddressComments):
-		completed = s.handlePRComments(ctx, pc, commentAnalysis, history.comments)
+		completed = s.handlePRComments(ctx, pc, commentAnalysis, history.comments, s.engineOutcome("comments", prIssue))
 
 	case s.picks("conflict", prIssue, isConflicting):
 		// Returns without recording the evaluation, so a conflicted pull
