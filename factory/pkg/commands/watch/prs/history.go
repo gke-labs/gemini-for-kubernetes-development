@@ -118,8 +118,8 @@ func (s *Scanner) pauseIfInactive(ctx context.Context, pr *githubv39.PullRequest
 		return false
 	}
 	num := prIssue.GetNumber()
-	lastActivity := getLastPRActivityTime(pr, history.comments, history.reviews, history.revCommentsMap, s.cfg.GitHubLogin, s.cfg.AllowlistedBots, s.cfg.TrustedLogins, s.cfg.TriggerLabel)
-	if time.Since(lastActivity) <= s.cfg.InactivityTimeout {
+	lastActivity, inactive := s.inactiveSince(pr, history)
+	if !inactive {
 		return false
 	}
 
@@ -141,6 +141,13 @@ func (s *Scanner) pauseIfInactive(ctx context.Context, pr *githubv39.PullRequest
 	}
 	_ = s.queue.RemovePendingTasksForNumber(num)
 	return true
+}
+
+// inactiveSince is when a human last engaged with the pull request, and
+// whether that is longer ago than the inactivity timeout (none: never).
+func (s *Scanner) inactiveSince(pr *githubv39.PullRequest, history *prHistory) (time.Time, bool) {
+	lastActivity := getLastPRActivityTime(pr, history.comments, history.reviews, history.revCommentsMap, s.cfg.GitHubLogin, s.cfg.AllowlistedBots, s.cfg.TrustedLogins, s.cfg.TriggerLabel)
+	return lastActivity, s.cfg.InactivityTimeout > 0 && time.Since(lastActivity) > s.cfg.InactivityTimeout
 }
 
 // getLastPRActivityTime returns when a human last engaged with the pull

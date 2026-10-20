@@ -209,6 +209,14 @@ func (s *Scanner) engineOutcome(rule string, prIssue *githubv39.Issue) string {
 	return ""
 }
 
+// recordHandedStep notes, when the engine decides rule for the scanner on
+// the pull request, what the scanner's own condition said: legacy.
+func (s *Scanner) recordHandedStep(rule string, prIssue *githubv39.Issue, legacy bool) {
+	if s.takes(rule, prIssue) {
+		s.rec.Handed(rule, legacy)
+	}
+}
+
 // recordHanded notes, for each pr-care rule the engine decides for the
 // scanner, whether the scanner's own pick (legacyPick, the first case its
 // conditions take, "" for none) was that rule: what the record compares
