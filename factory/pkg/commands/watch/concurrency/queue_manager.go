@@ -56,12 +56,12 @@ type TaskQueueManager struct {
 	// newest last, the last maxFailures of them, served with the queue.
 	failures []api.Failure
 
-	// runs are the start times of the runs that ended (journalled Completed
-	// or Failed), by task ID, the last runsKeptFor of them: what RunsSince
+	// runs are the runs that ended (journalled Completed or Failed), when
+	// each started and whether it failed, by task ID, the last runsKeptFor of them: what RunsSince
 	// counts. Loaded from journal.jsonl on first use and kept up to date as
 	// runs end, under runsMu (not mu: the journal is written with mu held).
 	runsMu     sync.Mutex
-	runs       map[string][]time.Time
+	runs       map[string][]api.EndedRun
 	runsLoaded bool
 }
 
@@ -731,7 +731,7 @@ func (m *TaskQueueManager) writeJournalEvent(taskFilename string, task *api.Queu
 		return
 	}
 	if event == string(api.StatusCompleted) || event == string(api.StatusFailed) {
-		m.noteRun(strings.TrimSuffix(taskFilename, ".yaml"), runStart(task.StartedAt, time.Now()))
+		m.noteRun(strings.TrimSuffix(taskFilename, ".yaml"), api.EndedRun{StartedAt: runStart(task.StartedAt, time.Now()), Failed: event == string(api.StatusFailed)})
 	}
 	journalPath := filepath.Join(m.queueDir, "journal.jsonl")
 	f, err := os.OpenFile(journalPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
@@ -912,33 +912,33 @@ func (m *TaskQueueManager) RunsSince(filename string, since time.Time) int {
 	defer m.runsMu.Unlock()
 	m.loadRunsLocked()
 	n := 0
-	for _, t := range m.runs[strings.TrimSuffix(filename, ".yaml")] {
-		if t.After(since) {
+	for _, r := range m.runs[strings.TrimSuffix(filename, ".yaml")] {
+		if r.StartedAt.After(since) {
 			n++
 		}
 	}
 	return n
 }
 
-// RunStarts are the start times of the runs of the task named filename
-// that ended, oldest first, as far back as RunsSince counts: the rules
-// record's history of an item.
-func (m *TaskQueueManager) RunStarts(filename string) []time.Time {
+// EndedRuns are the runs of the task named filename that ended, each
+// with its outcome, oldest first, as far back as RunsSince counts: the
+// rules record's history of an item.
+func (m *TaskQueueManager) EndedRuns(filename string) []api.EndedRun {
 	m.runsMu.Lock()
 	defer m.runsMu.Unlock()
 	m.loadRunsLocked()
 	out := slices.Clone(m.runs[strings.TrimSuffix(filename, ".yaml")])
-	slices.SortFunc(out, func(a, b time.Time) int { return a.Compare(b) })
+	slices.SortStableFunc(out, func(a, b api.EndedRun) int { return a.StartedAt.Compare(b.StartedAt) })
 	return out
 }
 
 // noteRun records a run of taskID that ended, once the journal has been read
 // (until then, reading it will find this run there).
-func (m *TaskQueueManager) noteRun(taskID string, started time.Time) {
+func (m *TaskQueueManager) noteRun(taskID string, run api.EndedRun) {
 	m.runsMu.Lock()
 	defer m.runsMu.Unlock()
 	if m.runsLoaded {
-		m.runs[taskID] = append(m.runs[taskID], started)
+		m.runs[taskID] = append(m.runs[taskID], run)
 	}
 }
 
@@ -950,7 +950,7 @@ func (m *TaskQueueManager) loadRunsLocked() {
 		return
 	}
 	m.runsLoaded = true
-	m.runs = map[string][]time.Time{}
+	m.runs = map[string][]api.EndedRun{}
 	if m.queueDir == "" {
 		return
 	}
@@ -974,7 +974,7 @@ func (m *TaskQueueManager) loadRunsLocked() {
 		if started.Before(cutoff) {
 			continue
 		}
-		m.runs[je.TaskID] = append(m.runs[je.TaskID], started)
+		m.runs[je.TaskID] = append(m.runs[je.TaskID], api.EndedRun{StartedAt: started, Failed: je.Event == string(api.StatusFailed)})
 	}
 }
 
