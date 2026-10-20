@@ -486,7 +486,9 @@ function setupForkRepo {
 #     commit someone else pushed in between is never overwritten.
 #   - Hooks are off and the checkout's config is reset (resetRepoGitConfig).
 #   - With no lease (a start), a HEAD still at the base ($TASK_DIR/base)
-#     fails: the fix made no change.
+#     pushes nothing: the fix made no change. push.json then says so
+#     (unchanged), and the Change must say why (its comment), which
+#     open-pr posts on the issue; without one, the task fails.
 #
 # What it pushed goes to $TASK_DIR/push.json, which the runner puts on the
 # task's Change (pkg/taskoutput).
@@ -544,8 +546,9 @@ function pushToFork {
     resetRepoGitConfig
     head="$(git rev-parse --verify 'HEAD^{commit}')"
     if [ -z "${lease}" ] && [ "${head}" = "${base}" ]; then
-        echo "the fix made no change: there is no commit on top of ${base}" >&2
-        return 1
+        echo "the fix made no change: there is no commit on top of ${base}; nothing to push"
+        printf '{"unchanged":true,"base":"%s","head":"%s"}\n' "${base}" "${head}" > "${dir}/push.json"
+        return 0
     fi
     if [ -n "$(git status --porcelain)" ]; then
         echo "Warning: uncommitted changes in the checkout are not pushed" >&2

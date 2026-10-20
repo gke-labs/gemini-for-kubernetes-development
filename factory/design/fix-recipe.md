@@ -50,7 +50,7 @@ A new `uses` step, like `clone`: factory's code, not the recipe's or the workspa
 - A start pushes a new branch. A revise pushes to the branch the start recorded, `--force-with-lease` against the head it last pushed, so a commit someone else pushed to the PR in between is never overwritten. The revise fails instead and says so.
 - It records the branch, the base and the pushed head in the task directory, where the runner puts them on the `Change`.
 - It runs with the repository's hooks off (`core.hooksPath=/dev/null`) and the checkout's git config reset, as `resetRepoGitConfig` does today.
-- Nothing to push (the agent made no commit) is not an error for a revise: an answer that changes nothing is a valid answer to a comment. For a start it fails the task: "the fix made no change".
+- Nothing to push (the agent made no commit) is not an error for a revise: an answer that changes nothing is a valid answer to a comment. For a start it is an answer too, when the agent says why: it makes no commit and writes the Change's `comment` (already fixed, not a bug, a duplicate, a maintainer's decision); push.json records the start `unchanged`, and open-pr posts the comment on the issue instead of opening a PR. No commit and no comment fails the task: "the fix made no change, and its Change says nothing about why".
 
 ### The Change kind
 

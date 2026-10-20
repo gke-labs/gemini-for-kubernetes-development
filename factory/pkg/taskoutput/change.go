@@ -43,6 +43,10 @@ type Change struct {
 	Replies []Reply `yaml:"replies,omitempty"`
 	// Report is a PR comment (fix-ci).
 	Report string `yaml:"report,omitempty"`
+	// Comment is why a fix changed nothing (the issue is already fixed,
+	// is not a bug, or needs a human's decision), when it made no commit:
+	// open-pr posts it on the issue instead of opening a PR.
+	Comment string `yaml:"comment,omitempty"`
 	// Rerun asks for checks that failed through no fault of the change (a
 	// flake, an outage) to run again, as post-replies applies them: the
 	// agent never reruns anything itself.
@@ -94,6 +98,9 @@ type Pushed struct {
 	Branch string `json:"branch"`
 	Base   string `json:"base"`
 	Head   string `json:"head"`
+	// Unchanged is a fix's start that made no commit: nothing was pushed,
+	// and the Change's Comment says why.
+	Unchanged bool `json:"unchanged,omitempty"`
 }
 
 // PushedFile is the task-directory file the push step records Pushed in.
@@ -105,7 +112,7 @@ func (d *Document) ChangeSpec() (*Change, error) {
 	if err != nil {
 		return nil, err
 	}
-	if strings.TrimSpace(c.Title) == "" {
+	if strings.TrimSpace(c.Title) == "" && c.Comment == "" {
 		return nil, fmt.Errorf("Change spec has no title")
 	}
 	return c, nil
@@ -151,6 +158,17 @@ func (d *Document) KeepTitle(title, body string) error {
 // and base in its spec, the head as its commit. Whatever the agent wrote
 // for them is replaced.
 func (d *Document) SetPushed(p Pushed) error {
+	if p.Unchanged {
+		c, err := d.ChangeSpec()
+		if err != nil {
+			return err
+		}
+		if c.Comment == "" {
+			return fmt.Errorf("the fix made no change, and its Change says nothing about why (spec.comment)")
+		}
+		c.Fork, c.Branch, c.Base = "", "", p.Base
+		return d.setSpec(c)
+	}
 	if p.Fork == "" || p.Branch == "" || p.Head == "" {
 		return fmt.Errorf("the push step recorded no fork, branch or head")
 	}
@@ -220,6 +238,7 @@ func parseChange(raw string) (any, error) {
 	c.Title = strings.TrimSpace(c.Title)
 	c.Body = strings.TrimSpace(c.Body)
 	c.Report = strings.TrimSpace(c.Report)
+	c.Comment = strings.TrimSpace(c.Comment)
 	var labels []string
 	for _, l := range c.Labels {
 		if l = strings.TrimSpace(l); l != "" {
@@ -262,6 +281,9 @@ func applyOpenPR(ctx context.Context, gh *githubv39.Client, doc *Document, dryRu
 	owner, repo, _, _, err := parseItemURL(doc.Target.URL)
 	if err != nil {
 		return err
+	}
+	if c.Fork == "" && c.Branch == "" && c.Comment != "" {
+		return commentUnchanged(ctx, gh, doc, c, owner, repo, dryRun, out)
 	}
 	if c.Fork == "" || c.Branch == "" {
 		return fmt.Errorf("the Change names no branch to open (spec.fork, spec.branch): nothing was pushed")
@@ -324,6 +346,37 @@ func applyOpenPR(ctx context.Context, gh *githubv39.Client, doc *Document, dryRu
 	doc.Target.URL = pr.GetHTMLURL()
 	addPRLabels(ctx, gh, owner, repo, pr, c.Labels, out)
 	return markAdopted(ctx, gh, c, pr.GetHTMLURL(), out)
+}
+
+// commentUnchanged is open-pr for a fix that changed nothing: it posts the
+// Change's comment, why, on the issue, once per task, and opens no PR.
+func commentUnchanged(ctx context.Context, gh *githubv39.Client, doc *Document, c *Change, owner, repo string, dryRun bool, out io.Writer) error {
+	_, _, num, isPR, err := parseItemURL(doc.Target.URL)
+	if err != nil {
+		return err
+	}
+	if isPR {
+		return fmt.Errorf("the Change made no change and is on a PR (%s): nothing to open", doc.Target.URL)
+	}
+	if doc.Source.Task != "" {
+		posted, err := hasComment(ctx, gh, owner, repo, num, marker(doc))
+		if err != nil {
+			return err
+		}
+		if posted {
+			fmt.Fprintf(out, "Why task %s changed nothing is already on %s; not commenting again\n", doc.Source.Task, doc.Target.URL)
+			return nil
+		}
+	}
+	fmt.Fprintf(out, "The fix made no change; no PR. %s why on %s:\n%s\n", doing(dryRun, "Commenting", "comment"), doc.Target.URL, indent(c.Comment))
+	if dryRun {
+		return nil
+	}
+	body := withSessionHint(ctx, c.Comment) + marker(doc)
+	if _, _, err := gh.Issues.CreateComment(ctx, owner, repo, num, &githubv39.IssueComment{Body: &body}); err != nil {
+		return fmt.Errorf("commenting why the fix changed nothing: %w", err)
+	}
+	return nil
 }
 
 // rewritePR puts the title and body the agent rewrote (Rewrites) on PR

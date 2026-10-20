@@ -19,17 +19,18 @@ package usagereport
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
-
-	"errors"
-	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/spool"
-	"io"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"time"
+
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/spool"
 )
 
 func TestPublishAndMarkSummarized(t *testing.T) {

@@ -7,6 +7,11 @@
 # the caller's token. The agent reads the issue's comments from trusted
 # authors only (the issue-comments step).
 #
+# A fix that should change nothing makes no commit and writes why (the
+# Change's comment): the push step pushes nothing, and open-pr posts the
+# comment on the issue instead of opening a PR. No commit and no comment
+# fails the task.
+#
 # With a plan the first ask follows it. The plan input takes a Plan's
 # result (from: Plan): a plan whose actions offer `run: fix` (`factory
 # apply --action run:fix`, or the board's "Fix with this plan") starts
@@ -131,6 +136,13 @@ start:
         will be marked work in progress, and people on GitHub may have
         suggestions.
 
+        If the right answer is to change nothing (the issue is already
+        fixed on the default branch, is not a bug, duplicates another, or
+        needs a decision only a maintainer can make), do not commit
+        anything to have something to show: make no commit, and say why.
+        Never commit a change whose purpose is to close or reject the
+        issue.
+
         When you are done, summarise the design decisions you made: the
         rationale behind your changes, and the alternatives you
         considered. This summary is for the human reviewer.
@@ -147,6 +159,18 @@ start:
             reviewer.
 
             Fixes #{{ .Inputs.issue_number }}
+
+        If you made no commit because nothing should change, write instead,
+        in EXACTLY this structure:
+
+        change:
+          comment: |
+            Why nothing should change, for the issue's maintainers: what
+            you checked, what you found (the commit or PR that already
+            fixed it, the duplicate, the decision a maintainer must make),
+            and what would need to be true for a change to be right.
+
+        It is posted on the issue, and no pull request is opened.
 
         Rules:
         - The body MUST contain a line of exactly the form
