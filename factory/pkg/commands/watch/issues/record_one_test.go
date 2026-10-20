@@ -58,3 +58,60 @@ func TestRecordOneIssue(t *testing.T) {
 		t.Errorf("a pull request: %v", err)
 	}
 }
+
+// An issue the engine decides fix for, and vetoes (a fix rule that never
+// holds): nothing is queued, and the record keeps the scanner's yes beside
+// it, so the shadow counts the veto as a difference instead of agreeing
+// with itself.
+func TestQueueTask_RecordsTheScannersYesUnderAVeto(t *testing.T) {
+	base, err := rules.Builtin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fix rules.Rule
+	for _, r := range base {
+		if r.Name == "fix" {
+			fix = *r
+		}
+	}
+	fix.When.Labels = &rules.Labels{All: []string{"never"}}
+	set, err := rules.Overlay(base, []*rules.Rule{&fix})
+	if err != nil {
+		t.Fatal(err)
+	}
+	control, err := rules.NewControl("on", map[string]string{"fix": "engine"}, "", nil, set)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/timeline"):
+			_ = json.NewEncoder(w).Encode([]*githubv39.Timeline{})
+		case r.URL.Path == "/search/issues":
+			_ = json.NewEncoder(w).Encode(githubv39.IssuesSearchResult{Total: githubv39.Int(0)})
+		default:
+			_, _ = w.Write([]byte("{}"))
+		}
+	}))
+	defer server.Close()
+	gh := githubv39.NewClient(nil)
+	gh.BaseURL, _ = url.Parse(server.URL + "/")
+	var rec rules.Record
+	s, queue, _ := newScanner(t, Config{}, Deps{GitHub: github.ForRepo(gh, "test-owner", "test-repo"), Rules: control,
+		Recorder: rules.NewSinkRecorder(func(r rules.Record) { rec = r })})
+
+	s.queueTasks(context.Background(), []*githubv39.Issue{fanoutIssue(61, "please fix", "factory")}, map[int]bool{})
+
+	if len(queue.enqueued) != 0 {
+		t.Errorf("queued %v under the engine's veto", keys(queue.enqueued))
+	}
+	if len(rec.Handed) != 1 || rec.Handed[0].Rule != "fix" || !rec.Handed[0].Legacy || len(rec.Decided) != 0 {
+		t.Errorf("record: handed %+v, decided %v; want fix with the scanner's yes, nothing decided", rec.Handed, rec.Decided)
+	}
+	sh := rules.NewShadow(set)
+	sh.Observe(rec)
+	if h := sh.Summary().ByRule["fix"].Handed; h == nil || h.Differ != 1 {
+		t.Errorf("shadow fix handed = %+v, want the veto counted as a difference", h)
+	}
+}
