@@ -284,18 +284,50 @@ func CleanAgentMarkdown(raw string) string {
 	return s
 }
 
-// CleanAgentYAML is the YAML in an agent's reply: without markdown fences
-// and without anything said before the line that starts with indicator.
+// CleanAgentYAML is the YAML in an agent's reply: without anything said
+// before the line that starts with indicator, and without the markdown
+// fence around it. A closing fence goes only with an opening one before the
+// YAML (at the start, or after what was said): a reply that is plain YAML
+// may end in a fence of its own, inside a block scalar (a PR body's
+// ```release-note block), and that is kept.
 func CleanAgentYAML(raw, indicator string) string {
 	s := strings.TrimSpace(raw)
-	s = strings.TrimSpace(strings.TrimPrefix(s, "```yaml"))
-	s = strings.TrimSpace(strings.TrimSuffix(s, "```"))
+	start := 0
 	if indicator != "" && !strings.HasPrefix(s, indicator) {
 		if i := strings.Index(s, "\n"+indicator); i != -1 {
-			s = s[i+1:]
+			start = i + 1
 		}
 	}
-	return s
+	before := s[:start]
+	if start == 0 {
+		// No indicator found after something said: the fence, if any, is
+		// the reply's first line.
+		if line, rest, ok := strings.Cut(s, "\n"); ok && isOpeningFence(line) {
+			before, s = line, rest
+		}
+	} else {
+		s = s[start:]
+	}
+	fenced := false
+	for _, line := range strings.Split(before, "\n") {
+		if isOpeningFence(line) {
+			fenced = true
+		}
+	}
+	if fenced {
+		s = strings.TrimSuffix(strings.TrimSpace(s), "```")
+	}
+	return strings.TrimSpace(s)
+}
+
+// isOpeningFence reports whether line opens a markdown fence for YAML, or
+// for anything.
+func isOpeningFence(line string) bool {
+	switch strings.TrimSpace(line) {
+	case "```yaml", "```yml", "```":
+		return true
+	}
+	return false
 }
 
 // WriteFrame leaves doc, whose spec is not read, as the frame Refresh
