@@ -1,0 +1,203 @@
+# The PR rules, in the order the engine walks them: the label sync and the
+# pause first, then PR care, the first that holds taking the PR (comments,
+# conflict, ci, review, ready).
+on: pr
+rules:
+  # Mirrors prs/labels.go syncReferencedIssueLabels: a candidate PR takes
+  # the labels of the issues it closes, all but ready-for-human, every time
+  # it is evaluated and ahead of the rules that take the item, so they see
+  # them (review's */review, most often).
+  - name: inherit-labels
+    description: Copy the closing issues' labels onto the PR
+    when:
+      author: pool
+      labels: {none: ["*/ready-for-human"]}
+    run:
+      label: ["{{closing-issue-labels}}"]
+
+  # Mirrors prs/history.go pauseIfInactive: a PR with no trusted human
+  # activity for the overseer's prInactivityTimeout is paused, once: a
+  # comment and the stop label.
+  #
+  # On, and a no-op until the overseer sets prInactivityTimeout (0, the
+  # default, is never): inactive-for holds only for a timeout above 0. KCC
+  # sets 14 days.
+  - name: inactive
+    description: Pause a PR nobody has looked at
+    when:
+      author: pool
+      inactive-for: "{{pr-inactivity-timeout}}"
+    run:
+      stop:
+        comment: Pausing this PR after a period without activity.
+
+  # Mirrors prs/handlers.go handlePRComments: new feedback from a trusted
+  # human on the PR, or a last comments run on this head that failed, is
+  # answered by its author and the replies posted (care-comments --apply
+  # --action post-replies, api/recipe.go), as often as new feedback comes:
+  # one queued task at a time, not once per head. After 3 runs on a head it
+  # gives up: the stop label and a pause comment. First of the PR rules
+  # that take the item (prs/scanner.go evaluate).
+  - name: comments
+    description: Answer new trusted feedback on the PR
+    when:
+      author: pool
+      any-of:
+        - feedback: new-trusted
+        - last-run: failed
+    run:
+      recipe: care-comments
+      apply: post-replies
+    policy:
+      give-up:
+        attempts: 3
+        since: head
+        comment: Pausing after 3 attempts to address the feedback on this commit.
+      phase: 1
+
+  # Mirrors prs/handlers.go handlePRIterate: a PR that does not merge is
+  # rebased by its author (care-rebase --apply --action post-replies,
+  # api/recipe.go), once per head. Second of the PR rules that
+  # take the item (prs/scanner.go evaluate).
+  - name: conflict
+    description: Rebase a PR that conflicts with its base
+    when:
+      author: pool
+      mergeable: false
+    run:
+      recipe: care-rebase
+      apply: post-replies
+    policy:
+      dedupe: head
+      phase: 2
+
+  # Mirrors prs/handlers.go handlePRInvestigate: a PR whose checks fail is
+  # investigated and fixed by its author (care-ci --apply --action
+  # post-replies, api/recipe.go). It runs again on a new head, after a
+  # failed run, on a PR assigned to the pool explicitly, or 2h after the
+  # last. After 3 attempts since the last commit, trusted human comment or
+  # pause it gives up with the stop label (investigationAttempts). Third of
+  # the PR rules that take the item (prs/scanner.go evaluate).
+  - name: ci
+    description: Investigate and fix failing checks
+    when:
+      author: pool
+      checks: failing
+    run:
+      recipe: care-ci
+      apply: post-replies
+    policy:
+      cooldown:
+        success: 2h
+        reset-on: [head]
+        skip-when: {assignee: pool}
+      give-up:
+        attempts: 3
+        since: [head, human, pause]
+        comment: Pausing after 3 attempts to fix the failing checks.
+      phase: 3
+
+  # Mirrors prs/handlers.go handlePRReview, gated by prs/labels.go
+  # shouldAutoReviewPR and isPRApprovedOrLGTM: a green PR with no pending
+  # trusted feedback, not approved, whose head the automated reviewer has
+  # not reviewed, and that wants a review - */review on itself, or, while
+  # it is not ready-for-human, on an issue it closes - is reviewed and the
+  # review submitted (review --apply --action submit-review,
+  # api/recipe.go), once per head. Fourth of the PR rules that take the
+  # item (prs/scanner.go evaluate). The review instructions are the overseer's,
+  # passed by the engine.
+  - name: review
+    description: Review a green PR that wants a review
+    when:
+      author: pool
+      checks: green
+      feedback: none
+      approved: false
+      reviewed-at-head: false
+      any-of:
+        - labels: {all: ["*/review"]}
+        - labels: {none: ["*/ready-for-human"]}
+          closes: {labels: {all: ["*/review"]}}
+    run:
+      recipe: review
+      apply: submit-review
+    policy:
+      dedupe: head
+      phase: 1
+
+  # Mirrors prs/scanner.go reconcileReadiness (with prs/labels.go
+  # shouldAutoReviewPR): an open PR of the pool's, not yet ready-for-human,
+  # not a draft, not stopped, that merges, is green, has no pending trusted
+  # feedback and whose review is satisfied is handed to the humans:
+  # */ready-for-human added, */review dropped, the closing issues' human
+  # assignees assigned and the pool's bot unassigned. The review is
+  # satisfied when the automated reviewer reviewed the head without asking
+  # for changes, or no review is wanted (*/review on neither the PR nor an
+  # issue it closes). It takes the item, after the care rules: it holds
+  # when none does, and a task of the PR running holds it back
+  # (prs/scanner.go evaluate).
+  #
+  # Readiness is never taken back: a ready PR that stops being ready keeps
+  # the label (prs/labels_test.go, "Not ready with label never removes").
+  - name: ready
+    description: Hand a ready PR to the humans
+    exclusive: true
+    when:
+      author: pool
+      labels: {none: ["*/ready-for-human"]}
+      draft: false
+      mergeable: true
+      checks: green
+      feedback: none
+      any-of:
+        - reviewed-at-head: true
+          changes-requested: false
+        - labels: {none: ["*/review"]}
+          closes: {labels: {none: ["*/review"]}}
+    run:
+      label: ["*/ready-for-human"]
+      unlabel: ["*/review"]
+      assign: "{{closing-issue-assignees}}"
+      unassign: "{{pool}}"
+
+  # Mirrors prs/scanner.go reconcileReadiness, its already-ready half: a
+  # PR already ready-for-human that is still ready, and that carries
+  # */review again (a review label can arrive after it went ready), loses
+  # */review, so bot reviews stay off work a human owns; nothing else is
+  # written. Its review is satisfied only once the automated reviewer
+  # reviewed the head without asking for changes, since */review on the
+  # PR wants one. It takes the item, after ready.
+  - name: ready-unreview
+    description: Take */review off a PR already handed to the humans
+    exclusive: true
+    when:
+      author: pool
+      labels: {all: ["*/ready-for-human", "*/review"]}
+      draft: false
+      mergeable: true
+      checks: green
+      feedback: none
+      reviewed-at-head: true
+      changes-requested: false
+    run:
+      unlabel: ["*/review"]
+
+  # Mirrors prs/adoption.go adoptOrphanedBotPRs / adoptOrphanedBotPR: a PR
+  # a pool bot authored, without the trigger label or a pool assignee (so no
+  # listing finds it), that closes an issue with the trigger label, takes
+  # the labels of the issues it closes and joins the overseer's PRs.
+  #
+  # Off: a safety net for PRs opened without their labels (a watch killed
+  # mid-task on the classic path); open-pr labels the PR it opens, and the
+  # overseer-kcc logs show no adoption since 2026-10-16. Kept, to turn on
+  # again if orphans show up; it may fold into inherit-labels.
+  - name: adopt-pr
+    description: Adopt a bot's PR whose issue is the overseer's
+    enabled: false
+    when:
+      author: pool
+      assignee: not-pool
+      labels: {none: ["{{trigger}}"]}
+      closes: {labels: {any: ["{{trigger}}"]}}
+    run:
+      label: ["{{closing-issue-labels}}"]

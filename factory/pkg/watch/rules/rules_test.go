@@ -1,7 +1,6 @@
 package rules
 
 import (
-	"fmt"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -13,8 +12,10 @@ func TestBuiltinRulesParseAndValidate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Builtin: %v", err)
 	}
-	want := []string{"adopt-pr", "chore", "ci", "comments", "conflict", "fix", "inactive",
-		"inherit-labels", "nudge", "ready", "ready-unreview", "review", "stop", "workflow"}
+	// The kinds' files, each top to bottom.
+	want := []string{"workflow", "fix", "stop",
+		"inherit-labels", "inactive", "comments", "conflict", "ci", "review", "ready", "ready-unreview", "adopt-pr",
+		"chore", "nudge"}
 	var got []string
 	for _, r := range set {
 		got = append(got, r.Name)
@@ -22,12 +23,17 @@ func TestBuiltinRulesParseAndValidate(t *testing.T) {
 	if strings.Join(got, " ") != strings.Join(want, " ") {
 		t.Errorf("rules = %v, want %v", got, want)
 	}
-	// Each file says what code it mirrors.
-	entries, _ := builtinFS.ReadDir(".")
-	for _, e := range entries {
-		data, _ := builtinFS.ReadFile(e.Name())
-		if !strings.HasPrefix(string(data), "# Mirrors ") {
-			t.Errorf("%s does not start with a # Mirrors comment", e.Name())
+	// Each rule says what code it mirrors, in a comment above it.
+	for _, kind := range Kinds {
+		data, _ := builtinFS.ReadFile(kind + ".yaml")
+		rules := 0
+		for _, r := range set {
+			if r.On == kind {
+				rules++
+			}
+		}
+		if n := strings.Count(string(data), "\n  # Mirrors "); n != rules {
+			t.Errorf("%s.yaml: %d # Mirrors comments for %d rules", kind, n, rules)
 		}
 	}
 }
@@ -83,7 +89,6 @@ func TestBuiltinDefaults(t *testing.T) {
 const base = `
 name: r
 on: pr
-order: 1
 when:
   labels: {any: [overseer]}
 run:
@@ -122,11 +127,11 @@ func TestValidateErrors(t *testing.T) {
 		{"bad duration", base + "policy:\n  cooldown: {success: soon}\n", `"soon" is not a duration`},
 		{"expect", base + "expect: [head]\n", "field expect not found"},
 		{"group", base + "group: {name: g, order: 1}\n", "field group not found"},
-		{"exclusive without order", strings.Replace(base, "order: 1\n", "", 1), "a rule that takes the item needs an order"},
 		{"writes without order", "name: r\non: pr\nwhen: {labels: {any: [x]}}\nrun: {label: [y]}\n", ""},
-		{"exclusive writes without order", "name: r\non: pr\nexclusive: true\nwhen: {labels: {any: [x]}}\nrun: {label: [y]}\n", "needs an order"},
-		{"negative order", strings.Replace(base, "order: 1", "order: -1", 1), "want above 0"},
-		{"order on event", "name: r\non: event\norder: 1\nwhen: {event: linked-issue-closed}\nrun: {recipe: workflow}\n", "order and exclusive are for rules on issue or pr"},
+		{"order", base + "order: 30\n", "field order not found"},
+		{"exclusive on event", "name: r\non: event\nexclusive: true\nwhen: {event: linked-issue-closed}\nrun: {recipe: workflow}\n", "exclusive is for rules on issue or pr"},
+		{"before and after", base + "before: ci\nafter: review\n", "before or after, not both"},
+		{"before itself", base + "before: r\n", "before or after itself"},
 		{"event without event", "name: r\non: event\nwhen: {}\nrun: {recipe: workflow}\n", "needs when.event"},
 
 		// from: gone; on and when say which items a rule takes.
@@ -179,47 +184,33 @@ func mustParse(t *testing.T, s string) *Rule {
 }
 
 func TestSetValidate(t *testing.T) {
-	member := func(name string, order int) *Rule {
-		return mustParse(t, strings.Replace(strings.Replace(base, "name: r", "name: "+name, 1), "order: 1", fmt.Sprintf("order: %d", order), 1))
+	member := func(name string) *Rule {
+		return mustParse(t, strings.Replace(base, "name: r", "name: "+name, 1))
 	}
-	for _, tc := range []struct {
-		name string
-		set  Set
-		want string
-	}{
-		{"ok", Set{member("a", 1), member("b", 2)}, ""},
-		{"duplicate name", Set{member("a", 1), member("a", 2)}, "two rules are named a"},
-		{"duplicate order", Set{member("a", 1), member("b", 1)}, "rules a and b on pr share order 1"},
-		{"same order, other kind", Set{member("a", 1), mustParse(t, "name: b\non: issue\norder: 1\nwhen: {labels: {any: [x]}}\nrun: {label: [y]}\n")}, ""},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			err := tc.set.Validate()
-			if tc.want == "" {
-				if err != nil {
-					t.Fatalf("unexpected error: %v", err)
-				}
-				return
-			}
-			if err == nil || !strings.Contains(err.Error(), tc.want) {
-				t.Fatalf("error = %v, want %q", err, tc.want)
-			}
-		})
+	if err := (Set{member("a"), member("b")}).Validate(); err != nil {
+		t.Errorf("two rules: %v", err)
+	}
+	if err := (Set{member("a"), member("a")}).Validate(); err == nil || !strings.Contains(err.Error(), "two rules are named a") {
+		t.Errorf("duplicate name: %v", err)
 	}
 }
 
-func TestOrdered(t *testing.T) {
-	r := func(name string, order int) *Rule {
-		x := mustParse(t, strings.Replace(base, "name: r", "name: "+name, 1))
-		x.Order = order
-		return x
+// A kind's file is its rules in order: its on is its name, and a rule in
+// it takes the file's on and its place from its position.
+func TestParseKindFile(t *testing.T) {
+	rs, err := parseKindFile([]byte("on: pr\nrules:\n  - name: a\n    when: {}\n    run: {label: [x]}\n  - name: b\n    when: {}\n    run: {label: [y]}\n"), OnPR)
+	if err != nil || len(rs) != 2 || rs[0].Name != "a" || rs[1].On != OnPR {
+		t.Fatalf("rules = %+v, %v", rs, err)
 	}
-	set := Set{r("none-b", 0), r("thirty", 30), r("none-a", 0), r("ten", 10)}
-	var got []string
-	for _, x := range set.Ordered() {
-		got = append(got, x.Name)
-	}
-	if want := "ten thirty none-a none-b"; strings.Join(got, " ") != want {
-		t.Errorf("order = %v, want %s", got, want)
+	for name, tc := range map[string]struct{ data, want string }{
+		"another kind":     {"on: issue\nrules: []\n", `want "pr"`},
+		"a rule's own on":  {"on: pr\nrules:\n  - name: a\n    on: pr\n    when: {}\n    run: {label: [x]}\n", "on is the file's"},
+		"a placed rule":    {"on: pr\nrules:\n  - name: a\n    before: b\n    when: {}\n    run: {label: [x]}\n", "placed by its position"},
+		"an unknown field": {"on: pr\norder: 1\nrules: []\n", "field order not found"},
+	} {
+		if _, err := parseKindFile([]byte(tc.data), OnPR); err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: %v, want %q", name, err, tc.want)
+		}
 	}
 }
 
@@ -240,11 +231,13 @@ func TestOverlay(t *testing.T) {
 	repo, err := Load(fstest.MapFS{
 		"review.yaml":   {Data: []byte("name: review\nenabled: false\n")},
 		"inactive.yaml": {Data: []byte("name: inactive\nenabled: true\n")},
-		"ci.yaml": {Data: []byte("name: ci\non: pr\norder: 30\n" +
+		"ci.yaml": {Data: []byte("name: ci\non: pr\n" +
 			"when: {labels: {any: [\"{{trigger}}\"]}, checks: failing}\nrun: {recipe: care-ci}\n" +
 			"policy: {give-up: {attempts: 5}}\n")},
-		"docs.yaml": {Data: []byte("name: docs\non: issue\norder: 30\nwhen: {labels: {any: [docs]}}\nrun: {recipe: fix}\n")},
-		"README.md": {Data: []byte("not a rule")},
+		"docs.yaml":  {Data: []byte("name: docs\non: issue\nwhen: {labels: {any: [docs]}}\nrun: {recipe: fix}\n")},
+		"lint.yaml":  {Data: []byte("name: lint\non: pr\nbefore: review\nwhen: {checks: green}\nrun: {recipe: review}\n")},
+		"notes.yaml": {Data: []byte("name: notes\non: pr\nafter: lint\nwhen: {checks: green}\nrun: {label: [n]}\n")},
+		"README.md":  {Data: []byte("not a rule")},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -269,6 +262,16 @@ func TestOverlay(t *testing.T) {
 	if r := byName["docs"]; r == nil || r.Source != SourceRepo {
 		t.Errorf("docs = %+v; want the repository's new rule", r)
 	}
+	// The order: a replacement keeps its place, a new rule without an
+	// anchor goes after its kind's rules, the others where they say, one
+	// against another.
+	var order []string
+	for _, r := range set {
+		order = append(order, r.Name)
+	}
+	if want := "workflow fix stop docs inherit-labels inactive comments conflict ci lint notes review ready ready-unreview adopt-pr chore nudge"; strings.Join(order, " ") != want {
+		t.Errorf("order = %v\nwant    %s", order, want)
+	}
 	if r := byName["fix"]; r.Source != SourceFactory || r.EnabledBy != "" || !r.IsEnabled() {
 		t.Errorf("fix = %+v; want factory's, untouched", r)
 	}
@@ -281,9 +284,17 @@ func TestOverlay(t *testing.T) {
 
 	for name, files := range map[string]fstest.MapFS{
 		"toggle of a rule factory lacks": {"nope.yaml": {Data: []byte("name: nope\nenabled: false\n")}},
-		"a replacement under the floor": {"ci.yaml": {Data: []byte("name: ci\non: pr\norder: 30\n" +
+		"a replacement under the floor": {"ci.yaml": {Data: []byte("name: ci\non: pr\n" +
 			"when: {labels: {any: [x]}}\nrun: {recipe: care-ci}\npolicy: {give-up: {attempts: 50}}\n")}},
-		"a name only, no enabled": {"review.yaml": {Data: []byte("name: review\n")}},
+		"a name only, no enabled":       {"review.yaml": {Data: []byte("name: review\n")}},
+		"a replacement placed":          {"ci.yaml": {Data: []byte("name: ci\non: pr\nbefore: review\nwhen: {checks: failing}\nrun: {recipe: care-ci}\n")}},
+		"a replacement on another kind": {"ci.yaml": {Data: []byte("name: ci\non: issue\nwhen: {}\nrun: {recipe: fix}\n")}},
+		"an anchor that is not there":   {"x.yaml": {Data: []byte("name: x\non: pr\nbefore: nope\nwhen: {}\nrun: {label: [x]}\n")}},
+		"an anchor on another kind":     {"x.yaml": {Data: []byte("name: x\non: pr\nbefore: fix\nwhen: {}\nrun: {label: [x]}\n")}},
+		"a loop": {
+			"x.yaml": {Data: []byte("name: x\non: pr\nafter: y\nwhen: {}\nrun: {label: [x]}\n")},
+			"y.yaml": {Data: []byte("name: y\non: pr\nafter: x\nwhen: {}\nrun: {label: [y]}\n")},
+		},
 	} {
 		repo, err := Load(files)
 		if err == nil {

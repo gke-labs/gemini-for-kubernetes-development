@@ -27,28 +27,36 @@ func newWatchRulesCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "rules [--dir <checkout>] [--url <repo>]",
 		Short: "List the watch's rules: what each looks at, runs, and as whom",
-		Long: `List the watch's rules: factory's prebaked rules, one per file, each a
-condition on an issue, a PR, a schedule or an event, and the action taken
-on it (a recipe run, or GitHub writes). A group's rules are ordered and
-exclusive on an item: the first that holds is taken, the last holds when
-no other does. See factory/design/watch-rules.md.
+		Long: `List the watch's rules: factory's prebaked rules, a file per kind of item
+(issue, pr, schedule, event), each a condition and the action taken on it
+(a recipe run, or GitHub writes), in the order the engine walks them. Of
+the rules that take an item (exclusive), only the first that holds is
+decided, and none while a task of the item runs. See
+factory/design/watch-rules.md.
 
-A repository's rules, .agents/rules/<name>.yaml, lie over factory's: a
-file of a factory rule's name replaces it, or, with nothing but its name
-and enabled, turns it on or off:
+A repository's rules, .agents/rules/<name>.yaml (one rule per file), lie
+over factory's: a file of a factory rule's name replaces it in place, or,
+with nothing but its name and enabled, turns it on or off; a file of a new
+name adds a rule, before or after the one it names:
 
   name: review
   enabled: false
+
+  name: docs-check
+  on: pr
+  before: review
+  ...
 
 --dir lists factory's rules with a local checkout's laid over them, so a
 repository's owner sees what their files change (SOURCE: whose rule it
 is; ENABLED says "(repo)" when the repository's toggle set it).
 
-Nothing evaluates these rules yet: today's watch still runs its scanners.
---url is accepted for a repository's own rules, which the watch reads
-later; today it lists factory's.
+Today's watch runs its scanners; the rules decide beside them in shadow,
+and decide rules the Overseer hands them (spec.rules). --url is accepted
+for a repository's own rules, which the watch reads later; today it lists
+factory's.
 
-Policy floors: give-up and attempts at most 10, a cooldown at least 1m.`,
+Policy floors: give-up at most 10, a cooldown at least 1m.`,
 		Example: `  factory watch rules
   factory watch rules -o yaml
   factory watch rules --dir .`,
@@ -195,18 +203,33 @@ func overlayRepoRules(set rules.Set, checkout string) (rules.Set, error) {
 	return rules.Overlay(set, repo)
 }
 
-// printWatchRules writes the rules as a table, or whole as YAML or JSON.
+// watchRulesKind is one kind's rules, in order, as factory's files list
+// them.
+type watchRulesKind struct {
+	On    string        `yaml:"on" json:"on"`
+	Rules []*rules.Rule `yaml:"rules" json:"rules"`
+}
+
+// printWatchRules writes the rules as a table, or whole as YAML or JSON:
+// a list of kinds, each its rules in the order the engine walks them.
 func printWatchRules(out io.Writer, set rules.Set, output string) error {
 	ordered := orderWatchRules(set)
+	var byKind []watchRulesKind
+	for _, r := range ordered {
+		if n := len(byKind); n == 0 || byKind[n-1].On != r.On {
+			byKind = append(byKind, watchRulesKind{On: r.On})
+		}
+		byKind[len(byKind)-1].Rules = append(byKind[len(byKind)-1].Rules, r)
+	}
 	switch output {
 	case "json":
 		enc := json.NewEncoder(out)
 		enc.SetIndent("", "  ")
-		return enc.Encode(ordered)
+		return enc.Encode(byKind)
 	case "yaml":
 		enc := yaml.NewEncoder(out)
 		enc.SetIndent(2)
-		if err := enc.Encode(ordered); err != nil {
+		if err := enc.Encode(byKind); err != nil {
 			return err
 		}
 		return enc.Close()
@@ -216,8 +239,10 @@ func printWatchRules(out io.Writer, set rules.Set, output string) error {
 	}
 	w := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
 	fmt.Fprintln(w, "NAME\tON\tORDER\tRUN\tPOLICY\tSOURCE\tENABLED")
+	place := map[string]int{}
 	for _, r := range ordered {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", r.Name, r.On, ruleOrder(r), ruleRun(r), rulePolicy(r), orDash(r.Source), ruleEnabled(r))
+		place[r.On]++
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", r.Name, r.On, ruleOrder(r, place[r.On]), ruleRun(r), rulePolicy(r), orDash(r.Source), ruleEnabled(r))
 	}
 	return w.Flush()
 }
@@ -243,12 +268,10 @@ func ruleEnabled(r *rules.Rule) string {
 	return fmt.Sprintf("%t", r.IsEnabled())
 }
 
-// ruleOrder is the rule's place, and whether it takes the item.
-func ruleOrder(r *rules.Rule) string {
-	order := "-"
-	if r.Order > 0 {
-		order = strconv.Itoa(r.Order)
-	}
+// ruleOrder is the rule's place among the rules on its kind, and whether
+// it takes the item.
+func ruleOrder(r *rules.Rule, place int) string {
+	order := strconv.Itoa(place)
 	if r.IsExclusive() {
 		order += " exclusive"
 	}

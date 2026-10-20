@@ -1,7 +1,9 @@
 // Package rules is the model of the watch loop's rules
 // (factory/design/watch-rules.md): a GitHub condition and the action taken
-// on it, one rule per file. The prebaked rules, factory's own, are embedded
-// here, one file each, and describe what today's watch does. Set.Decide
+// on it. The prebaked rules, factory's own, are embedded here, one file per
+// kind of item listing its rules in the order the engine walks them, and
+// describe what today's watch does; a repository's rules are one file per
+// rule, laid over them (Overlay). Set.Decide
 // evaluates them for one item from facts its caller gathered, and acts on
 // nothing: wiring it beside today's scanners (replay tests, then shadow
 // mode) is factory/design/watch-rules.md's 2a-3 and 2b.
@@ -17,7 +19,6 @@ import (
 	"io"
 	"regexp"
 	"slices"
-	"sort"
 	"strings"
 	"time"
 
@@ -59,11 +60,13 @@ type Rule struct {
 	// file sets it, and a repository's file of the same name with only a
 	// name and enabled turns factory's rule on or off (IsToggle, Overlay).
 	Enabled *bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
-	// Order is the rule's place among the rules on its kind of item,
-	// lower first: one ordered list per kind (Set.Ordered). Unset, the
-	// rule goes after the ordered ones; a rule that takes the item needs
-	// one.
-	Order int `yaml:"order,omitempty" json:"order,omitempty"`
+	// Before and After place a repository's new rule among the rules on
+	// its kind: just before or after the rule they name. Factory's rules
+	// are placed by their position in their kind's file; a rule that
+	// replaces one of them keeps its place. Unset, a new rule goes after
+	// the rules on its kind.
+	Before string `yaml:"before,omitempty" json:"before,omitempty"`
+	After  string `yaml:"after,omitempty" json:"after,omitempty"`
 	// Exclusive is whether the rule takes the item: of the rules that do,
 	// the first in order that holds is the only one decided, and none is
 	// while a task of the item is active. Unset, a recipe rule takes the
@@ -592,24 +595,23 @@ func (r *Rule) Validate() error {
 	}
 	listed := r.On == OnIssue || r.On == OnPR
 	switch {
-	case r.Order < 0:
-		return fail("order %d: want above 0", r.Order)
-	case !listed && (r.Order != 0 || r.Exclusive != nil):
-		return fail("order and exclusive are for rules on %s or %s", OnIssue, OnPR)
-	case listed && r.IsExclusive() && r.Order == 0:
-		return fail("a rule that takes the item needs an order")
+	case !listed && r.Exclusive != nil:
+		return fail("exclusive is for rules on %s or %s", OnIssue, OnPR)
+	case r.Before != "" && r.After != "":
+		return fail("before or after, not both")
+	case r.Before == r.Name && r.Name != "", r.After == r.Name && r.Name != "":
+		return fail("placed before or after itself")
 	}
 	return nil
 }
 
-// Set is a rule set: names unique, orders unique per kind of item.
+// Set is a rule set, in the order the engine walks it: per kind of item,
+// the first rule first.
 type Set []*Rule
 
-// Validate checks every rule and the set: unique names, and no two rules
-// on one kind of item in the same place.
+// Validate checks every rule and the set's names, which are unique.
 func (s Set) Validate() error {
 	names := map[string]bool{}
-	orders := map[string]map[int]string{}
 	for _, r := range s {
 		if err := r.Validate(); err != nil {
 			return err
@@ -618,33 +620,11 @@ func (s Set) Validate() error {
 			return fmt.Errorf("two rules are named %s", r.Name)
 		}
 		names[r.Name] = true
-		if r.Order == 0 {
-			continue
-		}
-		if orders[r.On] == nil {
-			orders[r.On] = map[int]string{}
-		}
-		if other := orders[r.On][r.Order]; other != "" {
-			return fmt.Errorf("rules %s and %s on %s share order %d", other, r.Name, r.On, r.Order)
-		}
-		orders[r.On][r.Order] = r.Name
 	}
 	return nil
 }
 
-// Ordered is the set in order: by order, the rules without one after, by
-// name.
+// Ordered is the set in the order the engine walks it.
 func (s Set) Ordered() Set {
-	out := slices.Clone(s)
-	sort.SliceStable(out, func(i, j int) bool {
-		a, b := out[i], out[j]
-		if (a.Order == 0) != (b.Order == 0) {
-			return b.Order == 0
-		}
-		if a.Order != b.Order {
-			return a.Order < b.Order
-		}
-		return a.Name < b.Name
-	})
-	return out
+	return slices.Clone(s)
 }

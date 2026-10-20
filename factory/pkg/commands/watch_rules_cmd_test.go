@@ -39,7 +39,7 @@ func TestWatchRulesTable(t *testing.T) {
 		t.Errorf("rows = %v, want %s", names, want)
 	}
 	for _, sub := range []string{
-		"10 exclusive", "50 exclusive",
+		"3 exclusive", "7 exclusive",
 		"care-comments → post-replies", "fix → open-pr",
 		"dedupe=update cooldown=10m/20m phase=3",
 		"give-up=3/head",
@@ -51,24 +51,32 @@ func TestWatchRulesTable(t *testing.T) {
 }
 
 func TestWatchRulesYAMLAndJSON(t *testing.T) {
-	var fromYAML []map[string]any
+	// One entry per kind, as factory's files list them, each its rules in
+	// order.
+	type kind struct {
+		On    string           `yaml:"on" json:"on"`
+		Rules []map[string]any `yaml:"rules" json:"rules"`
+	}
+	var fromYAML, fromJSON []kind
 	if err := yaml.Unmarshal([]byte(runWatchRules(t, "-o", "yaml")), &fromYAML); err != nil {
 		t.Fatal(err)
 	}
-	var fromJSON []map[string]any
 	if err := json.Unmarshal([]byte(runWatchRules(t, "-o", "json", "--url", "https://github.com/o/r")), &fromJSON); err != nil {
 		t.Fatal(err)
 	}
-	if len(fromYAML) != 14 || len(fromJSON) != 14 {
-		t.Fatalf("yaml %d rules, json %d", len(fromYAML), len(fromJSON))
+	var kinds []string
+	rules := 0
+	for _, k := range fromYAML {
+		kinds = append(kinds, k.On)
+		rules += len(k.Rules)
 	}
-	if fromYAML[1]["name"] != "fix" || fromJSON[1]["name"] != "fix" {
-		t.Errorf("second rule = %v / %v", fromYAML[1]["name"], fromJSON[1]["name"])
+	if strings.Join(kinds, " ") != "issue pr schedule event" || rules != 14 || len(fromJSON) != 4 {
+		t.Fatalf("yaml kinds %v with %d rules, json %d kinds", kinds, rules, len(fromJSON))
 	}
-	if fromJSON[1]["order"] != float64(20) {
-		t.Errorf("fix order = %v", fromJSON[1]["order"])
+	if fromYAML[0].Rules[1]["name"] != "fix" || fromJSON[0].Rules[1]["name"] != "fix" {
+		t.Errorf("second issue rule = %v / %v", fromYAML[0].Rules[1]["name"], fromJSON[0].Rules[1]["name"])
 	}
-	policy := fromJSON[1]["policy"].(map[string]any)
+	policy := fromJSON[0].Rules[1]["policy"].(map[string]any)
 	if cd := policy["cooldown"].(map[string]any); cd["success"] != "10m" {
 		t.Errorf("cooldown = %v", cd)
 	}

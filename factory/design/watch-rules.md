@@ -121,7 +121,9 @@ policy: {dedupe: update, cooldown: {success: 10m, failure: 20m}, phase: 3}
 ```
 
 **Order** makes the rules on one kind of item one list, and some of
-them exclusive. Each rule says its place itself (`order`). A rule that
+them exclusive. Factory's rules are placed by their position in their
+kind's file; a repository's new rule names the rule it goes `before` or
+`after`. A rule that
 **takes the item** (`exclusive`; a recipe rule unless it says otherwise)
 is decided only if none before it was and no task of the item runs: one
 task at a time per item, in priority order, across every rule. A rule
@@ -133,13 +135,24 @@ second one only a way round it, so they are flattened into the list. PR
 care is the exclusive part of the PR list:
 
 ```yaml
-# .agents/rules/ci.yaml
-name: ci
+# factory/pkg/watch/rules/pr.yaml: inherit-labels, inactive, comments, conflict, ci, review, ready, …
 on: pr
-order: 30      # inherit-labels 5, inactive 7, comments 10, conflict 20, ci 30, review 40, ready 50
-when: {checks: failing}
-run: {recipe: care-ci, apply: post-replies}
-policy: {dedupe: head, give-up: {attempts: 3, since: human}}
+rules:
+  …
+  - name: ci
+    when: {checks: failing}
+    run: {recipe: care-ci, apply: post-replies}
+    policy: {give-up: {attempts: 3, since: [head, human, pause]}}
+  …
+```
+
+```yaml
+# .agents/rules/docs-check.yaml: a repository's new rule, placed
+name: docs-check
+on: pr
+before: review
+when: {labels: {any: [docs]}}
+run: {recipe: docs, apply: post-replies}
 ```
 
 **Sources** are what is listed and how often. A rule does not name one:
@@ -402,18 +415,21 @@ first task's push will obsolete.
 
 ### Where rules live
 
-**One rule per file, in `.agents/rules/<name>.yaml`,** beside the
-repository's recipes:
+**A repository's rules: one rule per file, in `.agents/rules/<name>.yaml`,**
+beside the repository's recipes:
 
 ```
 .agents/
   recipes/<name>.yaml    what to do                         (exists)
-  rules/<name>.yaml      when the overseer does it: a trigger, the recipe, its policy, its order
+  rules/<name>.yaml      when the overseer does it: a trigger, the recipe, its policy, its place
   watch.yaml             optional: the repository's settings, and no rules
 ```
 
-- **The built-in rules are factory's,** prebaked: one file per rule in
-  `factory/pkg/watch/rules/<name>.yaml`, embedded in the binary as the
+- **The built-in rules are factory's,** prebaked: one file per kind of
+  item in `factory/pkg/watch/rules/<kind>.yaml` (`issue`, `pr`,
+  `schedule`, `event`), each listing its rules in the order the engine
+  walks them, so order is position and a kind reads top to bottom;
+  embedded in the binary as the
   built-in recipes are (`factory/pkg/recipe/recipes/`), versioned and
   shipped with the factory image, and tested as code (each one parses,
   names a built-in recipe, and the replay tests run them). They are the
@@ -422,9 +438,11 @@ repository's recipes:
 - **An Overseer picks among them** by name instead of today's modes:
   `spec.rules.disabled: [review]`, or `enabled: [fix, ci, comments]`;
   `issueMode: disabled` becomes turning off the rules on issues.
-- **A repository's rule replaces the built-in of its name**
+- **A repository's rule replaces the built-in of its name, in place**
   (`.agents/rules/ci.yaml` with a different give-up), or adds a rule of
-  a new name. Rules are read from the default branch only, as repository
+  a new name, `before` or `after` the rule it names on the same kind
+  (after the kind's rules without one; an anchor that is not there, or a
+  loop, is refused). Rules are read from the default branch only, as repository
   recipes are.
 - **On or off at every source.** A rule is on unless something turns it
   off, and three places can, each overriding the one before:
@@ -468,7 +486,7 @@ five rules, both ways:
    prs-assigned:                          │
      github: "is:pr assignee:{{pool}}"    │
      every: 2m                            │
- groups:                                  │ # order: each rule says its place
+ groups:                                  │ # order: position; a repo rule: before/after
    - name: pr-care                        │
      rules: [comments, conflict, ci,      │
              review]                      │
@@ -482,13 +500,13 @@ five rules, both ways:
    - name: comments                       │ # rules/comments.yaml
      on: pr                               │ name: comments
      from: [prs-assigned]                 │ on: pr
-     when: {feedback: new-trusted}        │ order: 10
+     when: {feedback: new-trusted}        │
      run: {recipe: care-comments}         │ when: {feedback: new-trusted}
    - name: ci                             │ run: {recipe: care-comments}
      on: pr                               │ # rules/ci.yaml
      when: {checks: failing}              │ name: ci
      run: {recipe: care-ci}               │ on: pr
-     policy: {give-up: {attempts: 3}}     │ order: 30
+     policy: {give-up: {attempts: 3}}     │
    - name: review                         │ when: {checks: failing}
      on: pr                               │ run: {recipe: care-ci}
      when: {checks: green,                │ policy: {give-up: {attempts: 3}}
@@ -506,7 +524,7 @@ five rules, both ways:
 |---|---|---|
 | familiar from | Kubernetes manifests, CI config | GitHub Actions (`.github/workflows/*`), `.agents/recipes/*` |
 | everything at once | by reading it | `factory watch rules --url` |
-| order between rules | one list | each rule's `order` |
+| order between rules | one list | factory's: position in its kind's file; a repository's new rule: `before`/`after` |
 | sources | declared, tunable | derived; cadence is the engine's |
 | add or remove a behaviour | edit a shared file | add or delete a file |
 | override one built-in | restate or patch an entry, which drifts | a file of the same name |
@@ -514,9 +532,10 @@ five rules, both ways:
 
 One file's strength, everything in one place, a command gives; its cost,
 every change an edit to a shared file that drifts from the built-ins, is
-structural. One file per rule costs the order spread across files as
-numbers: the command prints the rules in order, and loading refuses two
-rules on one kind with the same order.
+structural. Factory's own rules are a file per kind, not per rule:
+only factory edits them, so ownership and drift do not arise, and order is
+position (2a's `order:` numbers are gone). A repository keeps one file per
+rule, which is where the per-rule override matters.
 
 A trigger inside the recipe (an `auto:` beside its `on:`) is rejected:
 the same recipe is triggered differently by the overseer, a board's

@@ -23,17 +23,19 @@ getting there without changing what it does, is in
 
 | source | where | what it can do |
 |---|---|---|
-| factory | `factory/pkg/watch/rules/<name>.yaml`, embedded in the binary | the prebaked rules: today's watch, out of the box |
-| a repository | `.agents/rules/<name>.yaml` on its default branch (Phase 5) | replace a factory rule of the same name, add a rule of a new name, or turn a factory rule on or off |
+| factory | `factory/pkg/watch/rules/<kind>.yaml` (`issue`, `pr`, `schedule`, `event`), embedded in the binary: each kind's rules, in the order the engine walks them | the prebaked rules: today's watch, out of the box |
+| a repository | `.agents/rules/<name>.yaml` on its default branch (Phase 5), one rule per file | replace a factory rule of the same name in place, add a rule of a new name (placed `before` or `after` a named rule), or turn a factory rule on or off |
 | the overseer | the Overseer's `spec.rules.disabled` (with the engine) | the operator's emergency switch: turn rules off |
 
-A rule's file is named after it: `fix.yaml` holds the rule named `fix`.
+Factory's files are a kind each: `on:` and the kind's `rules:`, top to
+bottom. A repository's file is one rule, named after it: `fix.yaml` holds
+the rule named `fix`.
 
 List the rules, with a checkout's `.agents/rules/` laid over factory's:
 
 ```sh
-factory watch rules                 # table: NAME ON ORDER RUN AS POLICY SOURCE ENABLED
-factory watch rules -o yaml         # every rule, whole
+factory watch rules                 # table: NAME ON ORDER RUN POLICY SOURCE ENABLED
+factory watch rules -o yaml         # every rule, whole, as a list per kind
 factory watch rules --dir .         # with this checkout's .agents/rules/ laid over
 ```
 
@@ -41,13 +43,13 @@ factory watch rules --dir .         # with this checkout's .agents/rules/ laid o
 
 ## Anatomy of a rule
 
-`fix.yaml`, annotated:
+`fix`, from `issue.yaml`, annotated (in a repository's own file it would
+also say `on: issue`):
 
 ```yaml
 name: fix                    # unique; names the file
 description: Fix an issue the overseer is pointed at and open the PR
 on: issue                    # the kind of item the rule looks at
-order: 20                    # its place among the issue rules; a recipe rule takes the item
 when:                        # the condition: every predicate set must hold
   fanout: false              #   not a fan-out's parent (the fan-out controller's)
   linked-pr: none            #   no open PR closes it or is linked to it
@@ -86,7 +88,7 @@ linked to the issue for fix. A rule does not say which; see
 | `description` | string | What the rule is for, in a line. |
 | `on` | `issue`, `pr`, `schedule`, `event` | The kind of item. `schedule` is an `.agents/` agent definition whose schedule is due; `event` is something the watch derives rather than lists (today `linked-issue-closed`). |
 | `enabled` | `true`, `false`; unset is on | A rule shipped off says `enabled: false`. See [Turning rules on and off](#turning-rules-on-and-off). |
-| `order` | a number above 0 | The rule's place among the rules on its kind of item, lower first. A rule without one goes after those with one; a rule that takes the item needs one, and no two rules on a kind share one. See [Order](#order). |
+| `before`, `after` | a rule's name, same kind | A repository's new rule only: placed just before or after that rule. Unset, it goes after the rules on its kind. Factory's rules are placed by their position in their kind's file; a rule replacing one keeps its place. See [Order](#order). |
 | `exclusive` | `true`, `false`; unset: a recipe rule `true`, GitHub writes `false` | Whether the rule takes the item: of the rules that do, only the first that holds is decided. See [Order](#order). |
 | `when` | predicates | The condition. See [`when`](#when-the-predicates). |
 | `run` | a recipe, or GitHub writes | The action. See [`run`](#run-the-action). |
@@ -302,7 +304,9 @@ zero.
 
 ## Order
 
-The rules on one kind of item are one list, walked in `order`. A rule
+The rules on one kind of item are one list, walked top to bottom: factory's
+in their kind's file order, a repository's new rules where their `before`
+or `after` puts them (or after the kind's rules). A rule
 **takes the item** (`exclusive`; a recipe rule does unless it says
 otherwise) or does not:
 
@@ -315,19 +319,19 @@ otherwise) or does not:
 
 The prebaked PR rules, in order:
 
-| order | rule | takes the item | does |
+| # | rule | takes the item | does |
 |---|---|---|---|
-| 5 | `inherit-labels` | no | copies the closing issues' labels, so the rules after it see them |
-| 7 | `inactive` | no | pauses an idle PR (the stop label ends the walk) |
-| 10 | `comments` | yes | answers new trusted feedback |
-| 20 | `conflict` | yes | rebases a PR that conflicts |
-| 30 | `ci` | yes | fixes failing checks |
-| 40 | `review` | yes | reviews a green PR that wants one |
-| 50 | `ready` | yes (`exclusive: true`) | hands a ready PR to the humans |
-| 60 | `ready-unreview` | yes (`exclusive: true`) | takes `*/review` off a PR already handed over |
-| - | `adopt-pr` | no | (off) |
+| 1 | `inherit-labels` | no | copies the closing issues' labels, so the rules after it see them |
+| 2 | `inactive` | no | pauses an idle PR (the stop label ends the walk) |
+| 3 | `comments` | yes | answers new trusted feedback |
+| 4 | `conflict` | yes | rebases a PR that conflicts |
+| 5 | `ci` | yes | fixes failing checks |
+| 6 | `review` | yes | reviews a green PR that wants one |
+| 7 | `ready` | yes (`exclusive: true`) | hands a ready PR to the humans |
+| 8 | `ready-unreview` | yes (`exclusive: true`) | takes `*/review` off a PR already handed over |
+| 9 | `adopt-pr` | no | (off) |
 
-On issues, `workflow` (10) and `fix` (20) both take the item; their
+On issues, `workflow` (1) and `fix` (2) both take the item; their
 predicates (`workflow: any` and `workflow: none`) keep them apart. `ready`
 writes labels but takes the item: it must not hold beside a care rule, nor
 while a task runs.
@@ -343,7 +347,7 @@ gathered - it makes no GitHub calls:
    and neither does a PR in the merge queue.
 2. **The rules that apply.** The enabled rules of the item's kind (the item
    is one the watch tracks).
-3. **In order.** The rules are walked in `order`. A rule that takes the
+3. **In order.** The rules are walked top to bottom. A rule that takes the
    item is decided only if none before it was and no task of the item is
    active; any other rule decides on its own, and its label writes are what
    the rules after it see. A stop label written by one (`inactive`, or
@@ -417,7 +421,7 @@ A repository rule that asks for a review of every green bot PR labelled
 name: review-on-label
 description: Review a green bot PR labelled needs-review
 on: pr
-order: 45                    # after review (40), before ready (50)
+before: ready                # after review, before ready
 when:
   author: pool
   labels: {all: [needs-review]}
@@ -438,9 +442,10 @@ Rules are checked strictly when they load:
 - the floors: `give-up.attempts` at most 10, a cooldown
   at least 1m - a rule cannot loop on an item;
 - a placeholder the engine does not fill in where it is used is an error;
-- a rule that takes the item has an `order`; `order` and `exclusive` are
-  only for rules on issues and PRs;
-- in a set: unique names; no two rules on one kind share an `order`.
+- `exclusive` is only for rules on issues and PRs; `before` or `after`, not
+  both, names a rule on the same kind (a replacement keeps its place and
+  names none; a loop of them is an error);
+- in a set: unique names.
 
 ---
 
