@@ -613,7 +613,9 @@ spec:
   Each decision is recorded beside the scanner's, and disagreements per
   rule are shown in the journal and the overseer's view.
 - **`use: {<rule>: engine}`:** the rule's tasks come from the engine and
-  the scanner skips that task type; everything after the queue is
+  the scanner skips that task type (as built, the engine decides the
+  scanner's step instead; see "How the engine runs inside the scanners"
+  below); everything after the queue is
   unchanged. Back is the same setting; the engine's state (snapshots,
   cursor, attempts) only adds to what is there, so nothing migrates.
 - **`canaryLabel`:** a rule the engine has taken applies only to items
@@ -627,6 +629,147 @@ PRs opened, give-ups) are compared over a week before and after it moves.
 
 **Not partial by loop:** issues on one path and PRs on the other is too
 coarse, since PR care is rules of very different risk.
+
+### How the engine runs inside the scanners (Phases 2 and 3, as built)
+
+Built, `use` is narrower than the bullet above: the engine does not
+queue tasks of its own. It runs inside the two scanners and, for a rule
+it has taken, answers the scanner's question at the point the scanner
+used to answer it from its own condition. The fetching, the handlers
+that build and queue the task and the dispatcher stay the scanners'.
+
+**Where the items come from.** With `sharedScan` one Store lists the
+tracked set (trigger label ∪ each pool bot's assignments ∪ the
+watcher's own issues) in full, then once per pass for what changed
+since its cursor, and persists it; without it each scanner lists for
+itself. The scanners read their lists out of it on their own tickers:
+
+```
+ GitHub
+   │  sharedScan: one Store (scan_state.json), full then incremental
+   ▼
+ ┌───────────────────────────────┐        ┌───────────────────────────────┐
+ │ Issue scanner                 │        │ PR scanner                    │
+ │  every tick: fast pass        │        │  sweep when due, else fast    │
+ │    issues assigned to pool    │        │  sweep: ListOpenPRs → open-PR │
+ │  when due: sweep              │◄───────┤    cache, adopt orphans, then │
+ │    trigger-labelled issues    │ open-PR│    every labelled/assigned PR │
+ │  no open-PR cache → no scan   │ cache  │  fast: assigned PRs that moved│
+ └──────────────┬────────────────┘        │    (updated_at, CI active,    │
+                │ per issue               │    task started/finished)     │
+                ▼                         └──────────────┬────────────────┘
+          queueTask()                                    │ per PR (GraphQL
+                                                         ▼ details read ahead)
+                                                    evaluate()
+```
+
+**The record is the engine's input.** Each scanner opens a Recording
+when it starts on an item and fills a `rules.Item` as it learns facts.
+The engine decides on that Item alone and never calls GitHub:
+
+```
+ startRecording(item)          labels, assignees, author, updatedAt
+   ├─ rec.Fill(...)            facts as the scanner learns them
+   ├─ rec.Gated(why)           a gate outside the rules held it back
+   ├─ rec.Decided(rule, run)   what the scanner did
+   ▼
+ rec.Finish() ─► Recorder ─► decisions.jsonl (rulesRecord; repeats skipped 30m)
+                    └──────► Shadow.Observe: Set.Decide(Item) vs the
+                             scanner's decisions → /api/v1/queue `shadow`
+```
+
+**A pull request** (`prs/scanner.go` evaluate):
+
+```
+ stop label? ─► drop its pending tasks, return
+ read PR                              Fill: author, head, draft, mergeable
+ merge queue? ─► drop pending, return
+ author not in the bot pool? ─► return
+ closing issues                       Fill: closes
+ decides("inherit-labels") ─► label sync from the closing issues
+ stop label now? ─► drop pending, return
+ queue history                        Fill: runs, queued
+ task active? ─► return               Fill: taskActive
+ reviews, comments                    Fill: reviewedAtHead, changesRequested,
+                                            lastTrustedActivity, humanSpokeAt
+ decides("inactive") ─► pause (stop label + comment), return
+ legacy conditions                    Fill: newTrustedFeedback, checks, approved
+ engine takes any care rule here? ─► engineCare = Set.Decide(Item)
+ first that holds:
+   picks("comments") → handlePRComments
+   picks("conflict") → handlePRIterate
+   picks("ci")       → handlePRInvestigate
+   picks("review")   → handlePRReview
+ picksReadiness → reconcileReadiness (ready / ready-unreview)
+```
+
+`picks` and `decides`, per rule and per pull request:
+
+```
+ rule in disabled                          → don't act
+ Takes(rule, labels): engine on ∧ use[rule]=engine
+                      ∧ (no canaryLabel ∨ the item has it)
+                                           → did the engine decide it?
+ otherwise                                 → the scanner's own condition
+```
+
+The handler that follows keeps its own checks and gates (a busy sandbox)
+before it queues.
+
+**An issue** (`issues/scanner.go` queueTask). The scanner gathers its
+facts cheapest first and returns at the first that says no, so the
+engine only confirms; it can hold a fix or a workflow back, never start
+one:
+
+```
+ stop label? ─► drop pending, return
+ fan-out held? ─► return
+ an open PR references it? ─► return       Fill: linkedPR
+ workflow named? → rule = workflow, else fix   Fill: workflow, runs
+ rule disabled? ─► return
+ task queued? ─► return                    Fill: queued
+ in cooldown? ─► return                    Fill: workflowCooldown
+ processed, not updated since (fix)? ─► return
+ timeline linked PR (fix)? ─► return
+ sandbox needs a person / busy? ─► Gated, return
+ trigger label, bot, task (fix: expect no-linked-pr)
+ Takes(rule) ∧ the engine does not decide it? ─► return
+ rec.Decided(rule, run) → Enqueue
+```
+
+**After the queue** nothing changed: the dispatcher drops a stopped
+item's tasks (`ShouldCancelTask`) and a task whose preconditions no
+longer hold, then runs the recipe and its apply.
+
+**Inside `Set.Decide`:** the stop label or the merge queue decides
+nothing; then the enabled rules of the item's kind, walked in `order`:
+a rule that takes the item is decided only if none before it was and no
+task of the item is active; any other rule decides on its own, its label
+writes applied for the rules after it, and a stop it writes (inactive,
+or one inherited by inherit-labels) ends the walk. A rule holds on its
+predicates and policy (cooldown, dedupe by head); one past its attempts
+decides its give-up. The stop gate is code, not a rule: `stop.yaml`
+ships disabled and only names it,
+so `disabled: [stop]` changes nothing.
+
+**What this means for the move:**
+
+- On an item it has taken a rule for, the engine replaces only the
+  conditions above. The stop and merge-queue returns, the bot-author
+  filter, the active-task skip, the reads, the handlers and the
+  dispatcher stay scanner code until Phase 4.
+- `engine: on` keeps the shadow, but on an item where the engine has
+  taken a rule what the scanner did *is* the engine's decision, so that
+  rule's comparison agrees by construction. The scanner's own condition
+  is worked out and dropped; until it is recorded beside the engine's
+  (the `decidedBy` above is not built yet), the evidence for a taken
+  rule is its outcomes.
+- An issue rule on the engine can only lose work: its regressions are
+  fixes and workflows that did not happen.
+- `use`, `canaryLabel` and `disabled` reach the watch as `WATCH_RULES_*`
+  environment, so changing them restarts the pod (a safe upgrade on
+  KCC); the canary label itself is read every scan, so labelling an item
+  moves it with no restart.
 
 ## Plan
 
@@ -704,6 +847,13 @@ regression. Done when every rule is on the engine.
 **Phase 4, delete:** a rule's scanner code goes once the rule has run on
 the engine in production for two weeks without moving back; the
 scanners go with their last rule.
+
+When the engine starts building a rule's task itself, it takes the
+queue phase from the rule's `policy.phase`, which until then nobody reads
+(the handlers set it from their own constants). At that switch, check
+once that each rule's `phase` is the one its handler set (comments 1,
+review 1, conflict 2, ci 3, fix 3, workflow 4), so the queue's order does
+not change with it; after it there is one source and nothing to drift.
 
 **Phase 5, the repository's rules:** `.agents/rules/*.yaml` replacing,
 turning off or adding to the prebaked rules, within the global gates and
