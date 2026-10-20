@@ -13,6 +13,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 )
 
@@ -425,5 +426,61 @@ func TestAgentSandboxName(t *testing.T) {
 		if name != want[0] || workflow != want[1] {
 			t.Errorf("AgentSandboxName(r, %s) = %s, %q; want %s, %q", taskID, name, workflow, want[0], want[1])
 		}
+	}
+}
+
+// The hook before a suspension (the harvest) runs for an idle sandbox,
+// while it is still up, and what it writes does not stop the suspension.
+func TestSuspendSandboxIfIdleBeforeSuspend(t *testing.T) {
+	scheme := runtime.NewScheme()
+	fakeDynamic := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(scheme, map[schema.GroupVersionResource]string{
+		k8s.SandboxGVR:            "SandboxList",
+		sandbox.VolumeSnapshotGVR: "VolumeSnapshotList",
+	})
+	kubeClient := &clients.KubernetesClient{DynamicClient: fakeDynamic}
+	ctx := context.Background()
+	ns := "test-ns"
+	mk := func(name string, created time.Time) *unstructured.Unstructured {
+		sb := &unstructured.Unstructured{Object: map[string]interface{}{
+			"apiVersion": "agents.x-k8s.io/v1alpha1",
+			"kind":       "Sandbox",
+			"metadata": map[string]interface{}{
+				"name": name, "namespace": ns, "creationTimestamp": created.Format(time.RFC3339),
+			},
+			"spec": map[string]interface{}{"replicas": int64(1)},
+		}}
+		created2, err := fakeDynamic.Resource(k8s.SandboxGVR).Namespace(ns).Create(ctx, sb, metav1.CreateOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return created2
+	}
+
+	idle := mk("idle", time.Now().Add(-2*time.Hour))
+	var calls []string
+	hook := func(name string) func(context.Context) {
+		return func(ctx context.Context) {
+			calls = append(calls, name)
+			patch := `{"metadata":{"annotations":{"` + sandbox.AnnotationHarvestedAt + `":"` + time.Now().UTC().Format(time.RFC3339) + `"}}}`
+			if _, err := fakeDynamic.Resource(k8s.SandboxGVR).Namespace(ns).Patch(ctx, name, types.MergePatchType, []byte(patch), metav1.PatchOptions{}); err != nil {
+				t.Errorf("hook patch: %v", err)
+			}
+		}
+	}
+	suspended, err := sandbox.SuspendSandboxIfIdle(ctx, kubeClient, ns, idle, 30*time.Minute, false, hook("idle"))
+	if err != nil || !suspended {
+		t.Fatalf("SuspendSandboxIfIdle = %v, %v", suspended, err)
+	}
+	got, _ := fakeDynamic.Resource(k8s.SandboxGVR).Namespace(ns).Get(ctx, "idle", metav1.GetOptions{})
+	if r, _, _ := unstructured.NestedInt64(got.Object, "spec", "replicas"); r != 0 || got.GetAnnotations()[sandbox.AnnotationHarvestedAt] == "" {
+		t.Errorf("replicas %d, annotations %v", r, got.GetAnnotations())
+	}
+
+	busy := mk("busy", time.Now())
+	if suspended, _ := sandbox.SuspendSandboxIfIdle(ctx, kubeClient, ns, busy, 30*time.Minute, false, hook("busy")); suspended {
+		t.Error("suspended a sandbox that is not idle")
+	}
+	if len(calls) != 1 || calls[0] != "idle" {
+		t.Errorf("hook calls = %v, want [idle]", calls)
 	}
 }

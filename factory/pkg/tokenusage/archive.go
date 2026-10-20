@@ -45,6 +45,8 @@ import (
 //	records/<seq>.seg.jsonl.gz    a sealed segment of the records log
 //	records/<seq>.snap.jsonl.gz   every record as of segment <seq>
 //	subjects/…                    the same for the subjects log
+//	trace-index/…                 the same for the trace index (traces.go)
+//	traces/…                      the traces themselves (traces.go)
 //	summarized.json               the workflows whose summary was posted
 
 // Archive is an object store: flat names, whole-object reads and writes.
@@ -73,7 +75,7 @@ const (
 // a few objects rather than every flush since the beginning.
 var compactAfter = 100
 
-var logKinds = []string{logRecords, logSubjects}
+var logKinds = []string{logRecords, logSubjects, logTraces}
 
 func segmentName(kind string, seq int64) string {
 	return fmt.Sprintf("%s/%020d.seg.jsonl.gz", kind, seq)
@@ -274,8 +276,11 @@ func (s *Store) sealLocked() error {
 }
 
 func (s *Store) logFile(kind string) **os.File {
-	if kind == logSubjects {
+	switch kind {
+	case logSubjects:
 		return &s.subjectsLog
+	case logTraces:
+		return &s.tracesLog
 	}
 	return &s.log
 }
@@ -290,6 +295,11 @@ func (s *Store) Flush(ctx context.Context) error {
 	}
 	s.flushMu.Lock()
 	defer s.flushMu.Unlock()
+	// Traces first: indexing one appends to the traces log, which this
+	// flush then seals and uploads with the rest.
+	if err := s.uploadTraces(ctx); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	err := s.sealLocked()
 	s.mu.Unlock()
@@ -426,13 +436,20 @@ func (s *Store) snapshotLocked(kind string) ([]byte, error) {
 		buf.Write(append(line, '\n'))
 		return nil
 	}
-	if kind == logSubjects {
+	switch kind {
+	case logSubjects:
 		for _, key := range sortedKeys(s.subjects) {
 			if err := write(s.subjects[key]); err != nil {
 				return nil, err
 			}
 		}
-	} else {
+	case logTraces:
+		for _, key := range sortedKeys(s.traces) {
+			if err := write(s.traces[key]); err != nil {
+				return nil, err
+			}
+		}
+	default:
 		for _, key := range sortedKeys(s.records) {
 			if err := write(s.records[key]); err != nil {
 				return nil, err

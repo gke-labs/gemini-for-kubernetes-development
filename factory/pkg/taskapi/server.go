@@ -74,6 +74,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/tasks/{id}/log", s.handleLog)
 	mux.HandleFunc("GET /v1/tasks/{id}/files", s.handleFiles)
 	mux.HandleFunc("GET /v1/tasks/{id}/files/{name}", s.handleReadFile)
+	mux.HandleFunc("GET /v1/tasks/{id}/files/session/{name}", s.handleReadSessionFile)
 	mux.HandleFunc("PUT /v1/tasks/{id}/files/{name}", s.handleWriteFile)
 	mux.HandleFunc("POST /v1/tasks/{id}/cancel", s.handleCancel)
 	if s.sessions != nil {
@@ -420,6 +421,30 @@ func (s *Server) handleReadFile(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case os.IsNotExist(err):
 		writeError(w, http.StatusNotFound, fmt.Sprintf("no file %s", file))
+	case err != nil:
+		writeError(w, http.StatusInternalServerError, err.Error())
+	default:
+		w.Header().Set("Content-Type", "application/octet-stream")
+		_, _ = w.Write(data)
+	}
+}
+
+// handleReadSessionFile serves a file of the task's session directory
+// (<taskDir>/session: the transcript, stream.ndjson, and the engine's
+// logs), for the usage and trace harvest.
+func (s *Server) handleReadSessionFile(w http.ResponseWriter, r *http.Request) {
+	taskDir, ok := s.taskDir(w, r)
+	if !ok {
+		return
+	}
+	file, ok := pathName(w, r, "name")
+	if !ok {
+		return
+	}
+	data, err := os.ReadFile(filepath.Join(taskDir, SessionDir, file))
+	switch {
+	case os.IsNotExist(err):
+		writeError(w, http.StatusNotFound, fmt.Sprintf("no file %s/%s", SessionDir, file))
 	case err != nil:
 		writeError(w, http.StatusInternalServerError, err.Error())
 	default:

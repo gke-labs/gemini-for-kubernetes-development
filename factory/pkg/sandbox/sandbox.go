@@ -607,6 +607,11 @@ func withLabels(labels, extra map[string]string) map[string]string {
 // which nobody outside factory can stamp before it exists.
 const AnnotationTaskEngine = "sandbox.gemini.google.com/last-task-engine"
 
+// AnnotationHarvestedAt is when the usage and trace harvest last published
+// everything in the sandbox (usagereport.HarvestSandbox). A sandbox whose
+// LastActivity is no later has nothing new to harvest.
+const AnnotationHarvestedAt = "sandbox.gemini.google.com/harvested-at"
+
 func UpdateSandboxTaskAnnotation(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, sandboxName, taskType, taskState string) error {
 	return updateSandboxTask(ctx, kubeClient, namespace, sandboxName, taskType, taskState, "", false, nil)
 }
@@ -874,7 +879,7 @@ func SuspendIdleSandboxes(ctx context.Context, kubeClient *clients.KubernetesCli
 	suspendedCount := 0
 	for i := range list.Items {
 		item := &list.Items[i]
-		suspended, err := SuspendSandboxIfIdle(ctx, kubeClient, namespace, item, idleTimeout, dryRun)
+		suspended, err := SuspendSandboxIfIdle(ctx, kubeClient, namespace, item, idleTimeout, dryRun, nil)
 		if err != nil {
 			klog.Errorf("Failed to suspend idle sandbox '%s': %v", item.GetName(), err)
 			continue
@@ -927,7 +932,10 @@ func SuspendSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, n
 // minutes past its listing by the time it reaches this one, and an Update
 // carrying a stale resourceVersion would be rejected. The re-read also gives a
 // last chance to notice that the sandbox picked up work in the meantime.
-func SuspendSandboxIfIdle(ctx context.Context, kubeClient *clients.KubernetesClient, namespace string, item *unstructured.Unstructured, idleTimeout time.Duration, dryRun bool) (bool, error) {
+//
+// beforeSuspend, when not nil, runs once the sandbox is found idle and
+// before it is scaled down, while its pod is still up: the harvest.
+func SuspendSandboxIfIdle(ctx context.Context, kubeClient *clients.KubernetesClient, namespace string, item *unstructured.Unstructured, idleTimeout time.Duration, dryRun bool, beforeSuspend func(context.Context)) (bool, error) {
 	if kubeClient == nil || item == nil || idleTimeout <= 0 {
 		return false, nil
 	}
@@ -945,6 +953,11 @@ func SuspendSandboxIfIdle(ctx context.Context, kubeClient *clients.KubernetesCli
 	if dryRun {
 		fmt.Printf("[DRYRUN] Would suspend idle sandbox '%s' (replicas=0)\n", name)
 		return true, nil
+	}
+	// Before the read below, so that what it writes (an annotation) cannot
+	// make the update conflict.
+	if beforeSuspend != nil {
+		beforeSuspend(ctx)
 	}
 
 	current, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
@@ -1040,12 +1053,17 @@ func idleSince(item *unstructured.Unstructured, idleTimeout time.Duration, now t
 		return time.Time{}, false // Already suspended.
 	}
 
-	// Last activity is the most recent of the creation time and any of the
-	// timestamps a task run leaves behind.
-	lastActivity := item.GetCreationTimestamp().Time
 	if taskInFlight(item) {
 		return time.Time{}, false
 	}
+	lastActivity := LastActivity(item)
+	return lastActivity, now.Sub(lastActivity) > idleTimeout
+}
+
+// LastActivity is the most recent of a sandbox's creation time and the
+// timestamps a task run (or a wake) leaves behind.
+func LastActivity(item *unstructured.Unstructured) time.Time {
+	lastActivity := item.GetCreationTimestamp().Time
 	if annotations := item.GetAnnotations(); annotations != nil {
 		for _, key := range []string{
 			"sandbox.gemini.google.com/completion-time",
@@ -1061,6 +1079,5 @@ func idleSince(item *unstructured.Unstructured, idleTimeout time.Duration, now t
 			}
 		}
 	}
-
-	return lastActivity, now.Sub(lastActivity) > idleTimeout
+	return lastActivity
 }
