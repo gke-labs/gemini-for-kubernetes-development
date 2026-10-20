@@ -109,7 +109,7 @@ Overseer's spec.rulesRecord), history and settings included:
 	cmd.Flags().StringSliceVar(&o.reviewers, "reviewers", nil, "The logins whose reviews are the automated review")
 	cmd.Flags().StringSliceVar(&o.trust, "trusted", nil, "Logins trusted whatever GitHub's association says")
 	cmd.Flags().DurationVar(&o.inactivity, "inactivity", 0, "The overseer's prInactivityTimeout (0: never)")
-	cmd.Flags().StringSliceVar(&o.records, "record", nil, "decisions.jsonl files: explain the overseer's last record of the item instead of reading it live")
+	cmd.Flags().StringSliceVar(&o.records, "record", nil, "decisions.jsonl files, or the record's directory: explain the overseer's last record of the item instead of reading it live")
 	cmd.Flags().StringVar(&o.dir, "dir", "", "A local checkout whose .agents/rules/ to lay over factory's rules")
 	cmd.Flags().StringVarP(&o.output, "output", "o", "", "Output format: json (the record and the explanation)")
 	cmd.Flags().BoolVarP(&o.verbose, "verbose", "v", false, "Show the scanner's own log while it reads the facts")
@@ -176,8 +176,16 @@ func lastRecordOf(paths []string, item githubItem) (*rules.Record, error) {
 	if item.IsPR {
 		kind = rules.OnPR
 	}
+	var files []string
+	for _, p := range paths {
+		fs, err := rules.RecordFiles(p)
+		if err != nil {
+			return nil, err
+		}
+		files = append(files, fs...)
+	}
 	var last *rules.Record
-	for _, path := range paths {
+	for _, path := range files {
 		f, err := os.Open(path)
 		if err != nil {
 			return nil, err
@@ -224,6 +232,11 @@ func printExplanation(out io.Writer, item githubItem, rec *rules.Record, set rul
 		fmt.Fprintf(out, "gate    the item %s: no rule decides\n", ex.Gate)
 	}
 	fmt.Fprintln(out)
+	printSteps(out, set, ex)
+}
+
+// printSteps writes the walk, rule by rule, and what it decides.
+func printSteps(out io.Writer, set rules.Set, ex rules.Explanation) {
 	order := map[string]int{}
 	for _, r := range set {
 		order[r.Name] = r.Order
@@ -255,6 +268,12 @@ func printExplanation(out io.Writer, item githubItem, rec *rules.Record, set rul
 		fmt.Fprintf(w, "%s %s %s\t%s\t%s\n", place, mark, st.Rule, sign, what)
 	}
 	w.Flush()
+	fmt.Fprintf(out, "\ndecides %s\n", strings.Join(decisionList(ex), ", "))
+}
+
+// decisionList is what an explanation decides, "<rule> <outcome>" each, or
+// "nothing".
+func decisionList(ex rules.Explanation) []string {
 	var decided []string
 	for _, d := range ex.Decisions() {
 		decided = append(decided, d.Rule+" "+d.Outcome)
@@ -262,7 +281,7 @@ func printExplanation(out io.Writer, item githubItem, rec *rules.Record, set rul
 	if len(decided) == 0 {
 		decided = []string{"nothing"}
 	}
-	fmt.Fprintf(out, "\ndecides %s\n", strings.Join(decided, ", "))
+	return decided
 }
 
 func decisionText(d rules.Decision) string {

@@ -1,0 +1,81 @@
+# PR scenarios: facts as the PR scanner records them, and what the rules
+# decide. Run with: factory watch rules decide -f factory/pkg/watch/rules/scenarios
+name: a clean review, green and mergeable, goes to ready
+env: {pool: [ada-coder-bot], now: 2026-10-20T12:00:00Z}
+item: {kind: pr, number: 1, author: ada-coder-bot, labels: [overseer, overseer/review], head: h1, checks: green, mergeable: true, reviewedAtHead: true}
+expect: [ready run]
+---
+name: "new feedback wins over failing CI: comments first"
+env: {pool: [ada-coder-bot], now: 2026-10-20T12:00:00Z}
+item: {kind: pr, number: 2, author: ada-coder-bot, labels: [overseer], head: h1, checks: failing, mergeable: true, newTrustedFeedback: true}
+expect: [comments run]
+---
+name: "failing CI, a good run 1h ago on this head: held by the cooldown"
+env: {pool: [ada-coder-bot], now: 2026-10-20T12:00:00Z}
+item:
+  kind: pr
+  number: 3
+  author: ada-coder-bot
+  labels: [overseer]
+  head: h1
+  checks: failing
+  mergeable: true
+  runs: [{rule: ci, startedAt: 2026-10-20T10:50:00Z, endedAt: 2026-10-20T11:00:00Z, head: h1}]
+expect: []
+---
+name: "failing CI, a good run 1h ago on the last head: a new head ends the cooldown"
+env: {pool: [ada-coder-bot], now: 2026-10-20T12:00:00Z}
+item:
+  kind: pr
+  number: 4
+  author: ada-coder-bot
+  labels: [overseer]
+  head: h2
+  checks: failing
+  mergeable: true
+  runs: [{rule: ci, startedAt: 2026-10-20T10:50:00Z, endedAt: 2026-10-20T11:00:00Z, head: h1}]
+expect: [ci run]
+---
+name: "failing CI, three runs since the head: give up"
+env: {pool: [ada-coder-bot], now: 2026-10-20T12:00:00Z}
+item:
+  kind: pr
+  number: 5
+  author: ada-coder-bot
+  labels: [overseer]
+  head: h1
+  headChangedAt: 2026-10-20T05:00:00Z
+  checks: failing
+  mergeable: true
+  runs:
+    - {rule: ci, startedAt: 2026-10-20T06:00:00Z, endedAt: 2026-10-20T06:10:00Z, head: h1, failed: true}
+    - {rule: ci, startedAt: 2026-10-20T07:00:00Z, endedAt: 2026-10-20T07:10:00Z, head: h1, failed: true}
+    - {rule: ci, startedAt: 2026-10-20T08:00:00Z, endedAt: 2026-10-20T08:10:00Z, head: h1, failed: true}
+expect: [ci give-up]
+---
+name: "a rebase that failed on this head is tried again (dedupe: head counts no failure)"
+env: {pool: [ada-coder-bot], now: 2026-10-20T12:00:00Z}
+item:
+  kind: pr
+  number: 6
+  author: ada-coder-bot
+  labels: [overseer, overseer/ready-for-human]
+  head: h1
+  mergeable: false
+  runs: [{rule: conflict, startedAt: 2026-10-20T11:00:00Z, endedAt: 2026-10-20T11:05:00Z, head: h1, failed: true}]
+expect: [conflict run]
+---
+name: a task of the PR running holds every rule that takes it
+env: {pool: [ada-coder-bot], now: 2026-10-20T12:00:00Z}
+item: {kind: pr, number: 7, author: ada-coder-bot, labels: [overseer], head: h1, checks: failing, mergeable: true, taskActive: true}
+expect: []
+---
+name: the stop label is a gate
+env: {pool: [ada-coder-bot], now: 2026-10-20T12:00:00Z}
+item: {kind: pr, number: 8, author: ada-coder-bot, labels: [overseer, overseer/stop], head: h1, checks: failing, mergeable: true}
+expect: []
+---
+name: a PR from outside the pool is not the overseer's
+env: {pool: [ada-coder-bot], now: 2026-10-20T12:00:00Z}
+item: {kind: pr, number: 9, author: someone, labels: [overseer], head: h1, checks: failing, mergeable: true}
+expect: []
