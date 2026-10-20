@@ -95,3 +95,41 @@ The CAS guarantees at-most-once commenting across watch-loop restarts. Known lim
 ## 7. Dashboard
 
 The review UI (`repo-agent/review-ui/ui/src/TokenUsage.js`, a "Usage" view in `App.js`) shows per-workflow (expandable to per-task records), per-issue, and per-PR tables with 30s polling. It fetches through an authenticated GET-only reverse proxy in the repo-agent API (`GET /api/usage/*path` → collector), configured by `COLLECTOR_URL` on `repo-agent/k8s/api-deployment.yaml`. The coupling is HTTP-only; factory/overseer never import repo-agent code.
+
+---
+
+## 8. Storage: the PVC and a GCS archive
+
+The PVC holds one zonal disk's worth of history, and losing it loses all of it. With a bucket configured, the collector keeps two tiers (`factory/pkg/tokenusage/archive.go`):
+
+* **The PVC is the write-ahead tier.** Writes append to `records.jsonl` / `subjects.jsonl` as before, so ingestion stays a local append and fsync.
+* **GCS is the record of truth.** Every `FLUSH_INTERVAL` (default 5m) the flusher seals the non-empty active logs into segment `<seq>` (`sealed/<log>/<seq>.jsonl` on the PVC), uploads each as `<prefix>/<log>/<seq>.seg.jsonl.gz`, and deletes it from the PVC once uploaded. `summarized.json` is uploaded whole when it changes. A clean shutdown (a rollout) stops the HTTP server and flushes once more.
+* **Startup** replays, oldest first: the log's latest snapshot in the bucket, the segments after it, the segments still sealed on the PVC (an upload that failed), then the active file. A new PVC is rebuilt from the bucket alone; a lost PVC costs at most one flush interval.
+* **Compaction:** once 100 segments pile up above a log's snapshot, a flush writes the whole index as `<log>/<seq>.snap.jsonl.gz` and deletes the segments and snapshots it replaces, so startup reads a few objects.
+* **Queries don't change:** they are served from the in-memory index, as before. The bucket is only read at startup.
+* **Migration** is the first flush: an existing `records.jsonl` becomes segment 1.
+
+A failed upload is retried at the next tick; the segment stays on the PVC until then. If the bucket is unreachable at startup, the collector exits and is restarted rather than serving a partial index (producers treat the collector as best-effort).
+
+### Setting up the bucket
+
+Per cluster, once:
+
+1. **A bucket** in the cluster's region (reads at startup stay in-region), uniform bucket-level access, public access prevention on. No lifecycle rule on the collector's prefix: it is the only full copy. Several clusters can share a bucket with a prefix each.
+   ```bash
+   gcloud storage buckets create gs://${BUCKET} --project=${PROJECT_ID} --location=us-central1 \
+     --uniform-bucket-level-access --public-access-prevention
+   ```
+2. **Workload Identity** for the collector's service account (`overseer-system/token-usage`, created by `overseer/k8s/token-usage.yaml`), bound on the bucket only. No Google service account and no key is needed:
+   ```bash
+   gcloud storage buckets add-iam-policy-binding gs://${BUCKET} --role=roles/storage.objectAdmin \
+     --member="principal://iam.googleapis.com/projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${PROJECT_ID}.svc.id.goog/subject/ns/overseer-system/sa/token-usage"
+   ```
+   `objectAdmin` because the flusher creates, reads, lists and deletes objects.
+3. **The ConfigMap** the StatefulSet reads (both keys optional; no ConfigMap, no archive):
+   ```bash
+   kubectl -n overseer-system create configmap token-usage \
+     --from-literal=gcs-bucket=${BUCKET} --from-literal=gcs-prefix=token-usage/${CLUSTER_NAME}
+   kubectl -n overseer-system rollout restart statefulset/token-usage
+   ```
+   The prefix must be unique per collector: two collectors on one prefix would overwrite each other's segments.

@@ -18,8 +18,10 @@ package tokenusage
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -41,27 +43,54 @@ type Store struct {
 	summarized  map[string]bool // workflow session -> summary comment posted
 	log         *os.File
 	subjectsLog *os.File
+
+	// The archive tier (archive.go); nil keeps everything on the PVC.
+	archive         Archive
+	flushMu         sync.Mutex
+	nextSeq         int64          // the number the next sealed segment gets
+	segsSinceSnap   map[string]int // per log: archived segments above its latest snapshot
+	summarizedDirty bool           // summarized changed since it was last archived
 }
 
+// NewStore opens the store at root with no archive.
 func NewStore(root string) (*Store, error) {
+	return OpenStore(context.Background(), root, nil)
+}
+
+// OpenStore opens the store at root, replaying archive (when not nil)
+// before what the PVC holds; Flush moves the PVC's logs to the archive.
+func OpenStore(ctx context.Context, root string, archive Archive) (*Store, error) {
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		return nil, fmt.Errorf("creating storage root: %w", err)
 	}
 	s := &Store{
-		root:       root,
-		records:    map[string]UsageRecord{},
-		subjects:   map[string]Subject{},
-		summarized: map[string]bool{},
+		root:          root,
+		records:       map[string]UsageRecord{},
+		subjects:      map[string]Subject{},
+		summarized:    map[string]bool{},
+		archive:       archive,
+		nextSeq:       1,
+		segsSinceSnap: map[string]int{},
 	}
-	if err := replayLog(s.recordsPath(), func(rec UsageRecord) string { return rec.Key }, s.records); err != nil {
+	if err := s.loadLog(ctx, logRecords, func(r io.Reader) error {
+		return replayLog(r, func(rec UsageRecord) string { return rec.Key }, s.records)
+	}); err != nil {
 		return nil, err
 	}
-	if err := replayLog(s.subjectsPath(), func(sub Subject) string { return sub.Key }, s.subjects); err != nil {
+	if err := s.loadLog(ctx, logSubjects, func(r io.Reader) error {
+		return replayLog(r, func(sub Subject) string { return sub.Key }, s.subjects)
+	}); err != nil {
 		return nil, err
 	}
 	if err := s.loadSummarized(); err != nil {
 		return nil, err
 	}
+	if err := s.loadArchivedSummarized(ctx); err != nil {
+		return nil, err
+	}
+	// The PVC's set may never have been archived (the PVC predates the
+	// archive); the first flush uploads it.
+	s.summarizedDirty = archive != nil && len(s.summarized) > 0
 	log, err := os.OpenFile(s.recordsPath(), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
 		return nil, fmt.Errorf("opening records log: %w", err)
@@ -76,23 +105,15 @@ func NewStore(root string) (*Store, error) {
 	return s, nil
 }
 
-func (s *Store) recordsPath() string    { return filepath.Join(s.root, "records.jsonl") }
-func (s *Store) subjectsPath() string   { return filepath.Join(s.root, "subjects.jsonl") }
+func (s *Store) recordsPath() string    { return s.activePath(logRecords) }
+func (s *Store) subjectsPath() string   { return s.activePath(logSubjects) }
 func (s *Store) summarizedPath() string { return filepath.Join(s.root, "summarized.json") }
 
-// replayLog rebuilds an in-memory index from a JSONL append log; the last
-// line for a key wins. Corrupt lines (e.g. torn write on crash) are skipped
+// replayLog adds a JSONL append log to an in-memory index; the last line
+// for a key wins. Corrupt lines (e.g. torn write on crash) are skipped
 // rather than refusing to start.
-func replayLog[T any](path string, keyOf func(T) string, into map[string]T) error {
-	f, err := os.Open(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return err
-	}
-	defer f.Close()
-	scanner := bufio.NewScanner(f)
+func replayLog[T any](r io.Reader, keyOf func(T) string, into map[string]T) error {
+	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
@@ -538,6 +559,7 @@ func (s *Store) MarkSummarized(session string) (alreadyPosted bool, err error) {
 		return true, nil
 	}
 	s.summarized[session] = true
+	s.summarizedDirty = true
 	data, err := json.MarshalIndent(s.summarized, "", "  ")
 	if err != nil {
 		return false, err

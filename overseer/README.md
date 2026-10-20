@@ -66,7 +66,7 @@ For PRs written by its bot pool that carry the trigger label or are assigned to 
   - `POST /api/v1/queue/<task>/priority` changes a task's priority.
   - `DELETE /api/v1/queue/<task>` removes a task.
   - `GET /api/v1/status` reports active, over-quota and suspended keys.
-- **Token usage telemetry**: every task reports its Gemini token usage to the `token-usage` collector (`factory token-daemon`, a StatefulSet at `token-usage.overseer-system:8080`, defined in [`k8s/token-usage.yaml`](k8s/token-usage.yaml)). The collector stores the records on a PVC and serves totals over HTTP.
+- **Token usage telemetry**: every task reports its Gemini token usage to the `token-usage` collector (`factory token-daemon`, a StatefulSet at `token-usage.overseer-system:8080`, defined in [`k8s/token-usage.yaml`](k8s/token-usage.yaml)). The collector stores the records on a PVC, flushes them to a GCS bucket when one is configured, and serves totals over HTTP.
 - **Logs**: every cycle is logged to `/workspaces/logs/run-*.log` on the Overseer's PVC. The pod writes Gemini-generated daily and weekly summaries next to them, and deletes run logs older than 15 days.
 - **Optional dashboard**: the Review UI in [`repo-agent`](../repo-agent/) has an Overseer page built on these endpoints. It covers sandboxes, queue, chores, logs and "Factory / API Token Status". Overseer and factory do not depend on repo-agent and run fine without it.
 

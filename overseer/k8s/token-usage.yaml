@@ -13,6 +13,14 @@ spec:
     port: 8080
     targetPort: 8080
 ---
+# The collector's own service account, so that Workload Identity can give
+# it (and nothing else in the namespace) the archive bucket.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: token-usage
+  namespace: overseer-system
+---
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
@@ -31,6 +39,7 @@ spec:
       labels:
         app: token-usage
     spec:
+      serviceAccountName: token-usage
       containers:
       - name: token-usage
         # Reuses the overseer image (which bundles the factory binary) to
@@ -42,6 +51,23 @@ spec:
           value: /data
         - name: ADDR
           value: ":8080"
+        # The archive tier (factory/design/token-usage-collection.md): with
+        # a bucket, the PVC's logs are flushed to gs://<bucket>/<prefix>
+        # every few minutes and replayed from there at startup. Set per
+        # cluster in the optional ConfigMap token-usage; without it, the
+        # PVC is the only copy.
+        - name: GCS_BUCKET
+          valueFrom:
+            configMapKeyRef:
+              name: token-usage
+              key: gcs-bucket
+              optional: true
+        - name: GCS_PREFIX
+          valueFrom:
+            configMapKeyRef:
+              name: token-usage
+              key: gcs-prefix
+              optional: true
         ports:
         - containerPort: 8080
           name: http
