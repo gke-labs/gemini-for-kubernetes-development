@@ -848,6 +848,13 @@ regression. Done when every rule is on the engine.
 the engine in production for two weeks without moving back; the
 scanners go with their last rule.
 
+When the engine starts building a rule's task itself, it takes the
+queue phase from the rule's `policy.phase`, which until then nobody reads
+(the handlers set it from their own constants). At that switch, check
+once that each rule's `phase` is the one its handler set (comments 1,
+review 1, conflict 2, ci 3, fix 3, workflow 4), so the queue's order does
+not change with it; after it there is one source and nothing to drift.
+
 **Phase 5, the repository's rules:** `.agents/rules/*.yaml` replacing,
 turning off or adding to the prebaked rules, within the global gates and
 floors, and `.agents/watch.yaml` for its settings; then the board's auto
