@@ -307,11 +307,11 @@ func (w When) String() string {
 		return ""
 	}
 	if len(alts) > 0 {
-		any := flow(When{AnyOf: alts})
+		anyOf := flow(When{AnyOf: alts})
 		if s == "" {
-			return any
+			return anyOf
 		}
-		s += ", " + any
+		s += ", " + anyOf
 	}
 	return s
 }
