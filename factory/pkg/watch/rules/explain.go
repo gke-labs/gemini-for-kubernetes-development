@@ -113,7 +113,7 @@ func explainRule(r *Rule, it Item, env Env, st Step) Step {
 	}
 	// The give-up is decided on the condition: a rule that would run, but
 	// has run its attempts out.
-	if g := r.Policy.GiveUp; g != nil && countSince(runs, since(g.Since, it)) >= g.Attempts {
+	if g := r.Policy.GiveUp; g != nil && countSince(giveUpRuns(g, runs), since(g.Since, it)) >= g.Attempts {
 		d := Decision{Rule: r.Name, Kind: it.Kind, Number: it.Number, Outcome: OutcomeGiveUp}
 		d.Writes = Writes{Stop: true, Comment: g.Comment}
 		st.Decision = &d

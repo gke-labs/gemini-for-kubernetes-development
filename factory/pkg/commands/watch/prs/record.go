@@ -191,8 +191,8 @@ func (s *Scanner) picks(rule string, prIssue *githubv39.Issue, legacy bool) bool
 }
 
 // giveUpHandlers are the pr-care rules whose handler acts on an engine's
-// give-up (handlePRInvestigate's engine).
-var giveUpHandlers = map[string]bool{"ci": true}
+// give-up (handlePRInvestigate's and handlePRComments' engine).
+var giveUpHandlers = map[string]bool{"ci": true, "comments": true}
 
 // engineOutcome is the engine's decision on rule for the pull request when
 // it decides the rule for the scanner: its outcome, or "" when the engine

@@ -284,6 +284,7 @@ A duration is Go's (`10m`, `2h`), at least `1m`, or a named one
 give-up:
   attempts: 3                     # 1-10
   since: [head, human, pause]     # counted since the latest of these
+  failed: true                    # optional: count only the runs that failed (comments: new feedback is always answered)
   comment: Pausing after 3 attempts to fix the failing checks.
 ```
 

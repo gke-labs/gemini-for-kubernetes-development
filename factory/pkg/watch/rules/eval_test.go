@@ -213,7 +213,7 @@ func TestDecideGiveUpWrites(t *testing.T) {
 		it.NewTrustedFeedback = true
 		for i := range 3 {
 			start := time.Duration(150-50*i) * time.Minute
-			it.Runs = append(it.Runs, PastRun{Rule: "comments", StartedAt: ago(start), EndedAt: ago(start - time.Minute), Head: "h2"})
+			it.Runs = append(it.Runs, PastRun{Rule: "comments", StartedAt: ago(start), EndedAt: ago(start - time.Minute), Head: "h2", Failed: true})
 		}
 	})
 	ds := set.Decide(it, testEnv)

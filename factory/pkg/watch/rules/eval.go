@@ -335,6 +335,20 @@ func since(events Since, it Item) time.Time {
 	return t
 }
 
+// giveUpRuns are the runs a give-up counts: every one, or the failed ones.
+func giveUpRuns(g *GiveUp, runs []PastRun) []PastRun {
+	if !g.Failed {
+		return runs
+	}
+	var out []PastRun
+	for _, r := range runs {
+		if r.Failed {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
 // countSince counts the runs that started after t.
 func countSince(runs []PastRun, t time.Time) int {
 	n := 0

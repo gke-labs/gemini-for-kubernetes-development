@@ -2,6 +2,7 @@ package prs
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -12,6 +13,7 @@ import (
 	githubv39 "github.com/google/go-github/v39/github"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/api"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/concurrency"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/watch/rules"
 )
 
@@ -308,5 +310,104 @@ func TestEvaluate_LabelsTheCanary(t *testing.T) {
 				t.Errorf("label on the evaluated PR %v, want %v (the engine takes it this pass)", inPR, tc.want)
 			}
 		})
+	}
+}
+
+// handedComments is a scanner over f whose engine decides comments, with
+// rule set set, recording to a file.
+func handedComments(t *testing.T, f *prFixture, set rules.Set) (*Scanner, *concurrency.TaskQueueManager, string) {
+	t.Helper()
+	c, err := rules.NewControl("on", map[string]string{"comments": "engine"}, "", nil, set)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record := filepath.Join(t.TempDir(), "d.jsonl")
+	s, queue := newTestScanner(t, t.TempDir(), testOpts{
+		GitHub: f.start(t), BotUsers: []string{"bot1"}, GitHubLogin: "bot1", TriggerLabel: "factory",
+		Recorder: rules.NewRecorder(record, 0, nil),
+		Rules:    c,
+	})
+	return s, queue, record
+}
+
+// failComments leaves a failed comments run on head in queue's history, with
+// the handler's retry count at retries.
+func failComments(t *testing.T, queue *concurrency.TaskQueueManager, num int, head string, retries int) {
+	t.Helper()
+	fn := fmt.Sprintf("task-pr-%d-comments.yaml", num)
+	task := &api.QueueTask{Type: api.TypePRComments, Number: num, CommitSHA: head, RetryCount: retries}
+	if err := queue.Enqueue(fn, task); err != nil {
+		t.Fatal(err)
+	}
+	if err := queue.StartTask(fn, task); err != nil {
+		t.Fatal(err)
+	}
+	task.CompletedAt = time.Now()
+	if err := queue.FailTask(fn, task, "exit status 1"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// The engine gives comments up (its count of failed runs reached) while
+// the handler's retry count is short of it: the watch gives up as it always
+// has, the stop label and the pause comment, and queues no retry.
+func TestEvaluate_EngineGivesCommentsUp(t *testing.T) {
+	base, _ := rules.Builtin()
+	var comments rules.Rule
+	for _, r := range base {
+		if r.Name == "comments" {
+			comments = *r
+		}
+	}
+	gu := *comments.Policy.GiveUp
+	gu.Attempts, gu.Since = 1, nil
+	comments.Policy.GiveUp = &gu
+	set, err := rules.Overlay(base, []*rules.Rule{&comments})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := &prFixture{num: 41, headSHA: "sha-41", updated: time.Now()}
+	s, queue, record := handedComments(t, f, set)
+	failComments(t, queue, 41, "sha-41", 0)
+
+	f.mu.Lock()
+	listed := f.listingIssueLocked()
+	f.mu.Unlock()
+	s.evaluate(context.Background(), listed)
+
+	if queue.TaskExists("task-pr-41-comments.yaml") {
+		t.Error("a comments retry was queued after the engine gave up")
+	}
+	f.mu.Lock()
+	stopped := slices.Contains(f.added, "factory/stop")
+	f.mu.Unlock()
+	if !stopped {
+		t.Errorf("no stop label after the engine gave up (added %v)", f.added)
+	}
+	assertRecorded(t, record, `"comments give-up"`)
+}
+
+// The handler's retry count is at its limit, but the engine, counting the
+// failed runs since the head (none since this head), retries: the engine's
+// count stands, and no stop label goes on.
+func TestEvaluate_EngineRetriesCommentsPastTheHandlersCount(t *testing.T) {
+	base, _ := rules.Builtin()
+	f := &prFixture{num: 42, headSHA: "sha-42", updated: time.Now()}
+	s, queue, _ := handedComments(t, f, base)
+	failComments(t, queue, 42, "sha-42", 3)
+
+	f.mu.Lock()
+	listed := f.listingIssueLocked()
+	f.mu.Unlock()
+	s.evaluate(context.Background(), listed)
+
+	if !queue.TaskExists("task-pr-42-comments.yaml") {
+		t.Error("no comments retry on the engine's run")
+	}
+	f.mu.Lock()
+	stopped := slices.Contains(f.added, "factory/stop")
+	f.mu.Unlock()
+	if stopped {
+		t.Error("the handler gave up on its own count")
 	}
 }
