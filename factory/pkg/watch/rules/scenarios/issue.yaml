@@ -1,0 +1,36 @@
+# Issue scenarios.
+name: a labelled issue with no PR is fixed
+env: {now: 2026-10-20T12:00:00Z}
+item: {kind: issue, number: 101, labels: [overseer], author: someone, updatedAt: 2026-10-20T11:00:00Z}
+expect: [fix run]
+---
+name: an issue an open PR closes is left to the PR
+env: {now: 2026-10-20T12:00:00Z}
+item: {kind: issue, number: 102, labels: [overseer], author: someone, linkedPR: open, updatedAt: 2026-10-20T11:00:00Z}
+expect: []
+---
+name: an issue naming a workflow steps it, not a fix
+env: {now: 2026-10-20T12:00:00Z}
+item: {kind: issue, number: 103, labels: [overseer], author: someone, workflow: kcc-example, updatedAt: 2026-10-20T11:00:00Z}
+expect: [workflow run]
+---
+name: a workflow that cannot be loaded stops the issue
+env: {now: 2026-10-20T12:00:00Z}
+item: {kind: issue, number: 104, labels: [overseer], author: someone, workflow: gone, workflowMissing: true, updatedAt: 2026-10-20T11:00:00Z}
+expect: [workflow-missing run]
+---
+name: a fan-out parent is the fan-out's, never fixed
+env: {now: 2026-10-20T12:00:00Z}
+item: {kind: issue, number: 105, labels: [overseer, overseer/fanout], author: someone, fanoutParent: true, updatedAt: 2026-10-20T11:00:00Z}
+expect: []
+---
+name: "fixed since its last change: not again (dedupe: update)"
+env: {now: 2026-10-20T12:00:00Z}
+item:
+  kind: issue
+  number: 106
+  labels: [overseer]
+  author: someone
+  updatedAt: 2026-10-20T09:00:00Z
+  runs: [{rule: fix, startedAt: 2026-10-20T10:00:00Z, endedAt: 2026-10-20T10:30:00Z}]
+expect: []

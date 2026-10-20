@@ -37,6 +37,7 @@ factory watch rules -o yaml         # every rule, whole
 factory watch rules --dir .         # with this checkout's .agents/rules/ laid over
 factory watch rules --flow          # how the PR rules are applied, top to bottom (or: --flow issue)
 factory watch rules explain <URL>   # one PR or issue through the rules, rule by rule
+factory watch rules decide -f <dir> # items written by hand (scenarios) through the rules
 ```
 
 ---
@@ -483,6 +484,16 @@ overseer's, so `--record decisions.jsonl` explains the overseer's own last
 record of the item instead, history and settings included. `-o json` gives
 the record and the explanation.
 
+`factory watch rules decide -f <scenario.yaml or directory>` does the same
+for items written by hand: no GitHub, just facts. A scenario is a YAML
+document with the item's facts (the record's `item` fields, in any case),
+optionally the overseer's side (`env: {trigger, pool, watcher, inactivity,
+now}`) and what the rules should decide (`expect: [ready run]`, `[]` for
+nothing); one that decides otherwise fails the command. With `--dir`, a
+checkout's rules are decided with: try a rule change on the cases that
+matter before anything runs it. `factory/pkg/watch/rules/scenarios/` is
+the suite CI runs.
+
 ---
 
 ## Comparing the rules with today's watch
@@ -494,7 +505,8 @@ decide the same. To compare them:
    --rules-record <file>`), the issue and PR scanners record every decision
    with the facts it was made on, in
    `/workspaces/.cache/factory-watch/decisions.jsonl` on the overseer's
-   volume. Recording reads what the scanners already fetched - no extra
+   volume, rotated daily into `decisions-<date>.jsonl` and kept 30 days (at
+   most 5 GiB). Recording reads what the scanners already fetched - no extra
    GitHub calls - and changes nothing they decide. A decision a gate outside
    the rules held back (a busy sandbox, one needing a person) is recorded as
    such.
@@ -506,6 +518,8 @@ decide the same. To compare them:
    factory watch rules replay decisions.jsonl          # summary, by rule, first differences
    factory watch rules replay decisions.jsonl -o json  # every difference, with its record
    factory watch rules replay decisions.jsonl --dir .  # with a checkout's rules laid over
+   kubectl cp overseer-kcc/overseer-kcc:/workspaces/.cache/factory-watch ./record
+   factory watch rules replay ./record                 # every day kept, in order
    ```
 
    Every record where the rules decide something else than the scanner did

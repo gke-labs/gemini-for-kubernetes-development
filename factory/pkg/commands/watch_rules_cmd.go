@@ -84,6 +84,7 @@ Policy floors: give-up and attempts at most 10, a cooldown at least 1m.`,
 	}
 	cmd.AddCommand(newWatchRulesReplayCommand())
 	cmd.AddCommand(newWatchRulesExplainCommand())
+	cmd.AddCommand(newWatchRulesDecideCommand())
 	cmd.Flags().StringVarP(&output, "output", "o", "", "Output format: yaml or json (the whole rules)")
 	cmd.Flags().StringVar(&dir, "dir", "", "A local checkout whose .agents/rules/ to lay over factory's rules")
 	cmd.Flags().StringVar(&repoURL, "url", "", "A repository URL (its own rules come later; factory's are listed)")
@@ -98,7 +99,7 @@ func newWatchRulesReplayCommand() *cobra.Command {
 	var dir, output string
 	var show int
 	cmd := &cobra.Command{
-		Use:   "replay <decisions.jsonl>...",
+		Use:   "replay <decisions.jsonl or record directory>...",
 		Short: "Replay recorded scanner decisions through the rules and list the differences",
 		Long: `Replay the decisions today's issue and PR scanners recorded (factory watch
 --rules-record, the Overseer's spec.rulesRecord: decisions.jsonl on the
@@ -108,11 +109,17 @@ and every record where they do something else is listed. A record a gate
 outside the rules held back (a busy sandbox, one needing a person) is
 counted, not compared.
 
+The overseer keeps a file a day (decisions-<date>.jsonl, 30 days, at
+most 5 GiB) beside decisions.jsonl, the one being written; a directory
+replays all of them in order.
+
 --dir lays a checkout's .agents/rules/ over factory's rules first, as
 'factory watch rules --dir' does.`,
 		Example: `  kubectl exec -n overseer-kcc overseer-kcc -- cat /workspaces/.cache/factory-watch/decisions.jsonl > decisions.jsonl
   factory watch rules replay decisions.jsonl
-  factory watch rules replay decisions.jsonl -o json`,
+  factory watch rules replay decisions.jsonl -o json
+  kubectl cp overseer-kcc/overseer-kcc:/workspaces/.cache/factory-watch ./record
+  factory watch rules replay ./record                 # every day kept, in order`,
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
 			set, err := rules.Builtin()
@@ -125,7 +132,15 @@ counted, not compared.
 				}
 			}
 			total := rules.ReplayResult{ByRule: map[string]int{}}
-			for _, path := range args {
+			var paths []string
+			for _, arg := range args {
+				files, err := rules.RecordFiles(arg)
+				if err != nil {
+					return err
+				}
+				paths = append(paths, files...)
+			}
+			for _, path := range paths {
 				f, err := os.Open(path)
 				if err != nil {
 					return err

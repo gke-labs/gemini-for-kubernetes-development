@@ -2,6 +2,7 @@ package rules
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -19,10 +20,14 @@ func TestRecorderAppendsAndRollsOver(t *testing.T) {
 		rc.Finish() // once
 	}
 	cur, _ := os.ReadFile(path)
-	old, _ := os.ReadFile(path + ".1")
-	lines := strings.Count(string(cur), "\n") + strings.Count(string(old), "\n")
-	if len(old) == 0 || lines < 2 || lines > 5 {
-		t.Errorf("current %d bytes, rolled %d bytes, %d lines", len(cur), len(old), lines)
+	rolled, _ := filepath.Glob(filepath.Join(filepath.Dir(path), "decisions-*.jsonl"))
+	lines := strings.Count(string(cur), "\n")
+	for _, f := range rolled {
+		b, _ := os.ReadFile(f)
+		lines += strings.Count(string(b), "\n")
+	}
+	if len(rolled) == 0 || lines != 5 {
+		t.Errorf("current %d bytes, %d rolled files, %d lines; want the five, some rolled aside", len(cur), len(rolled), lines)
 	}
 	var rec Record
 	first, _, _ := strings.Cut(string(cur), "\n")
@@ -117,5 +122,59 @@ func TestRecorderLeavesOutRepeats(t *testing.T) {
 	data, _ := os.ReadFile(path)
 	if n := strings.Count(string(data), "\n"); n != 3 {
 		t.Errorf("%d records written, want 3:\n%s", n, data)
+	}
+}
+
+// The record is a file a day: a new UTC day moves the file aside as the
+// day it was written, as does growing past the size; days past the
+// retention go; and a directory names every day's file, in order.
+func TestRecordRotatesDaily(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "decisions.jsonl")
+	clock := time.Date(2026, 10, 20, 23, 0, 0, 0, time.UTC)
+	r := NewRecorder(path, 0, nil)
+	r.now = func() time.Time { return clock }
+	write := func(n int) {
+		rc := r.Start("prs", testEnv, Item{Kind: OnPR, Number: n})
+		rc.Finish()
+		// The file's write time is what says its day.
+		_ = os.Chtimes(path, clock, clock)
+	}
+	write(1)
+	clock = clock.Add(2 * time.Hour) // 2026-10-21
+	write(2)
+	if _, err := os.Stat(filepath.Join(dir, "decisions-2026-10-20.jsonl")); err != nil {
+		t.Fatalf("no file for 2026-10-20: %v", err)
+	}
+	// An old day, past the retention, goes at the next rotation.
+	old := filepath.Join(dir, "decisions-2026-08-01.jsonl")
+	if err := os.WriteFile(old, []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	clock = clock.Add(24 * time.Hour) // 2026-10-22
+	write(3)
+	if _, err := os.Stat(old); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("a day past the retention is kept: %v", err)
+	}
+	files, err := RecordFiles(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, f := range files {
+		names = append(names, filepath.Base(f))
+	}
+	if got, want := strings.Join(names, " "), "decisions-2026-10-20.jsonl decisions-2026-10-21.jsonl decisions.jsonl"; got != want {
+		t.Errorf("files = %s, want %s", got, want)
+	}
+	// Past the size, a day's file is moved aside early.
+	small := NewRecorder(filepath.Join(t.TempDir(), "decisions.jsonl"), 10, nil)
+	small.now = func() time.Time { return clock }
+	for n := range 3 {
+		rc := small.Start("prs", testEnv, Item{Kind: OnPR, Number: 100 + n})
+		rc.Finish()
+	}
+	if files, _ := filepath.Glob(filepath.Join(filepath.Dir(small.path), "decisions-*.jsonl")); len(files) != 2 {
+		t.Errorf("size rotation made %v", files)
 	}
 }

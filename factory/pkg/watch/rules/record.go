@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -59,6 +60,8 @@ type Recorder struct {
 	shadow *Shadow
 	// sink, when set, is handed every record (NewSinkRecorder).
 	sink func(Record)
+	// now, when set, is the clock rotation reads (tests).
+	now func() time.Time
 
 	mu sync.Mutex
 	// last is each item's last record written: its fingerprint and when.
@@ -75,8 +78,15 @@ type lastRecord struct {
 // (a cooldown running out) in the record.
 const RecordRepeatEvery = 30 * time.Minute
 
-// DefaultRecordBytes is where a record file rolls over.
-const DefaultRecordBytes = 32 << 20
+// How long the record is kept (a day's file each, decisions-<date>.jsonl):
+// DefaultRecordBytes is where a day's file is rotated early,
+// RecordKeepDays how many days are kept, and RecordKeepBytes the most all
+// of them may take, the oldest going first.
+const (
+	DefaultRecordBytes = 1 << 30
+	RecordKeepDays     = 30
+	RecordKeepBytes    = 5 << 30
+)
 
 // NewRecorder records to path, and hands each record to shadow; with
 // neither (path "" and shadow nil) it is nil and records nothing.
@@ -141,9 +151,7 @@ func (r *Recorder) Write(rec Record) {
 		klog.Warningf("rules record: %v", err)
 		return
 	}
-	if info, err := os.Stat(r.path); err == nil && info.Size()+int64(len(line)) > r.maxBytes {
-		_ = os.Rename(r.path, r.path+".1")
-	}
+	r.rotate(int64(len(line)))
 	f, err := os.OpenFile(r.path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
 	if err != nil {
 		klog.Warningf("rules record: %v", err)
@@ -329,4 +337,91 @@ func symmetricRules(a, b []string) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// rotate moves the record's file aside, as the day's file
+// (decisions-<date>.jsonl, the date of its last write), when a new UTC day
+// has begun since it was last written or it would grow past maxBytes, and
+// then drops the days past RecordKeepDays and, oldest first, beyond
+// RecordKeepBytes. Called with r.mu held.
+func (r *Recorder) rotate(adding int64) {
+	info, err := os.Stat(r.path)
+	if err != nil {
+		return
+	}
+	now := time.Now().UTC()
+	if r.now != nil {
+		now = r.now().UTC()
+	}
+	day := info.ModTime().UTC().Format(time.DateOnly)
+	if day == now.Format(time.DateOnly) && info.Size()+adding <= r.maxBytes {
+		return
+	}
+	base := strings.TrimSuffix(r.path, filepath.Ext(r.path))
+	dest := base + "-" + day + ".jsonl"
+	for n := 2; ; n++ {
+		if _, err := os.Stat(dest); errors.Is(err, os.ErrNotExist) {
+			break
+		}
+		dest = fmt.Sprintf("%s-%s.%d.jsonl", base, day, n)
+	}
+	if err := os.Rename(r.path, dest); err != nil {
+		klog.Warningf("rules record: rotating %s: %v", r.path, err)
+		return
+	}
+	pruneRecord(base, now)
+}
+
+// pruneRecord drops a record's day files older than RecordKeepDays, then,
+// oldest first, those beyond RecordKeepBytes.
+func pruneRecord(base string, now time.Time) {
+	files, _ := filepath.Glob(base + "-*.jsonl")
+	sort.Strings(files)
+	oldest := now.AddDate(0, 0, -RecordKeepDays).Format(time.DateOnly)
+	var kept []string
+	var total int64
+	for _, f := range files {
+		day := strings.TrimPrefix(f, base+"-")
+		if len(day) >= len(time.DateOnly) && day[:len(time.DateOnly)] < oldest {
+			_ = os.Remove(f)
+			continue
+		}
+		if info, err := os.Stat(f); err == nil {
+			total += info.Size()
+		}
+		kept = append(kept, f)
+	}
+	for len(kept) > 0 && total > RecordKeepBytes {
+		if info, err := os.Stat(kept[0]); err == nil {
+			total -= info.Size()
+		}
+		_ = os.Remove(kept[0])
+		kept = kept[1:]
+	}
+}
+
+// RecordFiles are the record files a path names, in the order they were
+// written: a file is itself; a directory is its decisions-<date>.jsonl days,
+// an older decisions.jsonl.1, and decisions.jsonl, the one being written.
+func RecordFiles(path string) ([]string, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !info.IsDir() {
+		return []string{path}, nil
+	}
+	days, _ := filepath.Glob(filepath.Join(path, "decisions-*.jsonl"))
+	sort.Strings(days)
+	var out []string
+	out = append(out, days...)
+	for _, f := range []string{"decisions.jsonl.1", "decisions.jsonl"} {
+		if _, err := os.Stat(filepath.Join(path, f)); err == nil {
+			out = append(out, filepath.Join(path, f))
+		}
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("no record files in %s", path)
+	}
+	return out, nil
 }
