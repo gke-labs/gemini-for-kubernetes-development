@@ -82,3 +82,13 @@ name: "a closed issue is gated: no rule decides"
 env: {now: 2026-10-20T12:00:00Z}
 item: {kind: issue, number: 110, labels: [overseer], author: someone, closed: true, updatedAt: 2026-10-20T11:00:00Z}
 expect: []
+---
+name: "an issue the overseer is not pointed at (no trigger label, no pool assignee, not the watcher's) is not fixed"
+env: {now: 2026-10-20T12:00:00Z, pool: [ada-coder-bot], watcher: argus-watcher-bot}
+item: {kind: issue, number: 111, labels: [bug], author: someone, updatedAt: 2026-10-20T11:00:00Z}
+expect: []
+---
+name: "assigned to a pool bot, without the trigger label: still pointed at, fixed"
+env: {now: 2026-10-20T12:00:00Z, pool: [ada-coder-bot], watcher: argus-watcher-bot}
+item: {kind: issue, number: 112, labels: [bug], assignees: [ada-coder-bot], author: someone, updatedAt: 2026-10-20T11:00:00Z}
+expect: [fix run]

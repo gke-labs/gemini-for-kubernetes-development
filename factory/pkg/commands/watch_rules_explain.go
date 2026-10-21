@@ -116,8 +116,9 @@ Overseer's spec.rulesRecord), history and settings included:
 	return cmd
 }
 
-// recordLive reads the item's facts as today's scanner does, dry-run and
-// with a read-only client, and returns its record.
+// recordLive reads the item's facts as the dispatcher will at start
+// (Scanner.Facts: read-only, with a read-only client, every fact, not
+// stopping at an active task), and returns them as a record.
 func recordLive(ctx context.Context, item githubItem, o explainOptions) (*rules.Record, error) {
 	gh, err := github.NewReadOnlyClient(ctx)
 	if err != nil {
@@ -136,20 +137,29 @@ func recordLive(ctx context.Context, item githubItem, o explainOptions) (*rules.
 	sandboxes := sandbox.NewService(sandbox.ServiceConfig{Owner: item.Owner, Repo: item.Repo}, sandbox.ServiceDeps{GitHub: gh})
 	trusted := append(append([]string(nil), o.trust...), o.reviewers...)
 
-	// The scanners narrate what they would do; that is not the answer.
+	// The scanners narrate what they read; that is not the answer.
 	restore := quiet(o.verbose)
 	defer restore()
+	var it rules.Item
+	var env rules.Env
+	scanner := "issues"
 	if item.IsPR {
+		scanner = "prs"
 		s := prs.New(prs.Config{
 			TriggerLabel: o.trigger, GitHubLogin: o.watcher, BotUsers: o.pool, ReviewerLogins: o.reviewers,
 			TrustedLogins: trusted, InactivityTimeout: o.inactivity, DryRun: true,
 		}, prs.Deps{GitHub: repo, Queue: queue, Entities: concurrency.NewEntityStateCache(), Sandboxes: sandboxes})
-		return s.Record(ctx, item.Number)
+		it, env, err = s.Facts(ctx, item.Number)
+	} else {
+		s := issues.New(issues.Config{
+			TriggerLabel: o.trigger, GitHubLogin: o.watcher, BotUsers: o.pool, TrustedLogins: trusted, DryRun: true,
+		}, issues.Deps{GitHub: repo, Queue: queue, Entities: concurrency.NewEntityStateCache(), Sandboxes: sandboxes})
+		it, env, err = s.Facts(ctx, item.Number)
 	}
-	s := issues.New(issues.Config{
-		TriggerLabel: o.trigger, GitHubLogin: o.watcher, BotUsers: o.pool, DryRun: true,
-	}, issues.Deps{GitHub: repo, Queue: queue, Entities: concurrency.NewEntityStateCache(), Sandboxes: sandboxes})
-	return s.Record(ctx, item.Number)
+	if err != nil {
+		return nil, err
+	}
+	return &rules.Record{At: env.Now, Scanner: scanner, Env: env, Item: it}, nil
 }
 
 // quiet sends the process's stdout and stderr nowhere until restored,

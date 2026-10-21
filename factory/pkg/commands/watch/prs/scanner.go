@@ -493,9 +493,7 @@ func (s *Scanner) evaluate(ctx context.Context, prIssue *githubv39.Issue) {
 		klog.Errorf("Failed to fetch full PR #%d: %v", num, err)
 		return
 	}
-	s.rec.Fill(func(it *rules.Item) {
-		it.Author, it.Head, it.Draft, it.Mergeable = pr.GetUser().GetLogin(), pr.GetHead().GetSHA(), pr.GetDraft(), pr.Mergeable
-	})
+	s.rec.Fill(func(it *rules.Item) { fillPR(it, pr) })
 
 	// A pull request in the merge queue is out of the watcher's hands: pushing
 	// to it now would only knock it back out.
@@ -607,17 +605,7 @@ func (s *Scanner) evaluate(ctx context.Context, prIssue *githubv39.Issue) {
 			return
 		}
 		isApproved := isPRApprovedOrLGTM(pr, prIssue, history.reviews)
-		s.rec.Fill(func(it *rules.Item) {
-			it.Approved = isApproved
-			switch {
-			case checkAnalysis.hasFailure:
-				it.Checks = "failing"
-			case checkAnalysis.hasPending:
-				it.Checks = "pending"
-			default:
-				it.Checks = "green"
-			}
-		})
+		s.rec.Fill(func(it *rules.Item) { fillChecks(it, checkAnalysis, isApproved) })
 		if isApproved {
 			klog.V(2).Infof("PR #%d is approved / LGTM'd", num)
 		}

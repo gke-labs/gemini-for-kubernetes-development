@@ -46,7 +46,12 @@ func (s *Scanner) startRecording(prIssue *githubv39.Issue) *rules.Recording {
 	if s.recorder == nil {
 		return nil
 	}
-	it := rules.Item{
+	return s.recorder.Start("prs", s.rulesEnv(), prItemOf(prIssue))
+}
+
+// prItemOf is the facts the listing gives of a pull request.
+func prItemOf(prIssue *githubv39.Issue) rules.Item {
+	return rules.Item{
 		Kind:      rules.OnPR,
 		Number:    prIssue.GetNumber(),
 		Labels:    labelNames(prIssue.Labels),
@@ -55,7 +60,11 @@ func (s *Scanner) startRecording(prIssue *githubv39.Issue) *rules.Recording {
 		UpdatedAt: prIssue.GetUpdatedAt(),
 		Closed:    prIssue.GetState() == "closed",
 	}
-	return s.recorder.Start("prs", s.rulesEnv(), it)
+}
+
+// fillPR adds what the pull request itself says.
+func fillPR(it *rules.Item, pr *githubv39.PullRequest) {
+	it.Author, it.Head, it.Draft, it.Mergeable = pr.GetUser().GetLogin(), pr.GetHead().GetSHA(), pr.GetDraft(), pr.Mergeable
 }
 
 // recordCloses adds the issues the pull request closes to the record.
@@ -63,11 +72,17 @@ func (s *Scanner) recordCloses(ctx context.Context, refs *refIssues) {
 	if s.rec == nil {
 		return
 	}
+	closes := closesOf(ctx, refs)
+	s.rec.Fill(func(it *rules.Item) { it.Closes = closes })
+}
+
+// closesOf are the issues the pull request closes, as the rules read them.
+func closesOf(ctx context.Context, refs *refIssues) []rules.Closing {
 	var closes []rules.Closing
 	for _, ri := range refs.all(ctx) {
 		closes = append(closes, rules.Closing{Number: ri.GetNumber(), Labels: labelNames(ri.Labels), Assignees: logins(ri.Assignees)})
 	}
-	s.rec.Fill(func(it *rules.Item) { it.Closes = closes })
+	return closes
 }
 
 // recordRuns adds the pull request's history, from the queue, to the
@@ -76,6 +91,12 @@ func (s *Scanner) recordRuns(num int) {
 	if s.rec == nil {
 		return
 	}
+	s.rec.Fill(func(it *rules.Item) { s.fillRuns(it, num) })
+}
+
+// fillRuns adds the pull request's history from the queue: the runs of
+// its tasks that ended, and the rules whose task is queued or running.
+func (s *Scanner) fillRuns(it *rules.Item, num int) {
 	h, _ := s.queue.(runHistory)
 	for _, t := range prTaskRules {
 		filename := fmt.Sprintf("task-pr-%d-%s.yaml", num, t.suffix)
@@ -88,14 +109,10 @@ func (s *Scanner) recordRuns(num int) {
 		if last := s.queue.GetProcessedTask(filename); last != nil {
 			lastStart, lastEnd, failed, head = last.StartedAt, last.CompletedAt, last.Status == api.StatusFailed, last.CommitSHA
 		}
-		runs := rules.PastRuns(t.rule, ended, lastStart, lastEnd, failed, head)
-		queued := s.queue.TaskExists(filename)
-		s.rec.Fill(func(it *rules.Item) {
-			it.Runs = append(it.Runs, runs...)
-			if queued {
-				it.Queued = append(it.Queued, t.rule)
-			}
-		})
+		it.Runs = append(it.Runs, rules.PastRuns(t.rule, ended, lastStart, lastEnd, failed, head)...)
+		if s.queue.TaskExists(filename) {
+			it.Queued = append(it.Queued, t.rule)
+		}
 	}
 }
 
@@ -106,18 +123,32 @@ func (s *Scanner) recordHistory(pr *githubv39.PullRequest, history *prHistory, h
 	if s.rec == nil {
 		return
 	}
+	s.rec.Fill(func(it *rules.Item) { s.fillHistory(it, pr, history, headSHA) })
+}
+
+// fillHistory adds what the pull request's history says (recordHistory).
+func (s *Scanner) fillHistory(it *rules.Item, pr *githubv39.PullRequest, history *prHistory, headSHA string) {
 	review := s.automatedReviewOfHead(history.reviews, headSHA, history.lastCommitTime)
-	activity := getLastPRActivityTime(pr, history.comments, history.reviews, history.revCommentsMap, s.cfg.GitHubLogin, s.cfg.AllowlistedBots, s.cfg.TrustedLogins, s.cfg.TriggerLabel)
-	human := conventions.HumanSpokeAt(history.comments, s.cfg.BotUsers, s.cfg.GitHubLogin, s.cfg.AllowlistedBots, s.cfg.TrustedLogins, s.cfg.TriggerLabel)
-	paused := conventions.PausedAt(history.comments, s.cfg.BotUsers, s.cfg.GitHubLogin, s.cfg.TriggerLabel)
-	s.rec.Fill(func(it *rules.Item) {
-		it.ReviewedAtHead = review != nil
-		it.ChangesRequested = review != nil && review.GetState() == "CHANGES_REQUESTED"
-		it.LastTrustedActivity = activity
-		it.HeadChangedAt = history.lastCommitTime
-		it.HumanSpokeAt = human
-		it.PausedAt = paused
-	})
+	it.ReviewedAtHead = review != nil
+	it.ChangesRequested = review != nil && review.GetState() == "CHANGES_REQUESTED"
+	it.LastTrustedActivity = getLastPRActivityTime(pr, history.comments, history.reviews, history.revCommentsMap, s.cfg.GitHubLogin, s.cfg.AllowlistedBots, s.cfg.TrustedLogins, s.cfg.TriggerLabel)
+	it.HeadChangedAt = history.lastCommitTime
+	it.HumanSpokeAt = conventions.HumanSpokeAt(history.comments, s.cfg.BotUsers, s.cfg.GitHubLogin, s.cfg.AllowlistedBots, s.cfg.TrustedLogins, s.cfg.TriggerLabel)
+	it.PausedAt = conventions.PausedAt(history.comments, s.cfg.BotUsers, s.cfg.GitHubLogin, s.cfg.TriggerLabel)
+}
+
+// fillChecks adds the head's checks, and whether the pull request is
+// approved: read only when it merges (evaluate).
+func fillChecks(it *rules.Item, a prCheckAnalysis, approved bool) {
+	it.Approved = approved
+	switch {
+	case a.hasFailure:
+		it.Checks = "failing"
+	case a.hasPending:
+		it.Checks = "pending"
+	default:
+		it.Checks = "green"
+	}
 }
 
 // pastRuns are the queue's ended runs as the rules read them.
@@ -254,26 +285,4 @@ func (s *Scanner) picksReadiness(prIssue *githubv39.Issue) bool {
 		return rules.Decided(s.engineCare, "ready") || rules.Decided(s.engineCare, "ready-unreview")
 	}
 	return true
-}
-
-// Record evaluates one pull request, as a scan would, and returns the
-// facts its evaluation recorded: what the rules decide on (factory watch
-// rules explain). The scanner should be dry-run: what it would write or
-// queue is no part of the record, and it takes the scanner's recorder for
-// the evaluation.
-func (s *Scanner) Record(ctx context.Context, num int) (*rules.Record, error) {
-	issue, err := s.gh.GetIssue(ctx, num)
-	if err != nil {
-		return nil, err
-	}
-	if issue.PullRequestLinks == nil {
-		return nil, fmt.Errorf("#%d is an issue, not a pull request", num)
-	}
-	var got *rules.Record
-	s.recorder = rules.NewSinkRecorder(func(rec rules.Record) { got = &rec })
-	s.evaluate(ctx, issue)
-	if got == nil {
-		return nil, fmt.Errorf("#%d left no record (below the scanner's number floor?)", num)
-	}
-	return got, nil
 }
