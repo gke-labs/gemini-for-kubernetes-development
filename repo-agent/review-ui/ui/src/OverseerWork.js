@@ -245,64 +245,69 @@ export function WorkRow({ item, onOpenSession, onOpenSandbox, onRetry }) {
   );
 }
 
-// shadowRules are the shadow tally's rules, those that differ first (most
-// differences first), then the rest by name.
-export function shadowRules(shadow) {
-  return Object.entries((shadow && shadow.byRule) || {})
-    .sort(([a, ra], [b, rb]) => (rb.differ - ra.differ) || a.localeCompare(b));
+// rulesByRule are the rules summary's rules, those with tasks dropped at
+// start first (most first), then the rest by name.
+export function rulesByRule(summary) {
+  return Object.entries((summary && summary.byRule) || {})
+    .sort(([a, ra], [b, rb]) => ((rb.dropped || 0) - (ra.dropped || 0)) || a.localeCompare(b));
 }
 
-// shadowSide is one side of a difference: its decisions, or "nothing".
-export function shadowSide(decided) {
+// ruleTallyText is one rule's tally: "ci run 12 · give-up 1 · dropped 2".
+export function ruleTallyText(rule, t) {
+  const parts = [];
+  if (t.run) parts.push(`run ${t.run}`);
+  if (t.giveUp) parts.push(`give-up ${t.giveUp}`);
+  if (t.dropped) parts.push(`dropped ${t.dropped}`);
+  return `${rule} ${parts.join(' · ') || '0'}`;
+}
+
+// decisionsText is one side of an inconsistency: its decisions, or "nothing".
+export function decisionsText(decided) {
   return (decided && decided.length) ? decided.join(', ') : 'nothing';
 }
 
-// ShadowBar is the watch rules' tally beside the scanners, when the
-// overseer runs them in shadow (spec.rules.engine: shadow): how many of the
-// scanners' decisions the rules decided the same, by rule, and the latest
-// differences, each of which filters the rows to its item. The rules act on
-// nothing; this is how they are checked before they do.
-export function ShadowBar({ shadow, onShowItem }) {
+// RulesBar is what the watch rules decided since the overseer started: each
+// rule's runs, give-ups and tasks dropped at start (the last reason in its
+// title), and the consistency check - the engine deciding again on each
+// recorded decision - with the latest inconsistencies, each of which
+// filters the rows to its item.
+export function RulesBar({ summary, onShowItem }) {
   const [open, setOpen] = useState(false);
-  if (!shadow) return null;
-  const differ = shadow.compared - shadow.agree;
-  const since = shadow.since ? new Date(shadow.since).toLocaleString() : '';
+  if (!summary) return null;
+  const inconsistent = summary.records - summary.consistent;
+  const since = summary.since ? new Date(summary.since).toLocaleString() : '';
   return (
-    <div className="shadow-bar" style={{ fontSize: 'small', marginBottom: '8px', color: 'var(--text-secondary)' }}>
+    <div className="rules-bar" style={{ fontSize: 'small', marginBottom: '8px', color: 'var(--text-secondary)' }}>
       <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' }}>
-        <span title={`The watch rules decide beside the scanners and act on nothing; counted since ${since}`}>
-          <strong style={{ color: 'var(--text-primary)' }}>Rules in shadow</strong>: {shadow.compared} compared · {shadow.agree} agree ·{' '}
-          <span style={{ color: differ ? RUN_STYLE.failed.color : undefined, fontWeight: differ ? 700 : undefined }}>{differ} differ</span>
-          {shadow.gated ? ` · ${shadow.gated} held back by gates` : ''}
+        <span title={`What the watch rules decided, counted since ${since}`}>
+          <strong style={{ color: 'var(--text-primary)' }}>Rules</strong> since {since}
         </span>
-        {shadowRules(shadow).map(([rule, t]) => (
-          <span key={rule} title={`${rule}: decided ${t.decided}, differed ${t.differ}`}>
-            <Chip text={t.differ ? `${rule} ${t.differ}✗` : `${rule} ${t.decided}`}
-              color={t.differ ? RUN_STYLE.failed.color : RUN_STYLE.queued.color}
-              bg={t.differ ? RUN_STYLE.failed.bg : RUN_STYLE.queued.bg} />
+        {rulesByRule(summary).map(([rule, t]) => (
+          <span key={rule} title={t.dropped ? `${rule}: last dropped at start: ${t.lastDrop || '?'}` : rule}>
+            <Chip text={ruleTallyText(rule, t)}
+              color={t.dropped ? RUN_STYLE.pending.color : RUN_STYLE.queued.color}
+              bg={t.dropped ? RUN_STYLE.pending.bg : RUN_STYLE.queued.bg} />
           </span>
         ))}
-        {shadowRules(shadow).filter(([, t]) => t.handed).map(([rule, t]) => (
-          <span key={`${rule}-handed`} title={`The engine decides ${rule} for the scanner: on ${t.handed.decided} decisions, the scanner's own condition said otherwise on ${t.handed.differ}`}>
-            <Chip text={t.handed.differ ? `${rule} by engine ${t.handed.differ}✗` : `${rule} by engine ${t.handed.decided}`}
-              color={t.handed.differ ? RUN_STYLE.failed.color : RUN_STYLE.queued.color}
-              bg={t.handed.differ ? RUN_STYLE.failed.bg : RUN_STYLE.queued.bg} />
-          </span>
-        ))}
-        {(shadow.recent || []).length > 0 && (
+        <span title="Each recorded decision decided again by the engine on its recorded facts; a gate outside the rules is counted, not checked">
+          consistent {summary.consistent}/{summary.records}
+          {inconsistent ? <span style={{ color: RUN_STYLE.failed.color, fontWeight: 700 }}> · {inconsistent} not</span> : null}
+          {summary.gated ? ` · ${summary.gated} held back by gates` : ''}
+        </span>
+        {(summary.recent || []).length > 0 && (
           <button type="button" className="btn btn-sm" aria-expanded={open} onClick={() => setOpen(o => !o)}>
-            {open ? 'Hide differences' : `Differences (${shadow.recent.length})`}
+            {open ? 'Hide inconsistencies' : `Inconsistencies (${summary.recent.length})`}
           </button>
         )}
       </div>
       {open && (
         <ul style={{ margin: '6px 0 0', paddingLeft: '18px' }}>
-          {shadow.recent.map((d, i) => (
+          {summary.recent.map((d, i) => (
             <li key={`${d.kind}-${d.number}-${d.at}-${i}`}>
               <button type="button" className="btn btn-link btn-sm" style={{ padding: 0 }} onClick={() => onShowItem && onShowItem(d.number)}>
                 {d.kind === 'pr' ? 'PR' : d.kind} #{d.number}
               </button>{' '}
-              rules: <code>{shadowSide(d.rules)}</code>, scanner: <code>{shadowSide(d.scanner)}</code>
+              rules: <code>{decisionsText(d.rules)}</code>, scanner: <code>{decisionsText(d.scanner)}</code>
               {d.at ? <span> · {new Date(d.at).toLocaleTimeString()}</span> : null}
             </li>
           ))}
@@ -362,7 +367,7 @@ const OverseerWork = ({ overseer }) => {
       {work && work.queueError && (
         <div style={{ color: 'var(--text-secondary)', fontSize: 'small', marginBottom: '8px' }}>Queue not shown: {work.queueError}</div>
       )}
-      {work && <ShadowBar shadow={work.shadow} onShowItem={n => setQ(String(n))} />}
+      {work && <RulesBar summary={work.rules} onShowItem={n => setQ(String(n))} />}
       <div className="work-card">
         <table className="work-table">
           <thead>

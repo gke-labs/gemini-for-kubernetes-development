@@ -31,9 +31,9 @@ type OverseerWork struct {
 	Items []OverseerWorkItem `json:"items"`
 	// QueueError says why the queue is missing from the rows, when it is.
 	QueueError string `json:"queueError,omitempty"`
-	// Shadow is the watch rules' tally beside the scanners, when the
-	// overseer runs them in shadow.
-	Shadow *QueueShadow `json:"shadow,omitempty"`
+	// Rules is the watch rules' summary (QueueRules), when the watch
+	// serves one.
+	Rules *QueueRules `json:"rules,omitempty"`
 }
 
 // OverseerWorkItem is one row.
@@ -189,7 +189,7 @@ func (s *Server) getOverseerWork(c *gin.Context) {
 	if err != nil {
 		work.QueueError = err.Error()
 	} else if q != nil {
-		work.Shadow = q.Shadow
+		work.Rules = q.Rules
 	}
 	work.Items = buildOverseerWork(namespace, sandboxes.Items, pods.Items, q)
 	c.JSON(http.StatusOK, work)

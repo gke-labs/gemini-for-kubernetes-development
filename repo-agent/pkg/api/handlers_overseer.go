@@ -137,44 +137,39 @@ type QueueResponse struct {
 	// Failures are the tasks that failed and have not succeeded since,
 	// with what their child said went wrong. An older watch serves none.
 	Failures []QueueFailureItem `json:"failures,omitempty"`
-	// Shadow is the watch rules' tally beside the scanners' own conditions;
-	// an older watch serves none.
-	Shadow *QueueShadow `json:"shadow,omitempty"`
+	// Rules is the watch rules' summary: each rule's runs, give-ups and
+	// tasks dropped at start, and how many recorded decisions the engine
+	// decides the same on again; an older watch serves none.
+	Rules *QueueRules `json:"rules,omitempty"`
 }
 
-// QueueShadow is the watch rules' tally in shadow, as the watch serves it
-// (factory's rules.ShadowSummary): decisions compared since the watch
-// started, how many the rules decided the same, how many a gate outside
-// the rules held back, and by rule how often each was decided and differed,
-// with the latest differences.
-type QueueShadow struct {
-	Since    string                     `json:"since"`
-	Compared int                        `json:"compared"`
-	Agree    int                        `json:"agree"`
-	Gated    int                        `json:"gated"`
-	ByRule   map[string]QueueShadowRule `json:"byRule"`
-	Recent   []QueueShadowDiff          `json:"recent,omitempty"`
+// QueueRules is the watch rules' summary, as the watch serves it
+// (factory's rules.SummaryView): since the watch started, the decisions
+// recorded and checked, how many the engine decides the same on again
+// (consistent), how many a gate outside the rules held back, each rule's
+// tally, and the latest inconsistencies.
+type QueueRules struct {
+	Since      string                    `json:"since"`
+	Records    int                       `json:"records"`
+	Consistent int                       `json:"consistent"`
+	Gated      int                       `json:"gated"`
+	ByRule     map[string]QueueRuleTally `json:"byRule"`
+	Recent     []QueueRulesInconsistency `json:"recent,omitempty"`
 }
 
-// QueueShadowRule is one rule's tally in shadow; Handed, once the engine
-// decides the rule for the scanner, is how often it did and how often the
-// scanner's own condition said otherwise.
-type QueueShadowRule struct {
-	Decided int                `json:"decided"`
-	Differ  int                `json:"differ"`
-	Handed  *QueueShadowHanded `json:"handed,omitempty"`
+// QueueRuleTally is one rule's runs and give-ups, and its tasks dropped
+// before they started, with why the last one was.
+type QueueRuleTally struct {
+	Run      int    `json:"run,omitempty"`
+	GiveUp   int    `json:"giveUp,omitempty"`
+	Dropped  int    `json:"dropped,omitempty"`
+	LastDrop string `json:"lastDrop,omitempty"`
 }
 
-// QueueShadowHanded is a rule the engine decides for the scanner, compared
-// with the scanner's own condition.
-type QueueShadowHanded struct {
-	Decided int `json:"decided"`
-	Differ  int `json:"differ"`
-}
-
-// QueueShadowDiff is one decision the rules made differently from the
-// scanner: each side's, as "<rule> <outcome>".
-type QueueShadowDiff struct {
+// QueueRulesInconsistency is a record on which the engine, deciding
+// again, decides otherwise than the scanner did: each side's, as
+// "<rule> <outcome>".
+type QueueRulesInconsistency struct {
 	At      string   `json:"at"`
 	Kind    string   `json:"kind"`
 	Number  int      `json:"number"`
