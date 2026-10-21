@@ -505,9 +505,12 @@ the suite CI runs.
    volume, rotated daily into `decisions-<date>.jsonl` and kept 30 days (at
    most 5 GiB). Recording reads what the scanners already fetched - no extra
    GitHub calls. A decision a gate outside the rules held back (a busy
-   sandbox, one needing a person) is recorded as such. The record also
-   keeps what the scanners' own conditions would have said, which the
-   overseer's view counts as the shadow (`ci by engine N`, differing M).
+   sandbox, one needing a person) is recorded as such. The watch's queue
+   API serves a summary beside the queue (`rules`): each rule's runs,
+   give-ups and tasks dropped at start (with the last reason), and how many
+   recorded decisions the engine decides the same on again (`consistent`;
+   one that does not was decided on facts other than those recorded),
+   which the overseer's view shows.
 2. **Replay** - the rules, or a change to them, on what was recorded:
 
    ```sh

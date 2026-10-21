@@ -2,7 +2,7 @@ package watch
 
 import "testing"
 
-// The engine decides every rule, in shadow, whatever the settings: a
+// The engine decides every rule, tallied, whatever the settings: a
 // disabled rule that is not one leaves every rule on rather than stop the
 // watch.
 func TestNewRulesControlAndShadow(t *testing.T) {
@@ -24,8 +24,8 @@ func TestNewRulesControlAndShadow(t *testing.T) {
 			if got := w.rulesControl.Disabled; len(got) != len(tc.disabled) || (len(got) > 0 && got[0] != tc.disabled[0]) {
 				t.Errorf("disabled = %v, want %v", got, tc.disabled)
 			}
-			if w.newRulesShadow() == nil {
-				t.Error("no shadow")
+			if w.newRulesSummary() == nil {
+				t.Error("no summary")
 			}
 		})
 	}

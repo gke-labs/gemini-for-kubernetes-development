@@ -73,10 +73,14 @@ func (c *watcherTaskCoordinator) Redecide(ctx context.Context, filename string, 
 		klog.Warningf("Deciding %s again before it starts: reading #%d: %v; running it", filename, num, err)
 		return false, ""
 	}
-	if w.rulesControl.Off(rule) {
-		return true, fmt.Sprintf("the %s rule is disabled", rule)
+	drop, why := true, fmt.Sprintf("the %s rule is disabled", rule)
+	if !w.rulesControl.Off(rule) {
+		drop, why = atStart(w.rulesControl.Set(), rule, task, it, env)
 	}
-	return atStart(w.rulesControl.Set(), rule, task, it, env)
+	if drop {
+		w.rulesSummary.Dropped(rule, why)
+	}
+	return drop, why
 }
 
 // atStart is Redecide on the facts read: a task held to the gates alone

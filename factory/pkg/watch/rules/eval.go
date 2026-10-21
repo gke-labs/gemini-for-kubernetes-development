@@ -11,7 +11,7 @@ import (
 // when it decides: its GitHub facts and the overseer's history of it, all
 // gathered by the caller (the shared scan's snapshot, the queue's
 // journal). Deciding makes no calls: the same Item always gives the same
-// decisions, which is what the replay tests and shadow mode compare.
+// decisions, which is what the replay and the summary check compare.
 type Item struct {
 	// Kind is the rule kind the item is for: OnIssue, OnPR, OnSchedule or
 	// OnEvent.
@@ -546,7 +546,7 @@ func orNone(s string) string {
 	return s
 }
 
-// String is the decision in a line: what the replay and shadow logs show.
+// String is the decision in a line: what the replay and the logs show.
 func (d Decision) String() string {
 	what := d.Recipe
 	if d.Apply != "" {

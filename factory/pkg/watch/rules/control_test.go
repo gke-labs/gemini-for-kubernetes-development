@@ -26,8 +26,6 @@ func TestNewControl(t *testing.T) {
 		t.Error("TakesAny is wrong")
 	case !c.Off("review") || c.Off("ci"):
 		t.Error("Off is wrong")
-	case !c.Shadows():
-		t.Error("a control does not shadow")
 	}
 	for _, r := range c.Set() {
 		if r.Name == "review" && r.IsEnabled() {
@@ -38,7 +36,7 @@ func TestNewControl(t *testing.T) {
 		t.Errorf("String = %q", s)
 	}
 	var none *Control
-	if none.Off("ci") || none.Takes("ci") || none.Shadows() || none.Decide(Item{}, testEnv) != nil {
+	if none.Off("ci") || none.Takes("ci") || none.Decide(Item{}, testEnv) != nil {
 		t.Error("a nil control is not the scanners alone")
 	}
 }
