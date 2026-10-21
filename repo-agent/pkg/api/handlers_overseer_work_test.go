@@ -189,10 +189,9 @@ func TestOverseerWorkWithoutTheQueue(t *testing.T) {
 	}
 }
 
-// The watch's shadow tally, when it runs the rules in shadow, is the
-// feed's; a watch that serves none (shadow off, or an older watch) leaves
-// it out.
-func TestOverseerWorkCarriesTheShadow(t *testing.T) {
+// The watch rules' summary is the feed's; a watch that serves none (an
+// older watch) leaves it out.
+func TestOverseerWorkCarriesTheRulesSummary(t *testing.T) {
 	prev := fetchOverseerQueue
 	t.Cleanup(func() { fetchOverseerQueue = prev })
 	r := overseerSessionServer(t, &fakeSessions{})
@@ -201,9 +200,9 @@ func TestOverseerWorkCarriesTheShadow(t *testing.T) {
 		body string
 		want bool
 	}{
-		{"shadow", `{"summary":{},"shadow":{"since":"2026-10-17T18:30:00Z","compared":120,"agree":118,"gated":3,` +
-			`"byRule":{"ci":{"decided":4,"differ":2}},"recent":[{"at":"2026-10-17T18:40:00Z","kind":"pr","number":14055,"rules":["ci run"]}]}}`, true},
-		{"off", `{"summary":{}}`, false},
+		{"summary", `{"summary":{},"rules":{"since":"2026-10-21T19:13:00Z","records":4052,"consistent":4051,"gated":3,` +
+			`"byRule":{"ci":{"run":12,"giveUp":1,"dropped":2,"lastDrop":"head moved aaaaaaa→bbbbbbb"}},"recent":[{"at":"2026-10-21T19:40:00Z","kind":"pr","number":14055,"rules":["ci run"]}]}}`, true},
+		{"older watch", `{"summary":{}}`, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var q QueueResponse
@@ -216,11 +215,12 @@ func TestOverseerWorkCarriesTheShadow(t *testing.T) {
 			if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
 				t.Fatal(err)
 			}
-			if (got.Shadow != nil) != tc.want {
-				t.Fatalf("shadow = %+v, want served %v", got.Shadow, tc.want)
+			if (got.Rules != nil) != tc.want {
+				t.Fatalf("rules = %+v, want served %v", got.Rules, tc.want)
 			}
-			if tc.want && (got.Shadow.Compared != 120 || got.Shadow.ByRule["ci"].Differ != 2 || len(got.Shadow.Recent) != 1 || got.Shadow.Recent[0].Number != 14055) {
-				t.Errorf("shadow = %+v", got.Shadow)
+			if tc.want && (got.Rules.Records != 4052 || got.Rules.Consistent != 4051 || got.Rules.ByRule["ci"].GiveUp != 1 ||
+				got.Rules.ByRule["ci"].LastDrop != "head moved aaaaaaa→bbbbbbb" || len(got.Rules.Recent) != 1 || got.Rules.Recent[0].Number != 14055) {
+				t.Errorf("rules = %+v", got.Rules)
 			}
 		})
 	}

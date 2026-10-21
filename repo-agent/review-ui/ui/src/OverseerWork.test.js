@@ -8,7 +8,7 @@ jest.mock('xterm', () => ({ Terminal: class { open() {} write() {} dispose() {} 
 jest.mock('xterm-addon-fit', () => ({ FitAddon: class { fit() {} } }));
 
 const OverseerWork = require('./OverseerWork').default;
-const { matchesWork, rowChips, groupOf, WorkRow, cooldownTitle, failureText, failureTitle, ShadowBar, shadowRules, shadowSide } = require('./OverseerWork');
+const { matchesWork, rowChips, groupOf, WorkRow, cooldownTitle, failureText, failureTitle, RulesBar, rulesByRule, ruleTallyText, decisionsText } = require('./OverseerWork');
 
 const act = React.act || domAct;
 global.IS_REACT_ACT_ENVIRONMENT = true;
@@ -305,29 +305,32 @@ describe('a failed task', () => {
     });
 });
 
-describe('the rules in shadow', () => {
-    const shadow = {
-        since: '2026-10-17T18:30:00Z', compared: 120, agree: 118, gated: 3,
-        byRule: { workflow: { decided: 40, differ: 0 }, ci: { decided: 4, differ: 2 }, ready: { decided: 3, differ: 0 } },
-        recent: [{ at: '2026-10-17T18:40:00Z', kind: 'pr', number: 14055, rules: ['ci run'] }],
+describe('the rules summary', () => {
+    const summary = {
+        since: '2026-10-21T19:13:00Z', records: 120, consistent: 119, gated: 3,
+        byRule: { workflow: { run: 40 }, ci: { run: 12, giveUp: 1, dropped: 2, lastDrop: 'head moved abc→def' }, ready: { run: 3 } },
+        recent: [{ at: '2026-10-21T19:40:00Z', kind: 'pr', number: 14055, rules: ['ci run'] }],
     };
 
-    test('orders the rules that differ first', () => {
-        expect(shadowRules(shadow).map(([r]) => r)).toEqual(['ci', 'ready', 'workflow']);
-        expect(shadowSide([])).toBe('nothing');
-        expect(shadowSide(['ci run', 'inherit-labels run'])).toBe('ci run, inherit-labels run');
+    test('orders the rules with drops first and says what each decided', () => {
+        expect(rulesByRule(summary).map(([r]) => r)).toEqual(['ci', 'ready', 'workflow']);
+        expect(ruleTallyText('ci', summary.byRule.ci)).toBe('ci run 12 · give-up 1 · dropped 2');
+        expect(ruleTallyText('none', {})).toBe('none 0');
+        expect(decisionsText([])).toBe('nothing');
+        expect(decisionsText(['ci run', 'inherit-labels run'])).toBe('ci run, inherit-labels run');
     });
 
-    test('says how many agree and differ, by rule, and lists the differences, each filtering to its item', async () => {
+    test('shows each rule\'s tally, the consistency check and the inconsistencies, each filtering to its item', async () => {
         const el = document.createElement('div');
         document.body.appendChild(el);
         const root = createRoot(el);
         const shown = [];
-        await act(async () => { root.render(<ShadowBar shadow={shadow} onShowItem={n => shown.push(n)} />); });
-        expect(el.textContent).toContain('120 compared · 118 agree · 2 differ · 3 held back by gates');
-        expect(el.textContent).toContain('ci 2✗');
-        expect(el.textContent).toContain('workflow 40');
-        const toggle = Array.from(el.querySelectorAll('button')).find(b => b.textContent.startsWith('Differences'));
+        await act(async () => { root.render(<RulesBar summary={summary} onShowItem={n => shown.push(n)} />); });
+        expect(el.textContent).toContain('ci run 12 · give-up 1 · dropped 2');
+        expect(el.textContent).toContain('workflow run 40');
+        expect(el.textContent).toContain('consistent 119/120 · 1 not · 3 held back by gates');
+        expect(el.querySelector('[title="ci: last dropped at start: head moved abc→def"]')).not.toBeNull();
+        const toggle = Array.from(el.querySelectorAll('button')).find(b => b.textContent.startsWith('Inconsistencies'));
         await act(async () => { toggle.click(); });
         expect(el.textContent).toContain('rules: ci run, scanner: nothing');
         const item = Array.from(el.querySelectorAll('button')).find(b => b.textContent === 'PR #14055');
@@ -337,19 +340,10 @@ describe('the rules in shadow', () => {
         el.remove();
     });
 
-    test('shows a rule the engine decides for the scanner, against the scanner\'s own condition', async () => {
+    test('is not drawn without a summary', async () => {
         const el = document.createElement('div');
         const root = createRoot(el);
-        const handed = { ...shadow, byRule: { ...shadow.byRule, conflict: { decided: 4, differ: 0, handed: { decided: 4, differ: 1 } } } };
-        await act(async () => { root.render(<ShadowBar shadow={handed} />); });
-        expect(el.textContent).toContain('conflict by engine 1✗');
-        await act(async () => { root.unmount(); });
-    });
-
-    test('is not drawn without a tally', async () => {
-        const el = document.createElement('div');
-        const root = createRoot(el);
-        await act(async () => { root.render(<ShadowBar shadow={null} />); });
+        await act(async () => { root.render(<RulesBar summary={null} />); });
         expect(el.textContent).toBe('');
         await act(async () => { root.unmount(); });
     });
