@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/api"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/conventions"
 	githubv39 "github.com/google/go-github/v39/github"
 	"gopkg.in/yaml.v3"
 )
@@ -467,6 +468,9 @@ func TestPRCommentsRetryOnFailure(t *testing.T) {
 	failCurrentTask := func(completedAt time.Time) {
 		t.Helper()
 		task := readTask(incomingTaskFile)
+		// It started: the dispatcher marks its feedback addressed then
+		// (NotifyTaskStarted), not the scanner when it queued it.
+		s.MarkCommentsAddressed(prNum, task.EnqueuedAt)
 		if err := os.Remove(incomingTaskFile); err != nil {
 			t.Fatalf("failed to remove incoming task: %v", err)
 		}
@@ -562,12 +566,12 @@ func TestPRCommentsRetryOnFailure(t *testing.T) {
 	}
 }
 
-// TestPRCommentsAcknowledgesReviews covers what queueing an address-comments
-// task does to review feedback: the review body is acknowledged through
-// GraphQL, the inline comment through REST, and the task is timed from the
-// oldest of them - the cutoff the resolver later relies on to skip older
-// feedback. An inline comment is timed from its review's submission, not its
-// draft.
+// TestPRCommentsAcknowledgesReviews covers the review feedback of an
+// address-comments task: queueing it times it from the oldest feedback -
+// the cutoff the acknowledgement and the resolver rely on - and reacts to
+// nothing; when it starts (NotifyTaskStarted), the review body is
+// acknowledged through GraphQL and the inline comment through REST. An
+// inline comment is timed from its review's submission, not its draft.
 func TestPRCommentsAcknowledgesReviews(t *testing.T) {
 	tempDir := t.TempDir()
 	prNum := 10
@@ -666,6 +670,15 @@ func TestPRCommentsAcknowledgesReviews(t *testing.T) {
 		t.Errorf("triggerEventTime = %v, want %v (review submission)", task.TriggerEventTime, reviewTime)
 	}
 
+	// Queued, nothing is acknowledged: a task dropped before it starts
+	// leaves the feedback for the next scan.
+	if len(reviewAcks) != 0 || len(inlineAckPaths) != 0 {
+		t.Fatalf("queueing acknowledged feedback: reviews %v, inline %v", reviewAcks, inlineAckPaths)
+	}
+	// It starts: the feedback since its trigger is acknowledged.
+	conventions.AcknowledgeCommentReactions(context.Background(), s.gh, conventions.ResolveOptions{
+		PRNumber: prNum, SelfLogin: "watcher", Since: task.TriggerEventTime, TriggerLabel: "factory",
+	})
 	if len(reviewAcks) != 1 || reviewAcks[0]["subjectId"] != "PRR_500" || reviewAcks[0]["content"] != "EYES" {
 		t.Errorf("review acknowledgements = %v, want one EYES on PRR_500", reviewAcks)
 	}

@@ -560,11 +560,12 @@ shows the disagreements per rule (the design's Phase 2b).
    closed or stopped. A dropped task is journalled `Dropped` with the
    reason and served with the queue's drops; it is not an attempt and
    starts no cooldown, and the next scan decides anew. It costs one read of
-   the item per task started. Two kinds of task are held to the gates alone
-   (stopped, closed): a workflow step the nudge queued (a linked issue
-   closed), which steps the workflow inside its cooldown on purpose, and a
-   comments task, whose queueing marked the feedback it answers addressed
-   and acknowledged it, so its rule would always find no new feedback.
+   the item per task started. A workflow step the nudge queued (a linked
+   issue closed) is held to the gates alone (stopped, closed): it steps the
+   workflow inside its cooldown on purpose. A comments task acknowledges the
+   feedback it answers (the 👀 reaction, the addressed time) when it starts,
+   not when it is queued, so one dropped before it starts leaves the
+   feedback for the next scan.
 
 ---
 

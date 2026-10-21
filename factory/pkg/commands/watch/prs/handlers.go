@@ -335,7 +335,6 @@ func (s *Scanner) handlePRComments(ctx context.Context, pc *prContext, commentAn
 		return true
 	}
 	num := pc.prIssue.GetNumber()
-	state := s.state.get(num)
 	filename := fmt.Sprintf("task-pr-%d-comments.yaml", num)
 
 	if s.queue.TaskExists(filename) {
@@ -429,19 +428,10 @@ func (s *Scanner) handlePRComments(ctx context.Context, pc *prContext, commentAn
 		klog.Errorf("Failed to queue address-comments task for PR #%d: %v", num, err)
 		return false
 	}
-	// The acknowledgement reactions are what tell the next cycle these comments
-	// are already spoken for, and what tell the commenter they were seen.
-	for _, cid := range commentAnalysis.unackCommentIDs {
-		s.react(ctx, cid, conventions.ReactionAcknowledged)
-	}
-	for _, cid := range commentAnalysis.unackPRCommentIDs {
-		s.reactToReviewComment(ctx, cid, conventions.ReactionAcknowledged)
-	}
-	for _, nodeID := range commentAnalysis.unackReviewNodeIDs {
-		s.reactToReview(ctx, nodeID, conventions.ReactionAcknowledged)
-	}
-	state.lastCommentAddressedTime = task.EnqueuedAt
-	s.state.set(num, state)
+	// The feedback is acknowledged (the reactions, the addressed time)
+	// when the task starts, not here (NotifyTaskStarted): a task dropped
+	// before it starts leaves it for the next scan. Queued, the task is
+	// what keeps the next cycle from queueing it again.
 	return true
 }
 

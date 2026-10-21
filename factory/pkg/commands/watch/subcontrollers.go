@@ -532,6 +532,24 @@ func (c *watcherTaskCoordinator) NotifyTaskStarted(ctx context.Context, task *ap
 		}
 	}
 
+	// A comments task acknowledges the feedback it answers now that it
+	// starts, not when it was queued: one dropped before it starts leaves
+	// the feedback for the next scan.
+	if task.Type == api.TypePRComments && w.cfg != nil {
+		conventions.AcknowledgeCommentReactions(ctx, w.repoClient, conventions.ResolveOptions{
+			PRNumber:        task.Number,
+			SelfLogin:       w.githubLogin,
+			AllowlistedBots: w.cfg.AllowlistedBots,
+			ReviewerLogins:  w.reviewerLogins(),
+			TrustedLogins:   w.cfg.TrustedLogins(),
+			Since:           task.TriggerEventTime,
+			TriggerLabel:    w.triggerLabel,
+		})
+		if w.prScanner != nil {
+			w.prScanner.MarkCommentsAddressed(task.Number, task.EnqueuedAt)
+		}
+	}
+
 	if commentBody := taskStartedComment(task.Type); commentBody != "" {
 		if err := w.repoClient.AddComment(ctx, task.Number, commentBody); err != nil {
 			klog.Errorf("Failed to create GitHub comment on #%d: %v", task.Number, err)

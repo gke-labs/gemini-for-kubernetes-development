@@ -91,10 +91,10 @@ func TestRedecide(t *testing.T) {
 	}
 }
 
-// A workflow step the nudge queued, and a comments task, are held to the
-// gates alone at start: the workflow rule's cooldown does not drop a nudge
-// (#14192), and the feedback a comments task's queueing acknowledged does
-// not drop it (#13777); a gate still does.
+// A workflow step the nudge queued is held to the gates alone at start: the
+// workflow rule's cooldown does not drop a nudge (#14192), a gate does. A
+// comments task decides again (it acknowledges its feedback only when it
+// starts, so #13777's drop cannot happen).
 func TestAtStartGatesOnly(t *testing.T) {
 	set, err := rules.Builtin()
 	if err != nil {
@@ -119,15 +119,21 @@ func TestAtStartGatesOnly(t *testing.T) {
 		t.Errorf("a nudge on a closed issue: drop %v (%s)", drop, why)
 	}
 
-	// The feedback the comments task answers, acknowledged when it was
-	// queued: no new feedback on the facts read now.
+	// A comments task decides again: it acknowledges its feedback when it
+	// starts, so at start the feedback is still new and it runs; with none
+	// left (the comment deleted, say), it is dropped; a gate drops it too.
 	yes := true
-	answered := rules.Item{Kind: rules.OnPR, Number: 13777, Author: "ada-coder-bot", Labels: []string{"overseer"}, Head: "aaaaaaaa",
-		Mergeable: &yes, Checks: "green", UpdatedAt: now, LastTrustedActivity: now, TaskActive: true, Queued: []string{"comments"}}
-	if drop, why := atStart(set, "comments", &api.QueueTask{Number: 13777}, answered, env); drop {
-		t.Errorf("a comments task dropped on the feedback its queueing acknowledged: %s", why)
+	answering := rules.Item{Kind: rules.OnPR, Number: 13777, Author: "ada-coder-bot", Labels: []string{"overseer"}, Head: "aaaaaaaa",
+		Mergeable: &yes, Checks: "green", UpdatedAt: now, LastTrustedActivity: now, NewTrustedFeedback: true, TaskActive: true, Queued: []string{"comments"}}
+	if drop, why := atStart(set, "comments", &api.QueueTask{Number: 13777}, answering, env); drop {
+		t.Errorf("a comments task with its feedback still new dropped: %s", why)
 	}
-	stopped := answered
+	gone := answering
+	gone.NewTrustedFeedback = false
+	if drop, why := atStart(set, "comments", &api.QueueTask{Number: 13777}, gone, env); !drop || !strings.Contains(why, "feedback") {
+		t.Errorf("a comments task with no feedback left: drop %v (%s)", drop, why)
+	}
+	stopped := answering
 	stopped.Labels = append(stopped.Labels, "overseer/stop")
 	if drop, why := atStart(set, "comments", &api.QueueTask{Number: 13777}, stopped, env); !drop || why != "the item has the stop label" {
 		t.Errorf("a comments task on a stopped PR: drop %v (%s)", drop, why)
