@@ -90,3 +90,46 @@ func TestRedecide(t *testing.T) {
 		t.Errorf("an issue with a linked PR: drop %v (%s)", drop, why)
 	}
 }
+
+// A workflow step the nudge queued, and a comments task, are held to the
+// gates alone at start: the workflow rule's cooldown does not drop a nudge
+// (#14192), and the feedback a comments task's queueing acknowledged does
+// not drop it (#13777); a gate still does.
+func TestAtStartGatesOnly(t *testing.T) {
+	set, err := rules.Builtin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	env := rules.Env{Trigger: "overseer", Prefixes: conventions.Prefixes("overseer"), Pool: []string{"ada-coder-bot"}, Now: now}
+	// A workflow that succeeded 30m ago: inside its 2h cooldown.
+	cooling := rules.Item{Kind: rules.OnIssue, Number: 14192, Labels: []string{"overseer"}, Workflow: "kcc-greenfield", WorkflowCooldown: 2 * time.Hour,
+		UpdatedAt: now.Add(-time.Hour), TaskActive: true, Queued: []string{"workflow"},
+		Runs: []rules.PastRun{{Rule: "workflow", StartedAt: now.Add(-time.Hour), EndedAt: now.Add(-30 * time.Minute)}}}
+	nudged := &api.QueueTask{Number: 14192, TriggerReason: api.TriggerReasonLinkedIssueClosed}
+	if drop, why := atStart(set, "workflow", nudged, cooling, env); drop {
+		t.Errorf("a nudge dropped by the workflow cooldown: %s", why)
+	}
+	if drop, why := atStart(set, "workflow", &api.QueueTask{Number: 14192}, cooling, env); !drop || !strings.Contains(why, "cooldown") {
+		t.Errorf("a scanned workflow step inside its cooldown: drop %v (%s)", drop, why)
+	}
+	closed := cooling
+	closed.Closed = true
+	if drop, why := atStart(set, "workflow", nudged, closed, env); !drop || why != "the item is closed" {
+		t.Errorf("a nudge on a closed issue: drop %v (%s)", drop, why)
+	}
+
+	// The feedback the comments task answers, acknowledged when it was
+	// queued: no new feedback on the facts read now.
+	yes := true
+	answered := rules.Item{Kind: rules.OnPR, Number: 13777, Author: "ada-coder-bot", Labels: []string{"overseer"}, Head: "aaaaaaaa",
+		Mergeable: &yes, Checks: "green", UpdatedAt: now, LastTrustedActivity: now, TaskActive: true, Queued: []string{"comments"}}
+	if drop, why := atStart(set, "comments", &api.QueueTask{Number: 13777}, answered, env); drop {
+		t.Errorf("a comments task dropped on the feedback its queueing acknowledged: %s", why)
+	}
+	stopped := answered
+	stopped.Labels = append(stopped.Labels, "overseer/stop")
+	if drop, why := atStart(set, "comments", &api.QueueTask{Number: 13777}, stopped, env); !drop || why != "the item has the stop label" {
+		t.Errorf("a comments task on a stopped PR: drop %v (%s)", drop, why)
+	}
+}
