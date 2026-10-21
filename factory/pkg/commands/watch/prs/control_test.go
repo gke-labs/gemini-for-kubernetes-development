@@ -440,4 +440,58 @@ func TestEvaluate_RecordsBatchCHanded(t *testing.T) {
 		`{"rule":"ready","legacy":true}`,
 		`{"rule":"ready-unreview","legacy":false}`,
 		`"ready run"`)
+	// The engine's ready is its writes: the ready label on, the pool's bot
+	// off the PR.
+	f.mu.Lock()
+	added := slices.Clone(f.added)
+	f.mu.Unlock()
+	if !slices.Contains(added, "factory/ready-for-human") {
+		t.Errorf("added %v, want the ready label", added)
+	}
+	if f.count("DELETE /repos/test-owner/test-repo/issues/51/assignees") != 1 {
+		t.Errorf("the pool's bot was not unassigned: %v", f.calls)
+	}
+}
+
+// The engine's inactive is its writes: the stop label and the rule's
+// comment naming it, and nothing more decided on the PR. (Here inactive is made to hold on any pool PR: the fixture's
+// commits are always new.)
+func TestEvaluate_EngineInactiveStopsThePR(t *testing.T) {
+	base, _ := rules.Builtin()
+	var inactive rules.Rule
+	for _, r := range base {
+		if r.Name == "inactive" {
+			inactive = *r
+		}
+	}
+	inactive.When.InactiveFor = rules.Duration{}
+	set, err := rules.Overlay(base, []*rules.Rule{&inactive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := rules.NewControl("on", map[string]string{"inactive": "engine", "ready": "engine"}, "", nil, set)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := &prFixture{num: 52, headSHA: "sha-52", updated: time.Now()}
+	record := filepath.Join(t.TempDir(), "d.jsonl")
+	s, _ := newTestScanner(t, t.TempDir(), testOpts{
+		GitHub: f.start(t), BotUsers: []string{"bot1"}, GitHubLogin: "bot1", TriggerLabel: "factory",
+		Recorder: rules.NewRecorder(record, 0, nil), Rules: c,
+	})
+	f.mu.Lock()
+	listed := f.listingIssueLocked()
+	f.mu.Unlock()
+	s.evaluate(context.Background(), listed)
+
+	f.mu.Lock()
+	added := slices.Clone(f.added)
+	f.mu.Unlock()
+	if !slices.Contains(added, "factory/stop") || slices.Contains(added, "factory/ready-for-human") {
+		t.Errorf("added %v, want the stop label and nothing after it", added)
+	}
+	if f.count("POST /repos/test-owner/test-repo/issues/52/comments") != 1 {
+		t.Errorf("want one pause comment: %v", f.calls)
+	}
+	assertRecorded(t, record, `"inactive run"`)
 }

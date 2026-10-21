@@ -540,7 +540,9 @@ func (s *Scanner) evaluate(ctx context.Context, prIssue *githubv39.Issue) {
 	// Sync labels from referenced parent issues to the PR, then re-check: the
 	// stop label may have been inherited by the sync we just performed.
 	s.recordHandedStep("inherit-labels", prIssue, len(getMissingLabelsForPR(prIssue.Labels, refs.all(ctx), s.cfg.TriggerLabel)) > 0)
-	if s.decides("inherit-labels", prIssue, true) {
+	if s.engineActs("inherit-labels", prIssue) {
+		s.actOn(ctx, prIssue, "inherit-labels")
+	} else if s.decides("inherit-labels", prIssue, true) {
 		s.syncReferencedIssueLabels(ctx, pr, prIssue, refs)
 	}
 	if conventions.HasStopLabel(prIssue.Labels, s.cfg.TriggerLabel) {
@@ -582,7 +584,11 @@ func (s *Scanner) evaluate(ctx context.Context, prIssue *githubv39.Issue) {
 		_, inactive := s.inactiveSince(pr, history)
 		s.recordHandedStep("inactive", prIssue, inactive)
 	}
-	if s.decides("inactive", prIssue, true) && s.pauseIfInactive(ctx, pr, prIssue, history, headSHA) {
+	if s.engineActs("inactive", prIssue) {
+		if s.actOn(ctx, prIssue, "inactive") {
+			return
+		}
+	} else if s.decides("inactive", prIssue, true) && s.pauseIfInactive(ctx, pr, prIssue, history, headSHA) {
 		return
 	}
 
@@ -662,6 +668,11 @@ func (s *Scanner) evaluate(ctx context.Context, prIssue *githubv39.Issue) {
 	}
 	completed := true
 	switch {
+	// A give-up the engine decides is its writes (the stop label and the
+	// rule's comment), whichever rule's.
+	case s.engineGivesUp(prIssue):
+		s.actOn(ctx, prIssue, s.engineCareRule())
+
 	case s.picks("comments", prIssue, shouldAddressComments):
 		completed = s.handlePRComments(ctx, pc, commentAnalysis, history.comments, s.engineOutcome("comments", prIssue))
 
@@ -686,7 +697,17 @@ func (s *Scanner) evaluate(ctx context.Context, prIssue *githubv39.Issue) {
 		s.recordHandedStep("ready", prIssue, ready && !already)
 		s.recordHandedStep("ready-unreview", prIssue, ready && already && len(getReviewLabels(prIssue.Labels, s.cfg.TriggerLabel)) > 0)
 	}
-	if s.picksReadiness(prIssue) {
+	switch {
+	case s.engineActs("ready", prIssue):
+		// The engine's ready or ready-unreview: its writes.
+		if s.gh.Ready() {
+			for _, rule := range []string{"ready", "ready-unreview"} {
+				if rules.Decided(s.engineCare, rule) {
+					s.actOn(ctx, prIssue, rule)
+				}
+			}
+		}
+	case s.picksReadiness(prIssue):
 		s.reconcileReadiness(ctx, pc, checkAnalysis, hasUnresolvedComments, history, isConflicting, assignedBot)
 	}
 	if !completed {

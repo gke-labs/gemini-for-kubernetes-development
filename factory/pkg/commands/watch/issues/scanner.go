@@ -23,6 +23,7 @@ import (
 	"k8s.io/klog/v2"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/common"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/act"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/api"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/conventions"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
@@ -599,7 +600,13 @@ func (s *Scanner) queueTask(ctx context.Context, issue *githubv39.Issue, refIssu
 			return
 		case d.Outcome == rules.OutcomeGiveUp:
 			s.rec.Decided(rule, rules.OutcomeGiveUp)
-			s.giveUp(ctx, num, rule, d.Writes.Comment)
+			klog.Infof("Stopping issue #%d: the rules engine gives up on %s", num, rule)
+			act.ApplyWrites(ctx, s.gh, num, d.Writes, s.cfg.TriggerLabel, s.cfg.DryRun)
+			if !s.cfg.DryRun {
+				if err := s.queue.RemovePendingTasksForNumber(num); err != nil {
+					klog.Warningf("Failed to withdraw pending tasks for issue #%d: %v", num, err)
+				}
+			}
 			return
 		}
 	}
@@ -710,32 +717,6 @@ func (s *Scanner) stopForUnavailableWorkflow(ctx context.Context, num int, wf is
 	}
 	if err := s.gh.AddComment(ctx, num, unavailableWorkflowComment(wf, stopLabel)); err != nil {
 		klog.Errorf("Failed to comment on issue #%d about its unavailable workflow: %v", num, err)
-	}
-}
-
-// giveUp stops an issue whose rule the engine gave up on: the stop label,
-// the issue's queued tasks dropped, and the rule's comment, which names the
-// label (what PausedAt reads as the pause a later count starts from).
-func (s *Scanner) giveUp(ctx context.Context, num int, rule, comment string) {
-	stopLabel := conventions.StopLabel(s.cfg.TriggerLabel)
-	if comment == "" {
-		comment = fmt.Sprintf("Pausing: the %s rule has run out of attempts.", rule)
-	}
-	body := fmt.Sprintf("🤖 %s I have attached the `%s` label to pause automated processing.\n\nTo try again, remove the `%s` label (and say what to do differently in a comment).", comment, stopLabel, stopLabel)
-	if s.cfg.DryRun {
-		fmt.Printf("[DRYRUN] Would add label '%s' to issue #%d and comment: %s\n", stopLabel, num, body)
-		return
-	}
-	klog.Infof("Stopping issue #%d: the rules engine gives up on %s", num, rule)
-	if err := s.gh.AddLabels(ctx, num, []string{stopLabel}); err != nil {
-		klog.Errorf("Failed to add stop label '%s' to issue #%d: %v", stopLabel, num, err)
-		return
-	}
-	if err := s.queue.RemovePendingTasksForNumber(num); err != nil {
-		klog.Warningf("Failed to withdraw pending tasks for issue #%d: %v", num, err)
-	}
-	if err := s.gh.AddComment(ctx, num, body); err != nil {
-		klog.Errorf("Failed to comment on issue #%d that %s gives up: %v", num, rule, err)
 	}
 }
 
