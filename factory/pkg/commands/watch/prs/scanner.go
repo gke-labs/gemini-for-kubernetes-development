@@ -528,8 +528,6 @@ func (s *Scanner) evaluate(ctx context.Context, prIssue *githubv39.Issue) {
 		return
 	}
 
-	s.labelCanary(ctx, prIssue)
-
 	// The issues this pull request closes are wanted by the label sync, the
 	// review opt-in check and the review prompt. Resolving them through one
 	// shared fetcher is what stops the same issue being fetched three times in
@@ -652,7 +650,7 @@ func (s *Scanner) evaluate(ctx context.Context, prIssue *githubv39.Issue) {
 	// case on the engine's decision instead of the condition above; a
 	// disabled rule takes none.
 	s.engineCare = nil
-	if s.rules.TakesAny(labelNames(prIssue.Labels), prCareRules...) {
+	if s.rules.TakesAny(prCareRules...) {
 		s.engineCare = s.engineDecide()
 		legacyPick := ""
 		for _, c := range []struct {

@@ -86,23 +86,6 @@ type Flags struct {
 	// GraphQLPRDetails makes the PR scanner read the details of the pull
 	// requests it evaluates in GraphQL batches (prs.Config.GraphQLPRDetails).
 	GraphQLPRDetails bool
-	// RulesEngine is how the watch rules run beside the scanners: "" or
-	// "off", not at all; "shadow", deciding on every decision the scanners
-	// make and counting where they differ, served on the queue API; "on",
-	// shadow plus the rules RulesUse hands to the engine deciding for the
-	// scanners.
-	RulesEngine string
-	// RulesUse hands rules to the engine with RulesEngine on:
-	// "conflict=engine,ci=engine" (legacy, the default, is the scanners').
-	RulesUse string
-	// RulesCanaryLabel, when set, has the engine decide the rules it was
-	// handed only on items carrying this label; the rest stay the
-	// scanners'.
-	RulesCanaryLabel string
-	// RulesCanaryPercent has the PR scanner put RulesCanaryLabel on that
-	// share of the pull requests it works on, chosen by number
-	// (rules.Control.Canary).
-	RulesCanaryPercent int
 	// RulesDisabled are rules the watch does not act on at all, through
 	// the scanners or the engine: the operator's emergency switch
 	// ("review,ci").
@@ -233,33 +216,26 @@ func NewWatcher(rootFlags common.RootFlags, flags Flags) *Watcher {
 	return w
 }
 
-// newRulesControl is the operator's say over the rules, from the flags.
-// Settings that do not check out (an engine it does not know, a rule that
-// is not one) leave the rules off with a warning rather than stop the
-// watch: the scanners alone, every rule on.
+// newRulesControl is the operator's say over the rules, from the flags:
+// the engine decides every rule, but those disabled. A disabled rule that
+// is not one leaves the watch with every rule on, and a warning, rather
+// than stopping it; prebaked rules that fail to load leave the scanners
+// alone.
 func (w *Watcher) newRulesControl() *rules.Control {
-	if w.RulesEngine == "" && w.RulesUse == "" && w.RulesCanaryLabel == "" && w.RulesCanaryPercent == 0 && w.RulesDisabled == "" {
-		return nil
-	}
 	set, err := rules.Builtin()
 	if err != nil {
 		klog.Warningf("Loading the watch rules: %v; running without them", err)
 		return nil
 	}
-	use, err := rules.ParseUse(w.RulesUse)
-	if err == nil {
-		var c *rules.Control
-		if c, err = rules.NewControl(w.RulesEngine, use, w.RulesCanaryLabel, rules.ParseList(w.RulesDisabled), set); err == nil {
-			if err = c.SetCanaryPercent(w.RulesCanaryPercent); err != nil {
-				klog.Warningf("Watch rules settings: %v; running without the rules", err)
-				return nil
-			}
-			klog.Infof("Watch %s", c)
-			return c
+	c, err := rules.NewControl(rules.ParseList(w.RulesDisabled), set)
+	if err != nil {
+		klog.Warningf("Watch rules settings: %v; every rule on", err)
+		if c, err = rules.NewControl(nil, set); err != nil {
+			return nil
 		}
 	}
-	klog.Warningf("Watch rules settings: %v; running without the rules", err)
-	return nil
+	klog.Infof("Watch %s", c)
+	return c
 }
 
 // newRulesShadow is the rules in shadow, when the engine is shadow or on:

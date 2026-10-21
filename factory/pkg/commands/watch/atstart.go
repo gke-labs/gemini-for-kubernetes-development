@@ -48,10 +48,10 @@ func taskRule(filename string) (rule, kind string, num int) {
 // (Scanner.Facts), as if the task were not there: not queued, no task of
 // the item active. A gate that now holds, a PR head that moved since the
 // task was decided, or a rule that no longer decides (it fails, its policy
-// holds it, an earlier rule takes the item, it gives up) drops it. A task
-// of a rule the scanner still decides is held to the facts it was decided
-// on (stale). A task whose facts cannot be read runs, as it would without
-// the check.
+// holds it, an earlier rule takes the item, it gives up) drops it, and so
+// does the rule being disabled (the emergency switch stops queued work
+// too). A task whose facts cannot be read runs, as it would without the
+// check.
 func (c *watcherTaskCoordinator) Redecide(ctx context.Context, filename string, task *api.QueueTask) (bool, string) {
 	w := c.w
 	rule, kind, num := taskRule(filename)
@@ -73,30 +73,10 @@ func (c *watcherTaskCoordinator) Redecide(ctx context.Context, filename string, 
 		klog.Warningf("Deciding %s again before it starts: reading #%d: %v; running it", filename, num, err)
 		return false, ""
 	}
-	if !w.rulesControl.Takes(rule, it.Labels) {
-		return stale(rule, task, it)
+	if w.rulesControl.Off(rule) {
+		return true, fmt.Sprintf("the %s rule is disabled", rule)
 	}
 	return atStart(w.rulesControl.Set(), rule, task, it, env)
-}
-
-// stale is the check at start of a task whose rule the scanner still
-// decides (spec.rules.use: legacy): the facts the scanner decided it on
-// that the item read now no longer has, as the preconditions checked - a
-// rebase, an investigation or a review is of the head it was decided at,
-// and a fix is for an issue no PR is linked to. Feedback is not answered
-// by a new commit, so a comments task holds across one.
-func stale(rule string, task *api.QueueTask, it rules.Item) (bool, string) {
-	switch rule {
-	case "conflict", "ci", "review":
-		if task.CommitSHA != "" && it.Head != "" && it.Head != task.CommitSHA {
-			return true, fmt.Sprintf("head moved %s→%s", shortSHA(task.CommitSHA), shortSHA(it.Head))
-		}
-	case "fix":
-		if it.LinkedPR == "open" {
-			return true, fmt.Sprintf("an open PR is now linked to #%d", it.Number)
-		}
-	}
-	return false, ""
 }
 
 // atStart is Redecide on the facts read: a task held to the gates alone

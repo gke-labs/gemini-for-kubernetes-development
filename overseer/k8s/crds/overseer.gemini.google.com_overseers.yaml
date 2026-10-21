@@ -106,26 +106,10 @@ spec:
                 type: object
               rules:
                 properties:
-                  canaryLabel:
-                    type: string
-                  canaryPercent:
-                    maximum: 100
-                    minimum: 0
-                    type: integer
                   disabled:
                     items:
                       type: string
                     type: array
-                  engine:
-                    enum:
-                    - "off"
-                    - shadow
-                    - "on"
-                    type: string
-                  use:
-                    additionalProperties:
-                      type: string
-                    type: object
                 type: object
               rulesRecord:
                 type: boolean

@@ -47,41 +47,12 @@ type RepoSpec struct {
 	IssueMode string `json:"issueMode,omitempty"`
 }
 
-// OverseerRules is how the watch rules run beside the watcher's scanners.
+// OverseerRules is the operator's say over the watch rules, which the
+// rules engine decides.
 type OverseerRules struct {
-	// Engine is off (the default: the scanners alone, as before); shadow:
-	// the rules decide on every decision the scanners make and the watcher
-	// counts where they differ, by rule, on its queue API, acting on
-	// nothing; or on: shadow, plus the rules Use hands to the engine
-	// deciding for the scanners.
-	// +kubebuilder:validation:Enum=off;shadow;on
-	// +kubebuilder:validation:Optional
-	Engine string `json:"engine,omitempty"`
-
-	// Use hands rules to the engine, with Engine on: {conflict: engine}.
-	// A rule not named, or named legacy, stays the scanners'.
-	// +kubebuilder:validation:Optional
-	Use map[string]string `json:"use,omitempty"`
-
-	// CanaryLabel, when set, has the engine decide the rules Use hands it
-	// only on issues and PRs carrying this label; the rest stay the
-	// scanners'.
-	// +kubebuilder:validation:Optional
-	CanaryLabel string `json:"canaryLabel,omitempty"`
-
-	// CanaryPercent has the watcher put CanaryLabel on that share of the
-	// pull requests it works on, chosen by number (the same ones every
-	// pass; new ones at the same rate), so the canary is public and can
-	// be filtered on GitHub. A pull request a person took the label off is
-	// never labelled again. 0, the default, labels none; it needs
-	// CanaryLabel.
-	// +kubebuilder:validation:Minimum=0
-	// +kubebuilder:validation:Maximum=100
-	// +kubebuilder:validation:Optional
-	CanaryPercent int `json:"canaryPercent,omitempty"`
-
-	// Disabled are rules the watcher does not act on at all, through its
-	// scanners or the engine: the operator's emergency switch.
+	// Disabled are rules the watcher does not act on at all, and whose
+	// queued tasks it drops before they start: the operator's emergency
+	// switch. The rules engine decides every other rule.
 	// +kubebuilder:validation:Optional
 	Disabled []string `json:"disabled,omitempty"`
 }

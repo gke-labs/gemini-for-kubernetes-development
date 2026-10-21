@@ -82,7 +82,7 @@ func TestQueueTask_RecordsTheScannersYesUnderAVeto(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	control, err := rules.NewControl("on", map[string]string{"fix": "engine"}, "", nil, set)
+	control, err := rules.NewControl(nil, set)
 	if err != nil {
 		t.Fatal(err)
 	}
