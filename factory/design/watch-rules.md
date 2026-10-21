@@ -392,7 +392,12 @@ too; step 2, done: `spec.rules.atStart` → `WATCH_RULES_AT_START` →
 `dispatcher.Config.AtStart`, `watcherTaskCoordinator.Redecide` maps the task
 file to its rule, reads `Facts`, and drops the task on a gate, a moved head
 or a rule that no longer decides, before the preconditions, which stay
-until step 4): (1) the gates in code (`rules.Gates`, with
+until step 4; step 3a, done: `watch/act.ApplyWrites` carries out a
+decision's writes - labels, assignees, then a stop's label and a comment
+naming it - for inherit-labels, inactive, ready, ready-unreview and every
+give-up the engine decides (PR and issue), in place of their handlers;
+workflow-missing keeps its handler, whose comment carries the load error):
+(1) the gates in code (`rules.Gates`, with
 `closed` and `below-min-number`) and the facts built outside the scanners
 (`facts.Build(kind, number) → rules.Item`: the reads in `prs/` and
 `issues/` moved to one package both scanners and the dispatcher call,

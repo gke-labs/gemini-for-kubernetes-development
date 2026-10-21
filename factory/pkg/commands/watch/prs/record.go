@@ -3,10 +3,13 @@ package prs
 import (
 	"context"
 	"fmt"
+	"slices"
 	"time"
 
 	githubv39 "github.com/google/go-github/v39/github"
+	"k8s.io/klog/v2"
 
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/act"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/api"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/conventions"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/watch/rules"
@@ -221,20 +224,12 @@ func (s *Scanner) picks(rule string, prIssue *githubv39.Issue, legacy bool) bool
 		return false
 	}
 	if s.takes(rule, prIssue) {
-		switch s.engineOutcome(rule, prIssue) {
-		case rules.OutcomeRun:
-			return true
-		case rules.OutcomeGiveUp:
-			return giveUpHandlers[rule]
-		}
-		return false
+		// The engine's give-up was acted on before the cases
+		// (engineGivesUp): only its run takes a case.
+		return s.engineOutcome(rule, prIssue) == rules.OutcomeRun
 	}
 	return legacy
 }
-
-// giveUpHandlers are the pr-care rules whose handler acts on an engine's
-// give-up (handlePRInvestigate's and handlePRComments' engine).
-var giveUpHandlers = map[string]bool{"ci": true, "comments": true}
 
 // engineOutcome is the engine's decision on rule for the pull request when
 // it decides the rule for the scanner: its outcome, or "" when the engine
@@ -283,6 +278,62 @@ func (s *Scanner) picksReadiness(prIssue *githubv39.Issue) bool {
 	}
 	if s.takes("ready", prIssue) {
 		return rules.Decided(s.engineCare, "ready") || rules.Decided(s.engineCare, "ready-unreview")
+	}
+	return true
+}
+
+// engineActs is whether the engine's decision on rule is carried out as
+// its writes (act.ApplyWrites) rather than by the scanner's handler: the
+// rule not disabled, and the engine deciding it for the scanner.
+func (s *Scanner) engineActs(rule string, prIssue *githubv39.Issue) bool {
+	return !s.rules.Off(rule) && s.takes(rule, prIssue)
+}
+
+// engineCareRule is the pr-care rule the engine decided, the first: they
+// are exclusive, so at most one of comments, conflict, ci and review.
+func (s *Scanner) engineCareRule() string {
+	for _, d := range s.engineCare {
+		if slices.Contains(prCareRules[:4], d.Rule) {
+			return d.Rule
+		}
+	}
+	return ""
+}
+
+// engineGivesUp is whether the pr-care rule the engine decided for the
+// scanner gives up.
+func (s *Scanner) engineGivesUp(prIssue *githubv39.Issue) bool {
+	rule := s.engineCareRule()
+	return rule != "" && s.engineActs(rule, prIssue) && s.engineOutcome(rule, prIssue) == rules.OutcomeGiveUp
+}
+
+// actOn carries out the engine's decision on rule for the pull request
+// being evaluated, if it made one: its writes, the PR's labels brought up
+// to date with them (later steps read them: an inherited stop label stops
+// the PR), its queued tasks dropped on a stop, and the decision recorded.
+// It reports whether there was one.
+func (s *Scanner) actOn(ctx context.Context, prIssue *githubv39.Issue, rule string) bool {
+	var d rules.Decision
+	found := false
+	for _, e := range s.engineDecide() {
+		if e.Rule == rule {
+			d, found = e, true
+			break
+		}
+	}
+	if !found {
+		return false
+	}
+	num := prIssue.GetNumber()
+	klog.Infof("PR #%d: the rules engine decides %s %s: %+v", num, rule, d.Outcome, d.Writes)
+	s.rec.Decided(rule, d.Outcome)
+	done := act.ApplyWrites(ctx, s.gh, num, d.Writes, s.cfg.TriggerLabel, s.cfg.DryRun)
+	for _, l := range done.Labeled {
+		prIssue.Labels = append(prIssue.Labels, &githubv39.Label{Name: githubv39.String(l)})
+	}
+	prIssue.Labels = slices.DeleteFunc(prIssue.Labels, func(l *githubv39.Label) bool { return slices.Contains(done.Unlabeled, l.GetName()) })
+	if (d.Writes.Stop || d.Writes.Drop) && !s.cfg.DryRun {
+		_ = s.queue.RemovePendingTasksForNumber(num)
 	}
 	return true
 }
