@@ -42,11 +42,6 @@ const (
 	DefaultSweepInterval = 10 * time.Minute
 	// defaultScanLimit bounds the fast queries when no limit is configured.
 	defaultScanLimit = 30
-	// failedCooldown holds back a task whose last run failed, in place of
-	// the workflow's declared cooldown: so a failure isn't retried in a spam
-	// loop, but doesn't cost the workflow's full cooldown either (a run that
-	// failed in two seconds once held an issue back for two hours).
-	failedCooldown = 20 * time.Minute
 )
 
 // Queue is the subset of the task queue the Scanner needs: it adds issue tasks,
@@ -212,13 +207,10 @@ type Scanner struct {
 	paused    func() bool
 	recorder  *rules.Recorder
 	rules     *rules.Control
-	// rec is the record of the issue queueTask is deciding about, nil when
-	// not recording.
+	// rec is the record of the issue queueTask is deciding about: the facts
+	// the engine decides on.
 	rec *rules.Recording
 
-	// processed records when each issue was last queued or completed, read from
-	// the processed queue directory on first use.
-	processed map[int]time.Time
 	// lastSweep is when the trigger-labelled sweep last completed successfully.
 	lastSweep time.Time
 }
@@ -234,6 +226,19 @@ func New(cfg Config, deps Deps) *Scanner {
 	if cfg.ScanLimit <= 0 {
 		cfg.ScanLimit = defaultScanLimit
 	}
+	// The engine decides every rule, on the facts the scan records:
+	// without a control the prebaked rules, all on; without a recorder one
+	// that keeps nothing.
+	control := deps.Rules
+	if control == nil {
+		if set, err := rules.Builtin(); err == nil {
+			control, _ = rules.NewControl(nil, set)
+		}
+	}
+	recorder := deps.Recorder
+	if recorder == nil {
+		recorder = rules.NewSinkRecorder(func(rules.Record) {})
+	}
 	return &Scanner{
 		cfg:       cfg,
 		gh:        deps.GitHub,
@@ -243,8 +248,8 @@ func New(cfg Config, deps Deps) *Scanner {
 		users:     deps.Users,
 		listings:  deps.Listings,
 		paused:    deps.Paused,
-		recorder:  deps.Recorder,
-		rules:     deps.Rules,
+		recorder:  recorder,
+		rules:     control,
 	}
 }
 
@@ -437,39 +442,20 @@ func (s *Scanner) queueTask(ctx context.Context, issue *githubv39.Issue, refIssu
 		return
 	}
 
-	// A rule the engine decides is held back by its policy - cooldown,
-	// once per update - asked on these cheap facts before the reads below;
-	// the scanner's own cooldown and "processed since" checks are for the
-	// rules it still decides.
-	if s.rec != nil && s.rules.Takes(rule) {
-		if s.engineHolds(ctx, issue, filename, workflowPath, workflowName, rule) {
-			return
-		}
-	} else {
-		if s.inCooldown(ctx, issue, filename, workflowPath, workflowName) {
-			return
-		}
-		lastProcessed, ok := s.processedIssues()[num]
-		if ok && !issue.GetUpdatedAt().After(lastProcessed) && workflowName == "" {
-			return
-		}
+	// The rule's policy - cooldown, once per update, a give-up due - asked
+	// on these cheap facts before the reads below.
+	if s.engineHolds(ctx, issue, filename, workflowPath, workflowName, rule) {
+		return
 	}
 
 	wf = wf.check(ctx, s.gh)
 	switch wf.Status {
 	case common.WorkflowMissing, common.WorkflowUnusable:
 		s.rec.Fill(func(it *rules.Item) { it.WorkflowMissing = true })
-		// The workflow-missing rule: off, or the engine's and not decided
-		// by it, the issue is neither stopped nor stepped.
-		if s.rules.Off("workflow-missing") {
-			klog.V(2).Infof("Skipping issue #%d: its workflow %s is unavailable and the workflow-missing rule is disabled", num, wf.Path)
-			return
-		}
-		if s.rec != nil && s.rules.Takes("workflow-missing") {
-			s.rec.Handed("workflow-missing", true)
-		}
-		if s.rec != nil && s.rules.Takes("workflow-missing") &&
-			!rules.Decided(s.rules.Decide(*s.rec.Item, s.rulesEnv()), "workflow-missing") {
+		// The engine's workflow-missing (off, or not decided: the issue is
+		// neither stopped nor stepped); its stop, with the load error in its
+		// comment, is the handler's.
+		if !rules.Decided(s.rules.Decide(*s.rec.Item, s.rulesEnv()), "workflow-missing") {
 			klog.Infof("Skipping issue #%d: the rules engine does not decide workflow-missing", num)
 			return
 		}
@@ -585,36 +571,27 @@ func (s *Scanner) queueTask(ctx context.Context, issue *githubv39.Issue, refIssu
 		})
 	}
 
-	// A rule the engine decides for the scanner is queued only when the
-	// engine, on the facts gathered above, decides it too: it confirms
-	// the scanner's decision (the facts are gathered cheapest first, and
-	// stop at the first that says no).
-	// The scanner's own answer here is yes: the record keeps it beside the
-	// engine's, so a veto shows in the shadow instead of agreeing with
-	// itself.
-	// An engine's give-up stops the issue instead: the rule has run its
+	// The engine decides on the facts gathered above: no decision, nothing
+	// queued; its give-up stops the issue instead (the rule has run its
 	// failed attempts out since a human last spoke on it or it was last
-	// paused.
-	if s.rec != nil && s.rules.Takes(rule) {
-		s.rec.Handed(rule, true)
-		s.recordSpoken(ctx, num)
-		d, ok := decisionOf(s.rules.Decide(*s.rec.Item, s.rulesEnv()), rule)
-		act.Task(task, d, s.rules.Set().Named(rule))
-		switch {
-		case !ok:
-			klog.Infof("Skipping issue #%d: the rules engine does not decide %s", num, rule)
-			return
-		case d.Outcome == rules.OutcomeGiveUp:
-			s.rec.Decided(rule, rules.OutcomeGiveUp)
-			klog.Infof("Stopping issue #%d: the rules engine gives up on %s", num, rule)
-			act.ApplyWrites(ctx, s.gh, num, d.Writes, s.cfg.TriggerLabel, s.cfg.DryRun)
-			if !s.cfg.DryRun {
-				if err := s.queue.RemovePendingTasksForNumber(num); err != nil {
-					klog.Warningf("Failed to withdraw pending tasks for issue #%d: %v", num, err)
-				}
+	// paused); its run is the task, with the rule's recipe on it.
+	s.recordSpoken(ctx, num)
+	d, ok := decisionOf(s.rules.Decide(*s.rec.Item, s.rulesEnv()), rule)
+	act.Task(task, d, s.rules.Set().Named(rule))
+	switch {
+	case !ok:
+		klog.Infof("Skipping issue #%d: the rules engine does not decide %s", num, rule)
+		return
+	case d.Outcome == rules.OutcomeGiveUp:
+		s.rec.Decided(rule, rules.OutcomeGiveUp)
+		klog.Infof("Stopping issue #%d: the rules engine gives up on %s", num, rule)
+		act.ApplyWrites(ctx, s.gh, num, d.Writes, s.cfg.TriggerLabel, s.cfg.DryRun)
+		if !s.cfg.DryRun {
+			if err := s.queue.RemovePendingTasksForNumber(num); err != nil {
+				klog.Warningf("Failed to withdraw pending tasks for issue #%d: %v", num, err)
 			}
-			return
 		}
+		return
 	}
 	s.rec.Decided(rule, rules.OutcomeRun)
 	if s.cfg.DryRun {
@@ -631,66 +608,17 @@ func (s *Scanner) queueTask(ctx context.Context, issue *githubv39.Issue, refIssu
 	} else {
 		fmt.Printf("Queueing fix task for issue #%d...\n", num)
 	}
-	s.processedIssues()[num] = time.Now()
 	if err := s.queue.Enqueue(filename, task); err != nil {
 		klog.Errorf("Failed to queue task for issue #%d: %v", num, err)
 	}
 }
 
-// inCooldown reports whether the same task completed recently enough that it
-// must not be queued again yet. The cooldown is declared by the workflow
-// definition, and a standard fix uses the default; a task whose last run
-// failed waits failedCooldown instead. A task held back is noted on the
-// queue, where the overseer's work view shows it, and logged once per
-// cooldown window (the first scan that holds it back until that time),
-// not on every scan.
-func (s *Scanner) inCooldown(ctx context.Context, issue *githubv39.Issue, filename, workflowPath, workflowName string) bool {
-	last := s.queue.GetProcessedTask(filename)
-	if last == nil {
-		return false
-	}
-	// The queue dates every finished task, falling back to the task file's own
-	// timestamp for one that never recorded a completion time, so a zero here
-	// means only that there is nothing to measure the cooldown against.
-	if last.CompletedAt.IsZero() {
-		return false
-	}
-	cooldown := failedCooldown
-	if last.Status != api.StatusFailed {
-		cooldown = common.GetWorkflowCooldown(ctx, s.gh, workflowPath)
-		if workflowName != "" {
-			s.rec.Fill(func(it *rules.Item) { it.WorkflowCooldown = cooldown })
-		}
-	}
-	until := last.CompletedAt.Add(cooldown)
-	if !time.Now().Before(until) {
-		return false
-	}
-	held := api.Cooldown{
-		FileName:        filename,
-		Number:          issue.GetNumber(),
-		URL:             issue.GetHTMLURL(),
-		Workflow:        workflowName,
-		Until:           until,
-		LastStatus:      last.Status,
-		LastCompletedAt: last.CompletedAt,
-	}
-	if s.queue.NoteCooldown(held) {
-		what := "fix"
-		if workflowName != "" {
-			what = "workflow " + workflowName
-		}
-		klog.Infof("Skipping issue #%d: %s in cooldown until %s (last run %s at %s)",
-			held.Number, what, until.UTC().Format(time.RFC3339), strings.ToLower(string(last.Status)), last.CompletedAt.UTC().Format(time.RFC3339))
-	}
-	return true
-}
-
 // engineHolds is whether the rule's policy holds it back on the issue now
 // (rules.Set.Held), on the facts recorded so far and a workflow's cooldown
-// (read, as inCooldown does, only after a run that succeeded). A cooldown
+// (read only after a run that succeeded: a failed run's cooldown is the
+// rule's own). A cooldown
 // is noted on the queue, for the overseer's work view, and logged once per
-// window, as inCooldown's.
+// window.
 func (s *Scanner) engineHolds(ctx context.Context, issue *githubv39.Issue, filename, workflowPath, workflowName, rule string) bool {
 	last := s.queue.GetProcessedTask(filename)
 	if workflowName != "" && last != nil && last.Status != api.StatusFailed {
@@ -796,17 +724,4 @@ func (s *Scanner) selectUser(ctx context.Context, taskType api.TaskType, num int
 		return s.cfg.TargetAssignee
 	}
 	return assignee
-}
-
-// processedIssues returns when each issue was last worked on, recovered from
-// the queue's finished tasks on first use.
-//
-// The snapshot is taken once and then kept: queueTask stamps an issue here as
-// it queues it, which is what stops a second cycle from queueing the same work
-// before the first has finished.
-func (s *Scanner) processedIssues() map[int]time.Time {
-	if s.processed == nil {
-		s.processed = processedIssueTimes(s.queue.ListProcessedTasks())
-	}
-	return s.processed
 }

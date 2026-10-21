@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -177,39 +176,4 @@ func triggerInfo(issue *githubv39.Issue, timeline []*githubv39.Timeline, trigger
 
 	notes := fmt.Sprintf("Issue #%d created at %s with trigger label '%s'", num, createTime.Format(time.RFC3339), triggerLabel)
 	return createTime, api.TriggerReasonIssueCreated, notes
-}
-
-// processedIssueTimes recovers when each issue was last worked on from the
-// queue's finished tasks, so that a restart does not re-queue everything it had
-// already finished.
-//
-// A task that failed is deliberately not recorded: the issue still needs work,
-// and treating the failure as a completion would park it until someone touched
-// the issue again.
-//
-// Only the standard fix task shape is folded in. A workflow task is named after
-// its workflow, and is gated by its own cooldown rather than by this map.
-func processedIssueTimes(tasks map[string]*api.QueueTask) map[int]time.Time {
-	processed := make(map[int]time.Time)
-	for filename, t := range tasks {
-		if t == nil || !strings.HasPrefix(filename, "task-issue-") {
-			continue
-		}
-		trimmed := strings.TrimSuffix(strings.TrimPrefix(filename, "task-issue-"), ".yaml")
-		num, err := strconv.Atoi(trimmed)
-		if err != nil {
-			continue
-		}
-		if strings.EqualFold(string(t.Status), string(api.StatusFailed)) {
-			continue
-		}
-		// The queue dates every finished task, so a zero completion time means
-		// it could not be established at all - which says nothing about when
-		// the issue was last worked on.
-		if t.CompletedAt.IsZero() {
-			continue
-		}
-		processed[num] = t.CompletedAt
-	}
-	return processed
 }

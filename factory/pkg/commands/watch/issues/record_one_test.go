@@ -62,11 +62,9 @@ func TestFactsAreTheScansFacts(t *testing.T) {
 	}
 }
 
-// An issue the engine decides fix for, and vetoes (a fix rule that never
-// holds): nothing is queued, and the record keeps the scanner's yes beside
-// it, so the shadow counts the veto as a difference instead of agreeing
-// with itself.
-func TestQueueTask_RecordsTheScannersYesUnderAVeto(t *testing.T) {
+// An issue the engine does not decide fix for (a fix rule that never
+// holds): nothing is queued, and nothing is recorded as decided.
+func TestQueueTask_NothingWhenTheEngineDoesNotDecide(t *testing.T) {
 	base, err := rules.Builtin()
 	if err != nil {
 		t.Fatal(err)
@@ -109,12 +107,7 @@ func TestQueueTask_RecordsTheScannersYesUnderAVeto(t *testing.T) {
 	if len(queue.enqueued) != 0 {
 		t.Errorf("queued %v under the engine's veto", keys(queue.enqueued))
 	}
-	if len(rec.Handed) != 1 || rec.Handed[0].Rule != "fix" || !rec.Handed[0].Legacy || len(rec.Decided) != 0 {
-		t.Errorf("record: handed %+v, decided %v; want fix with the scanner's yes, nothing decided", rec.Handed, rec.Decided)
-	}
-	sh := rules.NewShadow(set)
-	sh.Observe(rec)
-	if h := sh.Summary().ByRule["fix"].Handed; h == nil || h.Differ != 1 {
-		t.Errorf("shadow fix handed = %+v, want the veto counted as a difference", h)
+	if len(rec.Decided) != 0 {
+		t.Errorf("record decided %v, want nothing", rec.Decided)
 	}
 }
