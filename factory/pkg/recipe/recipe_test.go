@@ -2104,3 +2104,26 @@ func (s *askThenFull) Ask(context.Context, string) (string, error) {
 	return "", &StopError{Reason: "max_tokens"}
 }
 func (s *askThenFull) Close() error { return nil }
+
+// A run: step runs in the checkout, so in every built-in recipe the step
+// that makes it (setup-git, setup-repo, setup-fork or clone) comes first:
+// on a sandbox without one, an earlier run: fails to start at all (the KCC
+// release chore failed every run on a new sandbox, 2026-10-15 to 21).
+func TestBuiltinRunStepsComeAfterTheCheckout(t *testing.T) {
+	makesCheckout := map[string]bool{"setup-git": true, "setup-repo": true, "setup-fork": true, "clone": true}
+	for _, name := range BuiltinNames() {
+		_, rec, err := Builtin(name)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		for i, step := range rec.Start.Steps {
+			if makesCheckout[step.Uses] {
+				break
+			}
+			if step.Run != "" {
+				t.Errorf("%s: start step %d is a run: before any step makes the checkout", name, i+1)
+				break
+			}
+		}
+	}
+}
