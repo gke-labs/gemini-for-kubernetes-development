@@ -133,9 +133,9 @@ type Watcher struct {
 	// sharedScan is the listings both scanners read when SharedScan is on.
 	sharedScan *scan.Store
 	// rulesRecorder records the scanners' decisions when RulesRecord is
-	// set, and hands them to rulesShadow when the rules run in shadow.
+	// set, and hands each to rulesSummary.
 	rulesRecorder *rules.Recorder
-	rulesShadow   *rules.Shadow
+	rulesSummary  *rules.Summary
 	// rulesControl is the operator's say over the rules (RulesEngine,
 	// RulesUse, RulesCanaryLabel, RulesDisabled); nil is the scanners
 	// alone, every rule on.
@@ -194,8 +194,8 @@ func (w *Watcher) initComponents() {
 	w.chores = w.newChoreScheduler()
 	w.sharedScan = w.newSharedScan()
 	w.rulesControl = w.newRulesControl()
-	w.rulesShadow = w.newRulesShadow()
-	w.rulesRecorder = rules.NewRecorder(w.RulesRecord, rules.DefaultRecordBytes, w.rulesShadow)
+	w.rulesSummary = w.newRulesSummary()
+	w.rulesRecorder = rules.NewRecorder(w.RulesRecord, rules.DefaultRecordBytes, w.rulesSummary)
 	w.issueScanner = w.newIssueScanner()
 	w.prScanner = w.newPRScanner()
 }
@@ -238,13 +238,11 @@ func (w *Watcher) newRulesControl() *rules.Control {
 	return c
 }
 
-// newRulesShadow is the rules in shadow, when the engine is shadow or on:
-// the rules the engine decides with, compared with every decision the
-// scanners make.
-func (w *Watcher) newRulesShadow() *rules.Shadow {
-	if !w.rulesControl.Shadows() {
+// newRulesSummary tallies what the rules decide (rules.Summary), served on
+// the queue API; nil without a control.
+func (w *Watcher) newRulesSummary() *rules.Summary {
+	if w.rulesControl == nil {
 		return nil
 	}
-	klog.Infof("Watch rules in shadow: %d rules decide beside the scanners", len(w.rulesControl.Set()))
-	return rules.NewShadow(w.rulesControl.Set())
+	return rules.NewSummary(w.rulesControl.Set())
 }

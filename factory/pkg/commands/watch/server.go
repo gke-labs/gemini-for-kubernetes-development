@@ -18,15 +18,15 @@ import (
 )
 
 // queueResponse is GET /api/v1/queue: the queue's, and the watch rules'
-// tally beside the scanners when they run in shadow (decisions compared,
-// agreeing and differing, by rule). Here rather than in package api, which
-// package rules depends on.
+// summary (each rule's runs, give-ups and drops at start, and how many
+// recorded decisions the engine decides the same on again). Here rather
+// than in package api, which package rules depends on.
 type queueResponse struct {
 	api.QueueResponse
-	Shadow *rules.ShadowSummary `json:"shadow,omitempty"`
+	Rules *rules.SummaryView `json:"rules,omitempty"`
 }
 
-func startQueueHTTPServer(ctx context.Context, queueMgr *concurrency.TaskQueueManager, addr string, shadow *rules.Shadow) {
+func startQueueHTTPServer(ctx context.Context, queueMgr *concurrency.TaskQueueManager, addr string, summary *rules.Summary) {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/api/v1/queue", func(w http.ResponseWriter, r *http.Request) {
@@ -36,9 +36,9 @@ func startQueueHTTPServer(ctx context.Context, queueMgr *concurrency.TaskQueueMa
 		}
 		w.Header().Set("Content-Type", "application/json")
 		resp := queueResponse{QueueResponse: queueMgr.GetQueueResponse()}
-		if shadow != nil {
-			sum := shadow.Summary()
-			resp.Shadow = &sum
+		if summary != nil {
+			v := summary.View()
+			resp.Rules = &v
 		}
 		_ = json.NewEncoder(w).Encode(resp)
 	})

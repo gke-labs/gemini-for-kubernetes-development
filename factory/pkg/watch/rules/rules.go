@@ -1,10 +1,10 @@
 // Package rules is the model of the watch loop's rules
 // (factory/design/watch-rules.md): a GitHub condition and the action taken
 // on it, one rule per file. The prebaked rules, factory's own, are embedded
-// here, one file each, and describe what today's watch does. Set.Decide
-// evaluates them for one item from facts its caller gathered, and acts on
-// nothing: wiring it beside today's scanners (replay tests, then shadow
-// mode) is factory/design/watch-rules.md's 2a-3 and 2b.
+// here, one file each. Set.Decide evaluates them for one item from facts
+// its caller gathered, and acts on nothing: the watch's scanners gather the
+// facts and carry out what it decides; a Summary tallies the decisions, and
+// the record replays them.
 //
 // Fan-out, the warm workspace and the sandbox GC are not rules: they stay
 // plugins of the watch, as in the design.

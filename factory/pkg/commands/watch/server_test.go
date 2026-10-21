@@ -108,25 +108,25 @@ func TestStartQueueHTTPServer(t *testing.T) {
 	}
 }
 
-// With the rules in shadow, GET /api/v1/queue serves their tally beside the
-// queue; without, it serves none.
-func TestQueueHTTPServerServesTheShadow(t *testing.T) {
+// GET /api/v1/queue serves the rules' summary beside the queue; without
+// one, none.
+func TestQueueHTTPServerServesTheRulesSummary(t *testing.T) {
 	set, err := rules.Builtin()
 	if err != nil {
 		t.Fatal(err)
 	}
-	shadow := rules.NewShadow(set)
-	shadow.Observe(rules.Record{
+	summary := rules.NewSummary(set)
+	summary.Observe(rules.Record{
 		At:      time.Now(),
 		Env:     rules.Env{Trigger: "overseer", Prefixes: []string{"overseer"}, Now: time.Now()},
 		Item:    rules.Item{Kind: rules.OnIssue, Number: 7, Labels: []string{"overseer"}, UpdatedAt: time.Now()},
 		Decided: []string{"fix run"},
 	})
 	for _, tc := range []struct {
-		name   string
-		shadow *rules.Shadow
-		want   bool
-	}{{"shadow", shadow, true}, {"off", nil, false}} {
+		name    string
+		summary *rules.Summary
+		want    bool
+	}{{"summary", summary, true}, {"none", nil, false}} {
 		t.Run(tc.name, func(t *testing.T) {
 			listener, err := net.Listen("tcp", "127.0.0.1:0")
 			if err != nil {
@@ -137,7 +137,7 @@ func TestQueueHTTPServerServesTheShadow(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			mgr := concurrency.NewTaskQueueManager(concurrency.TaskQueueManagerConfig{QueueDir: t.TempDir()})
-			go startQueueHTTPServer(ctx, mgr, addr, tc.shadow)
+			go startQueueHTTPServer(ctx, mgr, addr, tc.summary)
 			time.Sleep(100 * time.Millisecond)
 			resp, err := http.Get(fmt.Sprintf("http://%s/api/v1/queue", addr))
 			if err != nil {
@@ -145,17 +145,17 @@ func TestQueueHTTPServerServesTheShadow(t *testing.T) {
 			}
 			defer resp.Body.Close()
 			var got struct {
-				Summary api.QueueSummary     `json:"summary"`
-				Shadow  *rules.ShadowSummary `json:"shadow"`
+				Summary api.QueueSummary   `json:"summary"`
+				Rules   *rules.SummaryView `json:"rules"`
 			}
 			if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
 				t.Fatal(err)
 			}
-			if (got.Shadow != nil) != tc.want {
-				t.Fatalf("shadow = %+v, want served %v", got.Shadow, tc.want)
+			if (got.Rules != nil) != tc.want {
+				t.Fatalf("rules = %+v, want served %v", got.Rules, tc.want)
 			}
-			if tc.want && (got.Shadow.Compared != 1 || got.Shadow.Agree != 1 || got.Shadow.ByRule["fix"].Decided != 1) {
-				t.Errorf("shadow = %+v", got.Shadow)
+			if tc.want && (got.Rules.Records != 1 || got.Rules.Consistent != 1 || got.Rules.ByRule["fix"].Run != 1) {
+				t.Errorf("rules = %+v", got.Rules)
 			}
 		})
 	}

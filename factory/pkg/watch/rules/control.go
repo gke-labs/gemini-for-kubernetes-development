@@ -61,12 +61,6 @@ func (c *Control) Set() Set {
 	return c.set
 }
 
-// Shadows is whether the rules decide beside the scanners, recording
-// where they differ: whenever there is a Control.
-func (c *Control) Shadows() bool {
-	return c != nil
-}
-
 // Off is whether the watch must not act on rule at all: the emergency
 // switch.
 func (c *Control) Off(rule string) bool {
