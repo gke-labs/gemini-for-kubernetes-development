@@ -66,11 +66,15 @@ func TestQueueTasks_SkipsFanoutParents(t *testing.T) {
 	defer server.Close()
 	gh := githubv39.NewClient(nil)
 	gh.BaseURL, _ = url.Parse(server.URL + "/")
-	s, queue, _ := newScanner(t, Config{}, Deps{GitHub: github.ForRepo(gh, "test-owner", "test-repo")})
+	s, queue, _ := newScanner(t, Config{GitHubLogin: "watcher"}, Deps{GitHub: github.ForRepo(gh, "test-owner", "test-repo")})
 
+	// A child the watcher opened is the overseer's (pointed at) without
+	// the trigger label yet.
+	unlabelled := fanoutIssue(101, childBody)
+	unlabelled.User = &githubv39.User{Login: githubv39.String("watcher")}
 	s.queueTasks(context.Background(), []*githubv39.Issue{
 		fanoutIssue(100, "spec", "factory", "overseer/fanout"),
-		fanoutIssue(101, childBody),
+		unlabelled,
 		fanoutIssue(102, childBody, "factory"),
 	}, map[int]bool{})
 

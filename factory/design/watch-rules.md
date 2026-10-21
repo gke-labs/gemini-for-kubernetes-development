@@ -404,8 +404,11 @@ is the facts, the engine's inherit-labels/inactive writes, its one
 pr-care rule through that rule's handler or its give-up's writes, its
 ready/ready-unreview writes; the handlers' own retry limits, cooldowns and
 give-ups, the label sync, the inactivity pause, the readiness reconcile
-and the PR scanner's Handed recording are gone) - step 4's first part,
-done: the decision at start is always
+and the PR scanner's Handed recording are gone; B2, done: the issue
+scanner's - its policy is the engine's (Set.Held) alone, workflow-missing
+and the fix/workflow decision without the legacy wrappers; inCooldown,
+failedCooldown, processedIssues and its Handed recording are gone) -
+step 4's first part, done: the decision at start is always
 on (`spec.rules.atStart` and `spec.preconditions` gone, `Expect`/`StaleTask`
 deleted), a task of a rule the scanner still decides held to the
 preconditions' checks on the facts read (`stale`); step 3a, done: `watch/act.ApplyWrites` carries out a
