@@ -33,8 +33,8 @@ type Step struct {
 
 // Explanation is what the set decides for an item, rule by rule.
 type Explanation struct {
-	// Gate is the engine's gate that kept every rule off the item, when
-	// one did: "has the stop label", "is in the merge queue".
+	// Gate is why the engine's gate (Gates) that kept every rule off the
+	// item did, when one did: "has the stop label", "is closed".
 	Gate  string `json:"gate,omitempty"`
 	Steps []Step `json:"steps"`
 }
@@ -55,13 +55,8 @@ func (e Explanation) Decisions() []Decision {
 // Decide is Explain's decisions, so the two cannot disagree.
 func (s Set) Explain(it Item, env Env) Explanation {
 	var ex Explanation
-	if it.Kind == OnIssue || it.Kind == OnPR {
-		if hasLabel(it.Labels, env.Prefixes, "*/stop") {
-			ex.Gate = "has the stop label"
-		}
-	}
-	if ex.Gate == "" && it.Kind == OnPR && it.MergeQueue {
-		ex.Gate = "is in the merge queue"
+	if g, ok := GateOf(it, env); ok {
+		ex.Gate = g.Why
 	}
 	labels := slices.Clone(it.Labels)
 	taken, ended := "", false

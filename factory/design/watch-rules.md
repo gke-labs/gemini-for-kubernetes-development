@@ -383,6 +383,18 @@ scanners set them (`prs/task.go` expectFor, the issue scanner):
   to one) refreshes the task's recorded facts, so it is not dropped for
   a change it already reflects.
 
+**Phase 4, in steps:** (1) the gates in code (`rules.Gates`, with
+`closed` and `below-min-number`) and the facts built outside the scanners
+(`facts.Build(kind, number) → rules.Item`: the reads in `prs/` and
+`issues/` moved to one package both scanners and the dispatcher call,
+`Scanner.Record` gone); (2) decide again at start (below), replacing
+`StaleTask`, `QueueTask.Expect` and `ShouldCancelTask`, behind
+`spec.rules.atStart`; (3) a decision runs generically: the task from the
+decision (recipe, apply, inputs, `policy.phase`), the identity rule in
+one place, one executor for `Writes` (the give-up and inactive/ready/
+inherit-labels handlers become it); (4) delete the scanners' conditions,
+`Handed`, `spec.rules.use` and `engine: off|shadow` (below).
+
 **Phase 4: decide again at start.** Preconditions check a few facts; once
 the engine can build an item's facts on its own (the shared scan and a
 fact builder out of the scanners), the dispatcher asks it instead:
@@ -751,16 +763,33 @@ one:
 item's tasks (`ShouldCancelTask`) and a task whose preconditions no
 longer hold, then runs the recipe and its apply.
 
-**Inside `Set.Decide`:** the stop label or the merge queue decides
+**Inside `Set.Decide`:** an item a gate holds (below) decides
 nothing; then the enabled rules of the item's kind, walked in `order`:
 a rule that takes the item is decided only if none before it was and no
 task of the item is active; any other rule decides on its own, its label
 writes applied for the rules after it, and a stop it writes (inactive,
 or one inherited by inherit-labels) ends the walk. A rule holds on its
 predicates and policy (cooldown, dedupe by head); one past its attempts
-decides its give-up. The stop gate is code, not a rule: `stop.yaml`
-ships disabled and only names it,
-so `disabled: [stop]` changes nothing.
+decides its give-up.
+
+**Gates are code, not rules** (`rules.Gates`, `pkg/watch/rules/gates.go`):
+safety, where the rules are policy. A gate holds before any rule, for
+every rule including those not written yet, and no rule file (the
+factory's or, in Phase 5, a repository's) can turn it off. The scan and
+the dispatcher's decision at start (Phase 4) both pass an item through
+them; `explain` names the gate that held, `--flow` lists them.
+
+| gate | kinds | the item | queued tasks |
+|---|---|---|---|
+| `stop` | issue, PR | has `*/stop` | dropped |
+| `closed` | issue, PR | is closed (a PR merged or closed): `Item.Closed` | dropped |
+| `below-min-number` | issue, PR | is numbered below `minNumber`: `Env.MinNumber` | dropped |
+| `merge-queue` | PR | is in the merge queue | held |
+
+Trusted authors and the pool are not gates but how facts are read (only
+a trusted human's comment is feedback) and predicates (`author: pool`):
+a rule may narrow them, never widen them. `stop.yaml` is gone: it only
+named the stop gate.
 
 **What this means for the move:**
 

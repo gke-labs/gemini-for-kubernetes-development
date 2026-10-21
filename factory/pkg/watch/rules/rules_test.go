@@ -14,7 +14,7 @@ func TestBuiltinRulesParseAndValidate(t *testing.T) {
 		t.Fatalf("Builtin: %v", err)
 	}
 	want := []string{"adopt-pr", "chore", "ci", "comments", "conflict", "fix", "inactive",
-		"inherit-labels", "nudge", "ready", "ready-unreview", "review", "stop", "workflow", "workflow-missing"}
+		"inherit-labels", "nudge", "ready", "ready-unreview", "review", "workflow", "workflow-missing"}
 	var got []string
 	for _, r := range set {
 		got = append(got, r.Name)
@@ -68,12 +68,12 @@ func TestBuiltinDefaults(t *testing.T) {
 	if !fix.IsEnabled() || fix.Policy.Cooldown.Success.Duration != 10*time.Minute || fix.Policy.Cooldown.Failure.Duration != 20*time.Minute {
 		t.Errorf("fix = %+v", fix.Policy.Cooldown)
 	}
-	// Off: stop is a global gate; adopt-pr, a safety net open-pr made idle.
-	// inactive is on, and a no-op without a timeout.
+	// Off: adopt-pr, a safety net open-pr made idle. inactive is on, and a
+	// no-op without a timeout.
 	if !byName["inactive"].IsEnabled() {
 		t.Error("inactive is off")
 	}
-	for _, name := range []string{"stop", "adopt-pr"} {
+	for _, name := range []string{"adopt-pr"} {
 		if byName[name].IsEnabled() {
 			t.Errorf("%s is enabled", name)
 		}

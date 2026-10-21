@@ -16,7 +16,9 @@ func TestWatchRulesFlow(t *testing.T) {
 	out := runWatchRules(t, "--flow")
 	for _, sub := range []string{
 		"PR rules, walked top to bottom",
-		"the stop label, or the merge queue",
+		"gates  stop              the PR has the stop label: no rule decides, its queued tasks dropped",
+		"closed            the PR is closed",
+		"merge-queue       the PR is in the merge queue: no rule decides\n",
 		" 30 ● ci\n",
 		"wait 2h after a success (a new head ends it; not when assignee: pool)",
 		"after 3 runs since head, human, pause → the stop label",

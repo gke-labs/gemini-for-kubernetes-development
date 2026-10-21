@@ -69,8 +69,19 @@ func TestExplain(t *testing.T) {
 		t.Errorf("stopped = %+v", ex)
 	}
 
+	// Closed, or below the overseer's minNumber: gates too.
+	closed := pr(func(it *Item) { it.Checks, it.Closed = "failing", true })
+	if ex := set.Explain(closed, testEnv); ex.Gate != "is closed" || len(ex.Decisions()) != 0 {
+		t.Errorf("closed = %+v", ex)
+	}
+	floor := testEnv
+	floor.MinNumber = 14000
+	if ex := set.Explain(issue(nil), floor); ex.Gate != "is numbered below the overseer's minNumber" {
+		t.Errorf("below minNumber = %+v", ex)
+	}
+
 	// Decide is Explain's decisions, on every item above.
-	for _, it := range []Item{both, cooling, active, stopped, issue(nil)} {
+	for _, it := range []Item{both, cooling, active, stopped, closed, issue(nil)} {
 		var a, b []string
 		for _, d := range set.Decide(it, testEnv) {
 			a = append(a, d.Rule+" "+d.Outcome)
