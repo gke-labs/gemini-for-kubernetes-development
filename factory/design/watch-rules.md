@@ -789,7 +789,9 @@ them; `explain` names the gate that held, `--flow` lists them.
 Trusted authors and the pool are not gates but how facts are read (only
 a trusted human's comment is feedback) and predicates (`author: pool`):
 a rule may narrow them, never widen them. `stop.yaml` is gone: it only
-named the stop gate.
+named the stop gate. Code for now: the gates may move to rule files later
+(a gate kind no repository rule can override), which is why `run: drop`
+stays in the rule format with no rule using it.
 
 **What this means for the move:**
 
