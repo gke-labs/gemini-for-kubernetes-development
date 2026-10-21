@@ -11,6 +11,7 @@ import (
 	"time"
 
 	githubv39 "github.com/google/go-github/v39/github"
+	"gopkg.in/yaml.v3"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/api"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/concurrency"
@@ -229,7 +230,16 @@ func TestEvaluate_EngineRunsCIPastTheHandlersCount(t *testing.T) {
 	}
 	f := &prFixture{num: 15, headSHA: "sha-1", updated: time.Now(), failing: true, comments: comments}
 	base, _ := rules.Builtin()
-	s, queue, record := handedCI(t, f, base)
+	c, err := rules.NewControl("on", map[string]string{"ci": "engine"}, "", nil, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	record := filepath.Join(t.TempDir(), "d.jsonl")
+	s, queue := newTestScanner(t, dir, testOpts{
+		GitHub: f.start(t), BotUsers: []string{"bot1"}, GitHubLogin: "bot1", TriggerLabel: "factory",
+		Recorder: rules.NewRecorder(record, 0, nil), Rules: c,
+	})
 
 	f.mu.Lock()
 	listed := f.listingIssueLocked()
@@ -243,6 +253,19 @@ func TestEvaluate_EngineRunsCIPastTheHandlersCount(t *testing.T) {
 		t.Error("the handler gave up on its own count")
 	}
 	assertRecorded(t, record, `"ci run"`, `"handed":[{"rule":"ci","legacy":true}]`)
+	// The task carries the engine's decision: the runner runs the rule's
+	// recipe and apply.
+	data, err := os.ReadFile(filepath.Join(dir, "incoming", "task-pr-15-investigate.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var task api.QueueTask
+	if err := yaml.Unmarshal(data, &task); err != nil {
+		t.Fatal(err)
+	}
+	if task.Rule != "ci" || task.Recipe != "care-ci" || task.Apply != "post-replies" || task.Phase != api.PhaseInvestigate {
+		t.Errorf("queued task = %+v, want the ci rule's run", task)
+	}
 }
 
 func assertRecorded(t *testing.T, path string, wants ...string) {

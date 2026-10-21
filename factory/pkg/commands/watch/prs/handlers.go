@@ -115,6 +115,7 @@ func (s *Scanner) handlePRIterate(ctx context.Context, pc *prContext) {
 	state.lastIteratedTime = time.Now()
 	s.state.set(num, state)
 	s.rec.Decided("conflict", rules.OutcomeRun)
+	s.stampDecision(task, "conflict", pc.prIssue)
 	if err := s.queue.Enqueue(filename, task); err != nil {
 		klog.Errorf("Failed to queue rebase task for PR #%d: %v", num, err)
 	}
@@ -276,6 +277,7 @@ func (s *Scanner) handlePRInvestigate(
 	state.lastInvestigatedTime = time.Now()
 	s.state.set(num, state)
 	s.rec.Decided("ci", rules.OutcomeRun)
+	s.stampDecision(task, "ci", pc.prIssue)
 	if err := s.queue.Enqueue(filename, task); err != nil {
 		klog.Errorf("Failed to queue investigate task for PR #%d: %v", num, err)
 		return false
@@ -422,6 +424,7 @@ func (s *Scanner) handlePRComments(ctx context.Context, pc *prContext, commentAn
 	}
 	fmt.Printf("Queueing address-comments task for PR #%d...\n", num)
 	s.rec.Decided("comments", rules.OutcomeRun)
+	s.stampDecision(task, "comments", pc.prIssue)
 	if err := s.queue.Enqueue(filename, task); err != nil {
 		klog.Errorf("Failed to queue address-comments task for PR #%d: %v", num, err)
 		return false
@@ -539,6 +542,7 @@ func (s *Scanner) handlePRReview(ctx context.Context, pc *prContext, checkRuns [
 	state.lastReviewedSHA = pc.headSHA
 	s.state.set(num, state)
 	s.rec.Decided("review", rules.OutcomeRun)
+	s.stampDecision(task, "review", pc.prIssue)
 	if err := s.queue.Enqueue(filename, task); err != nil {
 		klog.Errorf("Failed to queue review task for PR #%d: %v", num, err)
 		return false

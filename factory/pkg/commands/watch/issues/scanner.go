@@ -594,6 +594,7 @@ func (s *Scanner) queueTask(ctx context.Context, issue *githubv39.Issue, refIssu
 		s.rec.Handed(rule, true)
 		s.recordSpoken(ctx, num)
 		d, ok := decisionOf(s.rules.Decide(*s.rec.Item, s.rulesEnv()), rule)
+		act.Task(task, d, s.rules.Set().Named(rule))
 		switch {
 		case !ok:
 			klog.Infof("Skipping issue #%d: the rules engine does not decide %s", num, rule)

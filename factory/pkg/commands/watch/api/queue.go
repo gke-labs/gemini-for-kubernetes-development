@@ -120,6 +120,16 @@ type QueueTask struct {
 	// incoming, which is what allows Enqueue to overwrite a processing entry rather
 	// than treating it as a duplicate. It is cleared once the task starts again.
 	Recovered bool `yaml:"recovered,omitempty"`
+	// Rule, Recipe, Apply and Inputs are the run the rules engine decided,
+	// when it decided the task: its rule's run:, placeholders filled
+	// (act.Task). The runner runs them in place of the task type's
+	// (RecipeTask.For). PRLabels is an input of {{pr-labels}}: the CLI's
+	// --pr-labels labels the PR as the overseer does, when it opens it.
+	Rule     string            `yaml:"rule,omitempty" json:"rule,omitempty"`
+	Recipe   string            `yaml:"recipe,omitempty" json:"recipe,omitempty"`
+	Apply    string            `yaml:"apply,omitempty" json:"apply,omitempty"`
+	Inputs   map[string]string `yaml:"inputs,omitempty" json:"inputs,omitempty"`
+	PRLabels bool              `yaml:"prLabels,omitempty" json:"prLabels,omitempty"`
 	// Expect names the facts the task was decided on (ExpectHead,
 	// ExpectNoLinkedPR), which the dispatcher checks again before it
 	// starts the task, when preconditions are on: a task whose facts no

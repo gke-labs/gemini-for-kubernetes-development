@@ -1,6 +1,9 @@
 package api
 
-import "fmt"
+import (
+	"fmt"
+	"sort"
+)
 
 // RecipeTask is how a task type runs as a `factory recipe`: the recipe,
 // the one action of its result the CLI applies, how its runs are named,
@@ -34,6 +37,31 @@ var recipeTasks = map[TaskType]RecipeTask{
 	// The PR opens ready for review, labelled as the classic factory fix labelled it:
 	// the watch scans only labelled PRs.
 	TypeIssueFix: {Recipe: "fix", Action: "open-pr", RunPrefix: "fix", Args: []string{"--pr-labels", "--input", "draft=false"}, Recorded: "fix"},
+}
+
+// For is how task t runs: rt, its type's, with the recipe, the action and
+// the arguments the rules engine decided for it when it did (t.Recipe):
+// --pr-labels for a {{pr-labels}} input, then each input, by name, as
+// --input name=value. The run's name, sandbox and recorded type stay its
+// type's.
+func (rt RecipeTask) For(t *QueueTask) RecipeTask {
+	if t.Recipe == "" {
+		return rt
+	}
+	out := rt
+	out.Recipe, out.Action, out.Args = t.Recipe, t.Apply, nil
+	if t.PRLabels {
+		out.Args = append(out.Args, "--pr-labels")
+	}
+	names := make([]string, 0, len(t.Inputs))
+	for name := range t.Inputs {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		out.Args = append(out.Args, "--input", name+"="+t.Inputs[name])
+	}
+	return out
 }
 
 // RecordedType is the task type a run of rt records on its sandbox.

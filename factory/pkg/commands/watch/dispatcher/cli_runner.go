@@ -58,6 +58,7 @@ func NewCLIRunner(cfg CLIRunnerConfig) *CLIRunner {
 func (r *CLIRunner) BuildArgs(t *api.QueueTask, selectedUser string) []string {
 	var args []string
 	if rt, ok := api.RecipeTaskOf(t.Type); ok {
+		rt = rt.For(t)
 		// The recipe, its result applied by the CLI as the user picked
 		// (--user). The run name is this enqueue's: a restarted watcher's
 		// recovered task follows its run, or applies its result, and a

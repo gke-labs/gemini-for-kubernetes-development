@@ -337,3 +337,18 @@ func (s *Scanner) actOn(ctx context.Context, prIssue *githubv39.Issue, rule stri
 	}
 	return true
 }
+
+// stampDecision puts the engine's run decision on rule, when the engine
+// decides it for the scanner, on the task the handler built: the runner
+// then runs the rule's recipe, apply and inputs (act.Task).
+func (s *Scanner) stampDecision(task *api.QueueTask, rule string, prIssue *githubv39.Issue) {
+	if !s.engineActs(rule, prIssue) {
+		return
+	}
+	for _, d := range s.engineCare {
+		if d.Rule == rule {
+			act.Task(task, d, s.rules.Set().Named(rule))
+			return
+		}
+	}
+}
