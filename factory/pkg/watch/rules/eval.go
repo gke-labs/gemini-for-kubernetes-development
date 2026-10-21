@@ -25,6 +25,8 @@ type Item struct {
 	// Author opened the item.
 	Author    string
 	UpdatedAt time.Time
+	// Closed is the item closed (a PR merged or closed): a gate.
+	Closed bool
 
 	// Issues.
 	// LinkedPR is "open" when an open PR closes or is linked to the issue.
@@ -114,7 +116,10 @@ type Env struct {
 	PRLabels []string
 	// PRInactivityTimeout is {{pr-inactivity-timeout}}; 0 is never.
 	PRInactivityTimeout time.Duration
-	Now                 time.Time
+	// MinNumber is the overseer's minNumber: items numbered below it are
+	// gated, the repository's history ignored. 0 gates none.
+	MinNumber int
+	Now       time.Time
 }
 
 // Decision is what a rule decided for an item.

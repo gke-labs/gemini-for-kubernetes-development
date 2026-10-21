@@ -24,11 +24,12 @@ type runHistory interface {
 // it.
 func (s *Scanner) rulesEnv() rules.Env {
 	return rules.Env{
-		Trigger:  s.cfg.TriggerLabel,
-		Prefixes: conventions.Prefixes(s.cfg.TriggerLabel),
-		Watcher:  s.cfg.GitHubLogin,
-		Pool:     s.cfg.BotUsers,
-		Now:      time.Now().UTC(),
+		Trigger:   s.cfg.TriggerLabel,
+		Prefixes:  conventions.Prefixes(s.cfg.TriggerLabel),
+		Watcher:   s.cfg.GitHubLogin,
+		Pool:      s.cfg.BotUsers,
+		MinNumber: s.cfg.MinNumber,
+		Now:       time.Now().UTC(),
 	}
 }
 
@@ -45,6 +46,7 @@ func (s *Scanner) startRecording(issue *githubv39.Issue) *rules.Recording {
 		Assignees:    logins(issue.Assignees),
 		Author:       issue.GetUser().GetLogin(),
 		UpdatedAt:    issue.GetUpdatedAt(),
+		Closed:       issue.GetState() == "closed",
 		FanoutParent: conventions.HasFanoutLabel(issue.Labels, s.cfg.TriggerLabel),
 	}
 	return s.recorder.Start("issues", s.rulesEnv(), it)

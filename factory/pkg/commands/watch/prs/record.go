@@ -35,6 +35,7 @@ func (s *Scanner) rulesEnv() rules.Env {
 		Watcher:             s.cfg.GitHubLogin,
 		Pool:                s.cfg.BotUsers,
 		PRInactivityTimeout: s.cfg.InactivityTimeout,
+		MinNumber:           s.cfg.MinNumber,
 		Now:                 time.Now().UTC(),
 	}
 }
@@ -52,6 +53,7 @@ func (s *Scanner) startRecording(prIssue *githubv39.Issue) *rules.Recording {
 		Assignees: logins(prIssue.Assignees),
 		Author:    prIssue.GetUser().GetLogin(),
 		UpdatedAt: prIssue.GetUpdatedAt(),
+		Closed:    prIssue.GetState() == "closed",
 	}
 	return s.recorder.Start("prs", s.rulesEnv(), it)
 }

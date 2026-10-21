@@ -3,13 +3,14 @@ package commands
 import (
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/watch/rules"
 )
 
 // printRulesFlow draws how the rules on one kind of item are applied: the
-// gates, then every rule in the order the engine walks them, with its
+// engine's gates (rules.Gates), then every rule in the order the engine walks them, with its
 // condition, what holds it back and what it does.
 func printRulesFlow(out io.Writer, set rules.Set, kind string) error {
 	switch kind {
@@ -20,11 +21,21 @@ func printRulesFlow(out io.Writer, set rules.Set, kind string) error {
 	item := map[string]string{rules.OnPR: "PR", rules.OnIssue: "issue", rules.OnSchedule: "schedule", rules.OnEvent: "event"}[kind]
 	fmt.Fprintf(out, "%s rules, walked top to bottom on every scan\n\n", strings.ToUpper(item[:1])+item[1:])
 	if kind == rules.OnPR || kind == rules.OnIssue {
-		gates := "the stop label"
-		if kind == rules.OnPR {
-			gates += ", or the merge queue"
+		first := true
+		for _, g := range rules.Gates {
+			if !slices.Contains(g.Kinds, kind) {
+				continue
+			}
+			label := ""
+			if first {
+				label, first = "gates", false
+			}
+			then := "no rule decides"
+			if g.Drops {
+				then += ", its queued tasks dropped"
+			}
+			fmt.Fprintf(out, "  %-6s %-17s the %s %s: %s\n", label, g.Name, item, g.Why, then)
 		}
-		fmt.Fprintf(out, "  gates  %s: no rule decides\n", gates)
 		fmt.Fprintf(out, "  ●      takes the %s: of these, the first that decides wins, and none\n", item)
 		fmt.Fprintf(out, "         decides while a task of the %s is queued or running\n", item)
 	}

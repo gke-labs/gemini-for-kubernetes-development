@@ -77,3 +77,8 @@ item:
     - {rule: fix, startedAt: 2026-10-20T10:00:00Z, endedAt: 2026-10-20T10:20:00Z}
     - {rule: fix, startedAt: 2026-10-20T11:00:00Z, endedAt: 2026-10-20T11:20:00Z, failed: true}
 expect: [fix run]
+---
+name: "a closed issue is gated: no rule decides"
+env: {now: 2026-10-20T12:00:00Z}
+item: {kind: issue, number: 110, labels: [overseer], author: someone, closed: true, updatedAt: 2026-10-20T11:00:00Z}
+expect: []
