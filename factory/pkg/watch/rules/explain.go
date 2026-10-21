@@ -246,15 +246,42 @@ func factOf(predicate string, it Item, env Env, runs []PastRun) string {
 	return ""
 }
 
+// Held is the rule's policy alone, on the item's cheap facts (its runs,
+// the queue, when it last changed), before the facts its when reads are
+// gathered: why the policy holds the rule back now, and until when (zero
+// for a dedupe, which holds until the item changes); "" when the rule must
+// be decided on every fact, because its policy lets it run or a give-up
+// may be due (a give-up is decided on the rule's when, before its policy).
+// A scanner asks it first, to spare the reads of an item the rule cannot
+// run on.
+func (s Set) Held(rule string, it Item, env Env) (string, time.Time) {
+	r := s.Named(rule)
+	if r == nil {
+		return "", time.Time{}
+	}
+	runs := rulesRuns(rule, it.Runs)
+	if g := r.Policy.GiveUp; g != nil && countSince(giveUpRuns(g, runs), since(g.Since, it)) >= g.Attempts {
+		return "", time.Time{}
+	}
+	return policyHold(r, it, env, runs)
+}
+
 // policyHolds says why the rule's dedupe or cooldown holds it back now,
 // "" when they let it run.
 func policyHolds(r *Rule, it Item, env Env, runs []PastRun) string {
+	why, _ := policyHold(r, it, env, runs)
+	return why
+}
+
+// policyHold is policyHolds, and until when a cooldown holds it (zero for
+// a dedupe, which holds until the item changes).
+func policyHold(r *Rule, it Item, env Env, runs []PastRun) (string, time.Time) {
 	last, ok := lastRun(runs)
 	if !ok {
-		return ""
+		return "", time.Time{}
 	}
 	if r.Policy.Dedupe == "head" && it.Head != "" && last.Head == it.Head && !last.Failed {
-		return "dedupe: head: it already ran on " + short(it.Head)
+		return "dedupe: head: it already ran on " + short(it.Head), time.Time{}
 	}
 	// Once per update: not again until the item changed after the last run
 	// that succeeded; a failed run says nothing about the item, and retries
@@ -262,12 +289,12 @@ func policyHolds(r *Rule, it Item, env Env, runs []PastRun) string {
 	// failed tasks out).
 	if r.Policy.Dedupe == "update" {
 		if good, ok := lastRun(slices.DeleteFunc(slices.Clone(runs), func(r PastRun) bool { return r.Failed })); ok && !it.UpdatedAt.After(good.EndedAt) {
-			return "dedupe: update: not updated since its last good run ended " + good.EndedAt.UTC().Format(time.RFC3339)
+			return "dedupe: update: not updated since its last good run ended " + good.EndedAt.UTC().Format(time.RFC3339), time.Time{}
 		}
 	}
 	c := r.Policy.Cooldown
 	if c == nil {
-		return ""
+		return "", time.Time{}
 	}
 	wait, after := c.Success, "a success"
 	if last.Failed {
@@ -281,15 +308,15 @@ func policyHolds(r *Rule, it Item, env Env, runs []PastRun) string {
 		}
 	}
 	if d == 0 || env.Now.Sub(last.EndedAt) >= d {
-		return ""
+		return "", time.Time{}
 	}
 	if slices.Contains(c.ResetOn, "head") && it.Head != "" && last.Head != it.Head {
-		return ""
+		return "", time.Time{}
 	}
 	if c.SkipWhen != nil && c.SkipWhen.holds(r, it, env, runs) {
-		return ""
+		return "", time.Time{}
 	}
-	return fmt.Sprintf("cooldown: %s left of %s after %s", human(d-env.Now.Sub(last.EndedAt)), human(d), after)
+	return fmt.Sprintf("cooldown: %s left of %s after %s", human(d-env.Now.Sub(last.EndedAt)), human(d), after), last.EndedAt.Add(d)
 }
 
 // String is the condition as a rule file writes it, on one line, any-of

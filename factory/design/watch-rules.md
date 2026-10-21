@@ -403,7 +403,11 @@ inputs (a `{{pr-labels}}` input as `PRLabels`, the CLI's `--pr-labels`) and
 (`api.RecipeTask.For`); the type's table keeps only the run name, sandbox
 and recorded type; for every prebaked recipe rule the command is today's
 exactly, and the phases the handlers'. Which bot runs it stays
-`SelectUser`):
+`SelectUser`; step 3c, done: on an issue rule the engine decides, the
+issue scanner asks its policy first on the cheap facts (`Set.Held`: runs,
+queue, updated-at; a workflow's cooldown) instead of its own `inCooldown`
+and "processed since", so the engine decides run as well as no at today's
+read cost, and a give-up due is not held by the cooldown):
 (1) the gates in code (`rules.Gates`, with
 `closed` and `below-min-number`) and the facts built outside the scanners
 (`facts.Build(kind, number) → rules.Item`: the reads in `prs/` and

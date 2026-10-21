@@ -437,14 +437,22 @@ func (s *Scanner) queueTask(ctx context.Context, issue *githubv39.Issue, refIssu
 		return
 	}
 
-	if s.inCooldown(ctx, issue, filename, workflowPath, workflowName) {
-		return
-	}
-
-	processed := s.processedIssues()
-	lastProcessed, ok := processed[num]
-	if ok && !issue.GetUpdatedAt().After(lastProcessed) && workflowName == "" {
-		return
+	// A rule the engine decides is held back by its policy - cooldown,
+	// once per update - asked on these cheap facts before the reads below;
+	// the scanner's own cooldown and "processed since" checks are for the
+	// rules it still decides.
+	if s.rec != nil && s.rules.Takes(rule, labelNames(issue.Labels)) {
+		if s.engineHolds(ctx, issue, filename, workflowPath, workflowName, rule) {
+			return
+		}
+	} else {
+		if s.inCooldown(ctx, issue, filename, workflowPath, workflowName) {
+			return
+		}
+		lastProcessed, ok := s.processedIssues()[num]
+		if ok && !issue.GetUpdatedAt().After(lastProcessed) && workflowName == "" {
+			return
+		}
 	}
 
 	wf = wf.check(ctx, s.gh)
@@ -626,7 +634,7 @@ func (s *Scanner) queueTask(ctx context.Context, issue *githubv39.Issue, refIssu
 	} else {
 		fmt.Printf("Queueing fix task for issue #%d...\n", num)
 	}
-	processed[num] = time.Now()
+	s.processedIssues()[num] = time.Now()
 	if err := s.queue.Enqueue(filename, task); err != nil {
 		klog.Errorf("Failed to queue task for issue #%d: %v", num, err)
 	}
@@ -677,6 +685,40 @@ func (s *Scanner) inCooldown(ctx context.Context, issue *githubv39.Issue, filena
 		}
 		klog.Infof("Skipping issue #%d: %s in cooldown until %s (last run %s at %s)",
 			held.Number, what, until.UTC().Format(time.RFC3339), strings.ToLower(string(last.Status)), last.CompletedAt.UTC().Format(time.RFC3339))
+	}
+	return true
+}
+
+// engineHolds is whether the rule's policy holds it back on the issue now
+// (rules.Set.Held), on the facts recorded so far and a workflow's cooldown
+// (read, as inCooldown does, only after a run that succeeded). A cooldown
+// is noted on the queue, for the overseer's work view, and logged once per
+// window, as inCooldown's.
+func (s *Scanner) engineHolds(ctx context.Context, issue *githubv39.Issue, filename, workflowPath, workflowName, rule string) bool {
+	last := s.queue.GetProcessedTask(filename)
+	if workflowName != "" && last != nil && last.Status != api.StatusFailed {
+		cooldown := common.GetWorkflowCooldown(ctx, s.gh, workflowPath)
+		s.rec.Fill(func(it *rules.Item) { it.WorkflowCooldown = cooldown })
+	}
+	why, until := s.rules.Set().Held(rule, *s.rec.Item, s.rulesEnv())
+	if why == "" {
+		return false
+	}
+	if until.IsZero() || last == nil {
+		klog.V(2).Infof("Skipping issue #%d: the rules engine holds %s back: %s", issue.GetNumber(), rule, why)
+		return true
+	}
+	held := api.Cooldown{
+		FileName:        filename,
+		Number:          issue.GetNumber(),
+		URL:             issue.GetHTMLURL(),
+		Workflow:        workflowName,
+		Until:           until,
+		LastStatus:      last.Status,
+		LastCompletedAt: last.CompletedAt,
+	}
+	if s.queue.NoteCooldown(held) {
+		klog.Infof("Skipping issue #%d: the rules engine holds %s back: %s (until %s)", held.Number, rule, why, until.UTC().Format(time.RFC3339))
 	}
 	return true
 }
