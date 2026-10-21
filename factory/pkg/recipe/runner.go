@@ -216,6 +216,10 @@ func (r *Runner) Run(ctx context.Context, rec *Recipe) (err error) {
 			if reason := requiresHuman(err); reason != "" {
 				r.markRequiresHuman(label, reason)
 			}
+			var stop *StopError
+			if errors.As(err, &stop) {
+				r.markStopReason(label, stop.Reason)
+			}
 			return fmt.Errorf("step %s: %w", label, err)
 		}
 	}

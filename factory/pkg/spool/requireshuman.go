@@ -28,3 +28,21 @@ func requiresHuman(taskDir string) string {
 	}
 	return reason
 }
+
+// StopReasonFile is, relative to the task directory, the ACP stop reason
+// of the turn the task failed on when it was not the agent's answer
+// ("step <label>: max_turn_requests"): the recipe runner writes it.
+const StopReasonFile = "stop-reason"
+
+// stopReason is the task's StopReasonFile, or "".
+func stopReason(taskDir string) string {
+	data, err := os.ReadFile(filepath.Join(taskDir, StopReasonFile))
+	if err != nil {
+		return ""
+	}
+	reason := strings.TrimSpace(string(data))
+	if len(reason) > maxRequiresHuman {
+		reason = reason[:maxRequiresHuman]
+	}
+	return reason
+}

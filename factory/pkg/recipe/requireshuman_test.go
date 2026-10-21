@@ -53,3 +53,43 @@ func TestRunnerRecordsAFailureThatNeedsAPerson(t *testing.T) {
 		})
 	}
 }
+
+// A turn the engine cut off at its limit of model turns for one request
+// (KCC 12959 and 13090's fixes, 2026-10-20) fails the step as the agent
+// running out of turns, says so, and records the stop reason for the
+// task's status; it does not need a person (a new run may well finish).
+// Another stop reason is recorded too, and an error with none is not.
+func TestRunnerRecordsAnAgentOutOfTurns(t *testing.T) {
+	rec, err := Parse([]byte("name: demo\nstart:\n  steps:\n    - ask: fix it\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, tc := range map[string]struct {
+		err      error
+		stop     string
+		failText string
+	}{
+		"out of turns": {&StopError{Reason: StopMaxTurnRequests}, "step 1:ask: max_turn_requests", "ran out of turns (max_turn_requests)"},
+		"refused":      {&StopError{Reason: "refusal"}, "step 1:ask: refusal", "turn stopped: refusal"},
+		"not a stop":   {errors.New("agent: prompt failed: RPC error [503]: unavailable"), "", "unavailable"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r, _, _, _ := newTestRunner(t)
+			r.StartSession = func(context.Context) (Session, error) { return &erringSession{err: tc.err}, nil }
+			err := r.Run(context.Background(), rec)
+			if err == nil || !strings.Contains(err.Error(), tc.failText) {
+				t.Fatalf("run error = %v, want %q in it", err, tc.failText)
+			}
+			data, rerr := os.ReadFile(filepath.Join(r.TaskDir, spool.StopReasonFile))
+			switch {
+			case tc.stop == "" && !errors.Is(rerr, os.ErrNotExist):
+				t.Errorf("recorded stop reason %q, want none", data)
+			case tc.stop != "" && strings.TrimSpace(string(data)) != tc.stop:
+				t.Errorf("recorded stop reason %q (%v), want %q", data, rerr, tc.stop)
+			}
+			if _, err := os.Stat(filepath.Join(r.TaskDir, spool.RequiresHumanFile)); !errors.Is(err, os.ErrNotExist) {
+				t.Error("an agent out of turns was marked as needing a person")
+			}
+		})
+	}
+}

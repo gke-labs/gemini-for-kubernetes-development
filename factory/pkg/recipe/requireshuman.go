@@ -35,3 +35,16 @@ func (r *Runner) markRequiresHuman(label, reason string) {
 		fmt.Fprintf(r.Log, "::warning recording that the task needs a person: %v\n", err)
 	}
 }
+
+// markStopReason records, for the step labelled label, the ACP stop
+// reason its turn ended on (spool.StopReasonFile): max_turn_requests says
+// the agent ran out of turns, which the task's status and the CLI's
+// failure then name.
+func (r *Runner) markStopReason(label, reason string) {
+	if r.TaskDir == "" {
+		return
+	}
+	if err := os.WriteFile(filepath.Join(r.TaskDir, spool.StopReasonFile), []byte("step "+label+": "+reason+"\n"), 0o644); err != nil {
+		fmt.Fprintf(r.Log, "::warning recording the turn's stop reason: %v\n", err)
+	}
+}

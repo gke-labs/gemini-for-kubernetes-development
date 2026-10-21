@@ -259,4 +259,18 @@ type StopError struct {
 	Reason string
 }
 
-func (e *StopError) Error() string { return "turn stopped: " + e.Reason }
+func (e *StopError) Error() string {
+	if e.OutOfTurns() {
+		return "ran out of turns (" + e.Reason + "): the engine stopped the request at its limit of model turns before the agent finished"
+	}
+	return "turn stopped: " + e.Reason
+}
+
+// StopMaxTurnRequests is the ACP stop reason of a request the engine cut
+// off at its limit of model turns for one request (gemini: 100), the agent
+// still working.
+const StopMaxTurnRequests = "max_turn_requests"
+
+// OutOfTurns is whether the turn stopped at the engine's limit of model
+// turns for one request.
+func (e *StopError) OutOfTurns() bool { return e.Reason == StopMaxTurnRequests }
