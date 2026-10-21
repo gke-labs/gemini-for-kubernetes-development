@@ -155,8 +155,15 @@ func TestRoundTrip(t *testing.T) {
 	ClaimAll(ctx, r.incoming(), r.tasks(), ExecLauncher(ctx, stub, r.root))
 
 	tf := taskfiles.NewTaskFiles(filepath.Join(r.tasks(), "recipe-triage-1"))
+	// Until the spool has reaped the task and recorded its end: the task's
+	// script writes exit_code, and status.json is written after it, so a
+	// test that stopped at exit_code raced that write with TempDir's
+	// cleanup ("directory not empty").
 	deadline := time.Now().Add(5 * time.Second)
-	for !nonEmpty(tf.ExitCodeFile) && time.Now().Before(deadline) {
+	for time.Now().Before(deadline) {
+		if st, ok := ReadStatus(tf.TaskDir); ok && st.State == Exited && nonEmpty(tf.ExitCodeFile) {
+			break
+		}
 		time.Sleep(20 * time.Millisecond)
 	}
 	code, _ := os.ReadFile(tf.ExitCodeFile)
