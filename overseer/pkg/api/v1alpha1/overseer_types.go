@@ -84,6 +84,14 @@ type OverseerRules struct {
 	// scanners or the engine: the operator's emergency switch.
 	// +kubebuilder:validation:Optional
 	Disabled []string `json:"disabled,omitempty"`
+
+	// AtStart has the engine decide again, just before a queued task of a
+	// rule it decides starts, on the item's facts read then: a task it no
+	// longer decides (feedback came while ci waited, the checks went
+	// green, the issue got a PR, the trigger label went) is dropped, not
+	// counted as an attempt. It replaces preconditions for those rules.
+	// +kubebuilder:validation:Optional
+	AtStart bool `json:"atStart,omitempty"`
 }
 
 // OverseerSpec defines the desired state of Overseer

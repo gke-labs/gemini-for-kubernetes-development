@@ -102,6 +102,8 @@ type fakeCoordinator struct {
 	cancel   func(task *api.QueueTask) (bool, string)
 	stale    func(task *api.QueueTask) (bool, string)
 	staleAsk int
+	redecide func(filename string) (bool, string)
+	asked    []string
 	user     string
 	userErr  error
 	started  []int
@@ -121,6 +123,16 @@ func (f *fakeCoordinator) StaleTask(_ context.Context, task *api.QueueTask) (boo
 	f.mu.Unlock()
 	if f.stale != nil {
 		return f.stale(task)
+	}
+	return false, ""
+}
+
+func (f *fakeCoordinator) Redecide(_ context.Context, filename string, _ *api.QueueTask) (bool, string) {
+	f.mu.Lock()
+	f.asked = append(f.asked, filename)
+	f.mu.Unlock()
+	if f.redecide != nil {
+		return f.redecide(filename)
 	}
 	return false, ""
 }

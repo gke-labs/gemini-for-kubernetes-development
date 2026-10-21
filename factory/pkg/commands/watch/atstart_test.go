@@ -1,0 +1,92 @@
+package watch
+
+import (
+	"strconv"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/api"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/conventions"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/watch/rules"
+)
+
+func TestTaskRule(t *testing.T) {
+	for file, want := range map[string]string{
+		"task-pr-7-comments.yaml":                             "comments pr 7",
+		"task-pr-7-iterate.yaml":                              "conflict pr 7",
+		"task-pr-7-investigate.yaml":                          "ci pr 7",
+		"task-pr-7-review.yaml":                               "review pr 7",
+		"task-issue-12.yaml":                                  "fix issue 12",
+		"task-workflow-kcc-greenfield-issue-13587.yaml":       "workflow issue 13587",
+		"task-chore-dependency-update-scheduler.yaml":         "  0",
+		"task-pr-7-unknown.yaml":                              " pr 7",
+		"task-workflow-kcc-greenfield-oneparent-issue-9.yaml": "workflow issue 9",
+	} {
+		rule, kind, num := taskRule(file)
+		if got := strings.Join([]string{rule, kind, strconv.Itoa(num)}, " "); got != want {
+			t.Errorf("%s = %q, want %q", file, got, want)
+		}
+	}
+}
+
+// The engine decides again on the facts read at start, its own task taken
+// out: a ci task runs on a PR whose checks still fail, and is dropped when
+// feedback came meanwhile (comments, earlier, takes the PR), the checks
+// went green, the head moved, or the PR was closed.
+func TestRedecide(t *testing.T) {
+	set, err := rules.Builtin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	env := rules.Env{Trigger: "overseer", Prefixes: conventions.Prefixes("overseer"), Pool: []string{"ada-coder-bot"}, Now: now}
+	yes := true
+	ci := func(mod func(*rules.Item)) rules.Item {
+		it := rules.Item{Kind: rules.OnPR, Number: 7, Author: "ada-coder-bot", Labels: []string{"overseer"}, Head: "aaaaaaaa",
+			Mergeable: &yes, Checks: "failing", UpdatedAt: now.Add(-time.Hour), LastTrustedActivity: now.Add(-time.Hour),
+			// What the queue says while the task waits to start.
+			TaskActive: true, Queued: []string{"ci"}}
+		if mod != nil {
+			mod(&it)
+		}
+		return it
+	}
+	task := &api.QueueTask{Number: 7, CommitSHA: "aaaaaaaa"}
+	for _, tc := range []struct {
+		name string
+		it   rules.Item
+		drop string
+	}{
+		{"checks still failing: runs", ci(nil), ""},
+		{"feedback came: comments takes the PR", ci(func(it *rules.Item) { it.NewTrustedFeedback = true }), "comments took the item"},
+		{"checks went green", ci(func(it *rules.Item) { it.Checks = "green" }), "checks: failing (has checks green)"},
+		{"head moved", ci(func(it *rules.Item) { it.Head = "bbbbbbbb" }), "head moved aaaaaaa→bbbbbbb"},
+		{"closed", ci(func(it *rules.Item) { it.Closed = true }), "the item is closed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			drop, why := redecide(set, "ci", task, tc.it, env)
+			if drop != (tc.drop != "") || !strings.Contains(why, tc.drop) {
+				t.Errorf("drop %v (%s), want %q", drop, why, tc.drop)
+			}
+		})
+	}
+
+	// A fix on an issue the overseer is no longer pointed at (the trigger
+	// label taken off, no pool assignee) is dropped; with a PR linked
+	// since, too.
+	issue := rules.Item{Kind: rules.OnIssue, Number: 12, Labels: []string{"overseer"}, UpdatedAt: now.Add(-time.Hour), TaskActive: true, Queued: []string{"fix"}}
+	if drop, why := redecide(set, "fix", &api.QueueTask{Number: 12}, issue, env); drop {
+		t.Errorf("a labelled issue's fix dropped: %s", why)
+	}
+	unlabelled := issue
+	unlabelled.Labels = []string{"bug"}
+	if drop, why := redecide(set, "fix", &api.QueueTask{Number: 12}, unlabelled, env); !drop || !strings.Contains(why, "any-of") {
+		t.Errorf("an issue no longer pointed at: drop %v (%s)", drop, why)
+	}
+	linked := issue
+	linked.LinkedPR = "open"
+	if drop, why := redecide(set, "fix", &api.QueueTask{Number: 12}, linked, env); !drop || !strings.Contains(why, "linked-pr") {
+		t.Errorf("an issue with a linked PR: drop %v (%s)", drop, why)
+	}
+}
