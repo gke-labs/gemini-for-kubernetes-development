@@ -134,6 +134,8 @@ type Decision struct {
 	Recipe string
 	Apply  string
 	Inputs map[string]string
+	// Phase orders the run's task in the queue (the rule's policy.phase).
+	Phase int
 	// Writes are the GitHub writes, placeholders filled in and only what
 	// changes something.
 	Writes Writes

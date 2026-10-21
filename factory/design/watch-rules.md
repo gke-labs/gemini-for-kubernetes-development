@@ -396,7 +396,14 @@ until step 4; step 3a, done: `watch/act.ApplyWrites` carries out a
 decision's writes - labels, assignees, then a stop's label and a comment
 naming it - for inherit-labels, inactive, ready, ready-unreview and every
 give-up the engine decides (PR and issue), in place of their handlers;
-workflow-missing keeps its handler, whose comment carries the load error):
+workflow-missing keeps its handler, whose comment carries the load error;
+step 3b, done: a task the engine decided carries its rule, recipe, apply,
+inputs (a `{{pr-labels}}` input as `PRLabels`, the CLI's `--pr-labels`) and
+`policy.phase` (`act.Task`), and the runner runs those
+(`api.RecipeTask.For`); the type's table keeps only the run name, sandbox
+and recorded type; for every prebaked recipe rule the command is today's
+exactly, and the phases the handlers'. Which bot runs it stays
+`SelectUser`):
 (1) the gates in code (`rules.Gates`, with
 `closed` and `below-min-number`) and the facts built outside the scanners
 (`facts.Build(kind, number) → rules.Item`: the reads in `prs/` and

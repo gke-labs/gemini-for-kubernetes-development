@@ -220,3 +220,13 @@ func (c *Control) String() string {
 	}
 	return s
 }
+
+// Named is the set's rule of that name, nil if it has none.
+func (s Set) Named(name string) *Rule {
+	for _, r := range s {
+		if r.Name == name {
+			return r
+		}
+	}
+	return nil
+}
