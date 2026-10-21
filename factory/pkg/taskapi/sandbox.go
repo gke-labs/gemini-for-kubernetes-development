@@ -45,6 +45,9 @@ type Sandbox interface {
 	WriteFile(ctx context.Context, id, name string, data []byte) error
 	// Files names the files in the task's directory.
 	Files(ctx context.Context, id string) ([]string, error)
+	// AllFiles is Files with the files one directory down, as
+	// "<dir>/<name>".
+	AllFiles(ctx context.Context, id string) ([]string, error)
 	Close()
 }
 
@@ -427,6 +430,15 @@ func (s *ServerSandbox) Files(ctx context.Context, id string) ([]string, error) 
 	var names []string
 	err := s.call(ctx, func(c *Client) (err error) {
 		names, err = c.Files(ctx, id)
+		return err
+	})
+	return names, err
+}
+
+func (s *ServerSandbox) AllFiles(ctx context.Context, id string) ([]string, error) {
+	var names []string
+	err := s.call(ctx, func(c *Client) (err error) {
+		names, err = c.AllFiles(ctx, id)
 		return err
 	})
 	return names, err

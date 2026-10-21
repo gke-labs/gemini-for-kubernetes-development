@@ -26,6 +26,7 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -202,27 +203,37 @@ func readTaskToolTelemetry(read TaskFileReader) (*ToolTelemetry, error) {
 	return &telemetry, nil
 }
 
-// HarvestTaskFiles publishes a task's usage and its trace, reading the
-// task directory's files with read, whichever way it reaches the sandbox.
-// Best-effort: failures are logged.
-func HarvestTaskFiles(ctx context.Context, taskDir string, read TaskFileReader, meta Meta) {
-	_ = harvestTask(ctx, taskDir, read, meta)
+// TaskFiles is how a harvest reaches a task's files: the sandbox's task
+// server (taskapi.ServerSandbox).
+type TaskFiles interface {
+	// AllFiles lists the task's files, those one directory down as
+	// "<dir>/<name>"; never its env or secrets.
+	AllFiles(ctx context.Context, id string) ([]string, error)
+	ReadFile(ctx context.Context, id, name string) ([]byte, error)
 }
 
-// harvestTask publishes a task's usage and its trace, and returns the
-// first error that kept either from the collector (logged too).
-func harvestTask(ctx context.Context, taskDir string, read TaskFileReader, meta Meta) error {
+// HarvestTask publishes a task's usage and archives its files.
+// Best-effort: failures are logged.
+func HarvestTask(ctx context.Context, sb TaskFiles, id string, meta Meta) {
+	_ = harvestTask(ctx, sb, id, meta)
+}
+
+// harvestTask publishes a task's usage and archives its files, and
+// returns the first error that kept either from the collector (logged
+// too).
+func harvestTask(ctx context.Context, sb TaskFiles, id string, meta Meta) error {
 	if !Enabled() {
 		return nil
 	}
-	err := harvestUsage(ctx, taskDir, read, meta)
+	taskDir := spool.TaskDir(id)
+	err := harvestUsage(ctx, taskDir, func(name string) ([]byte, error) { return sb.ReadFile(ctx, id, name) }, meta)
 	if err != nil {
 		klog.Warningf("usagereport: %v", err)
 	}
-	if terr := harvestTrace(ctx, taskDir, read, meta); terr != nil {
-		klog.Warningf("usagereport: %v", terr)
+	if ferr := archiveTask(ctx, sb, id, meta); ferr != nil {
+		klog.Warningf("usagereport: %v", ferr)
 		if err == nil {
-			err = terr
+			err = ferr
 		}
 	}
 	return err
@@ -280,28 +291,60 @@ func harvestUsage(ctx context.Context, taskDir string, read TaskFileReader, meta
 	return nil
 }
 
-// TraceFile is a task's session transcript (acpd's stream.ndjson), by the
-// name the task server serves it.
-const TraceFile = taskapi.SessionDir + "/stream.ndjson"
+// unarchived are the task files the archive leaves out: generated from
+// recipe.source.yaml (recipe.yaml, the step script), or bookkeeping of a
+// process long gone (pid, lease).
+var unarchived = map[string]bool{"recipe.yaml": true, "steps/uses.sh": true, "pid": true, "lease": true}
 
-// traceTimeout bounds one trace's upload: transcripts run to megabytes.
-const traceTimeout = 2 * time.Minute
+// TranscriptFile is a task's session transcript (acpd's stream.ndjson),
+// by the name the task server serves it.
+const TranscriptFile = taskapi.SessionDir + "/stream.ndjson"
 
-// harvestTrace sends the task's transcript to the collector, which
-// archives it. A task without one (a classic task, a sandbox whose task
-// server predates serving session files) has nothing to send, and a
-// collector without an archive keeps no traces.
-func harvestTrace(ctx context.Context, taskDir string, read TaskFileReader, meta Meta) error {
+// archiveTimeout bounds one task's upload: transcripts run to megabytes.
+const archiveTimeout = 2 * time.Minute
+
+// archiveTask sends the task's files to the collector, which archives
+// them: the transcript (session/stream.ndjson), what the task was given
+// and ran (inputs.json, recipe.source.yaml), what it produced and pushed,
+// and its logs. A task server that predates listing subdirectories sends
+// the top level only; a collector without an archive keeps nothing.
+func archiveTask(ctx context.Context, sb TaskFiles, id string, meta Meta) error {
 	if meta.Sandbox == "" {
 		return nil
 	}
-	data, err := read(TraceFile)
-	if errors.Is(err, os.ErrNotExist) || (err == nil && len(data) == 0) {
+	names, err := sb.AllFiles(ctx, id)
+	if err != nil {
+		return fmt.Errorf("listing the files of task %s: %w", id, err)
+	}
+	// A task server that lists the top level only (#2035's) still serves
+	// the transcript by name.
+	if !slices.Contains(names, TranscriptFile) {
+		names = append(names, TranscriptFile)
+	}
+	files := map[string][]byte{}
+	for _, name := range names {
+		if unarchived[name] {
+			continue
+		}
+		data, err := sb.ReadFile(ctx, id, name)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("reading %s of task %s: %w", name, id, err)
+		}
+		if len(data) > 0 {
+			files[name] = data
+		}
+	}
+	if len(files) == 0 {
 		return nil
 	}
+	body, err := tokenusage.TarFiles(files)
 	if err != nil {
-		return fmt.Errorf("reading %s of %s: %w", TraceFile, taskDir, err)
+		return err
 	}
+
 	q := url.Values{"repo": {meta.Repo}}
 	if meta.Issue > 0 {
 		q.Set("issue", strconv.Itoa(meta.Issue))
@@ -311,32 +354,32 @@ func harvestTrace(ctx context.Context, taskDir string, read TaskFileReader, meta
 	}
 	taskType := meta.TaskType
 	if taskType == "" {
-		taskType = taskTypeFromDir(taskDir)
+		taskType = taskTypeFromDir(id)
 	}
 	q.Set("taskType", taskType)
-	u := collectorURL() + "/v1/traces/" + url.PathEscape(meta.Sandbox) + "/" + url.PathEscape(path.Base(taskDir)) + "?" + q.Encode()
+	u := collectorURL() + "/v1/tasks/" + url.PathEscape(meta.Sandbox) + "/" + url.PathEscape(id) + "?" + q.Encode()
 
-	ctx, cancel := context.WithTimeout(ctx, traceTimeout)
+	ctx, cancel := context.WithTimeout(ctx, archiveTimeout)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodPut, u, bytes.NewReader(data))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, u, bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Content-Type", "application/x-ndjson")
+	req.Header.Set("Content-Type", "application/x-tar")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("sending the trace of %s: %w", taskDir, err)
+		return fmt.Errorf("archiving task %s: %w", id, err)
 	}
 	defer resp.Body.Close()
 	switch resp.StatusCode {
 	case http.StatusOK, http.StatusNotImplemented:
 		return nil
 	default:
-		return fmt.Errorf("sending the trace of %s: collector returned status %d", taskDir, resp.StatusCode)
+		return fmt.Errorf("archiving task %s: collector returned status %d", id, resp.StatusCode)
 	}
 }
 
-// HarvestSandbox harvests every task dir in a sandbox, usage and traces,
+// HarvestSandbox harvests every task dir in a sandbox, usage and files,
 // through its task server: before a sandbox is suspended, while its pod
 // is up, and before it is deleted. A suspended sandbox harvested since its
 // last activity is not woken for it: nothing ran in it since. A harvest
@@ -406,8 +449,8 @@ var markHarvested = func(ctx context.Context, namespace, name string, at time.Ti
 // task server (taskapi.ServerSandbox), which lists every task directory,
 // a classic command's or a recipe's, and serves their files.
 type taskLister interface {
+	TaskFiles
 	List(ctx context.Context) ([]spool.Entry, error)
-	ReadFile(ctx context.Context, id, name string) ([]byte, error)
 	Close()
 }
 
@@ -428,8 +471,7 @@ func harvestTasks(ctx context.Context, sb taskLister, meta Meta) bool {
 	for _, e := range entries {
 		m := meta
 		m.TaskType = "" // infer per dir
-		id := e.ID
-		if err := harvestTask(ctx, spool.TaskDir(id), func(name string) ([]byte, error) { return sb.ReadFile(ctx, id, name) }, m); err != nil {
+		if err := harvestTask(ctx, sb, e.ID, m); err != nil {
 			ok = false
 		}
 	}

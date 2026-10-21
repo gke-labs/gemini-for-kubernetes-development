@@ -136,19 +136,30 @@ Per cluster, once:
 
 ---
 
-## 9. Traces
+## 9. Archived tasks
 
-A task's session transcript (acpd's `<taskDir>/session/stream.ndjson`) is harvested with its usage, in the same pass, and archived by the collector (`factory/pkg/tokenusage/traces.go`). It is the input for reviewing what the agent did after its sandbox is gone (design/retro.md).
+A task's directory — its session transcript (acpd's `session/stream.ndjson`), what it was given and ran, what it produced and pushed, and its logs — is harvested with its usage, in the same pass, and archived by the collector (`factory/pkg/tokenusage/tasks.go`). It is the input for reviewing what the agent did after its sandbox is gone (design/retro.md).
 
-* **Read:** the task server serves the task's `session/` files (`GET /v1/tasks/{id}/files/session/{name}`); `ReadFile(id, "session/stream.ndjson")` reaches them. An older sandbox's task server answers 404, which reads as "no trace".
-* **Sent:** `PUT /v1/traces/{sandbox}/{task}?repo=&issue=&pr=&taskType=`, the transcript as the body. A collector without an archive answers 501 and keeps nothing: the PVC alone would only fill up.
-* **Spooled:** the collector masks credential shapes (`ghp_…`, `github_pat_…`, `AIza…`, `ya29.…`, `sk-ant-…`) line by line on the way in, writes the trace into a temporary directory and renames it into `/data/traces/<time>-<sandbox>-<task>/` whole. A trace whose content the archive already holds is not spooled again. One trace is capped at 256MiB (413), the spool at 512MiB (507: the harvester tries again on its next pass).
-* **Archived:** the flusher, before sealing the logs, uploads each spooled trace to `<prefix>/traces/<owner>/<repo>/<pr-N|issue-N|repo>/<sandbox>/<task>/stream.ndjson.gz`, indexes it in the `trace-index` log (sealed, segmented, snapshotted and replayed like the records log), then deletes it from the PVC. A later copy of the same task's trace overwrites the object.
-* **Read back:** `GET /v1/traces?repo=&issue=&pr=&sandbox=` lists the index (object name, size, sha256, when archived). The collector never serves a trace's content; readers go to the bucket.
+* **Read:** the task server lists a task's files one directory down too (`GET /v1/tasks/{id}/files?subdirs=1`, `AllFiles`) and serves them by relative name (`GET /v1/tasks/{id}/files/{dir}/{name}`). It never lists or serves a task's env or secrets. An older sandbox's task server lists the top level only, or nothing below it, which the harvest takes as fewer files.
+* **Sent:** every file except those generated from `recipe.source.yaml` (`recipe.yaml`, `steps/uses.sh`), the dead process's bookkeeping (`pid`, `lease`) and empty ones, as one tar stream: `PUT /v1/tasks/{sandbox}/{task}?repo=&issue=&pr=&taskType=`. A collector without an archive answers 501 and keeps nothing: the PVC alone would only fill up.
+* **Spooled:** the collector masks credential shapes (`ghp_…`, `github_pat_…`, `AIza…`, `ya29.…`, `sk-ant-…`) line by line in every file on the way in, writes the task into a temporary directory and renames it into `/data/tasks/<time>-<sandbox>-<task>/` whole. It reads `task.json`, `status.json`, `push.json` and `task-output.applied` for the index (recipe, run name, exit code, times, pushed branch and head, applied). A task whose files the archive already holds unchanged is not spooled again. One task is capped at 256MiB (413), the spool at 512MiB (507: the harvester tries again on its next pass).
+* **Archived:** the flusher, before sealing the logs, uploads each spooled task to its folder, one gzipped object per file named as in the sandbox, skipping files whose content the archive already has, then writes `manifest.json` — the index record — last: a folder without one did not finish. It then indexes the task in the `task-index` log (sealed, segmented, snapshotted and replayed like the records log) and deletes it from the PVC.
+
+  ```
+  <prefix>/tasks/<owner>/<repo>/<sandbox>/<task>/
+    manifest.json
+    task.json.gz  status.json.gz  push.json.gz  inputs.json.gz  recipe.source.yaml.gz
+    task-output.yaml.gz  change.yaml.gz  task-output.applied.gz  comments.jsonl.gz  execution.log.gz …
+    steps/<NN-step>.log.gz
+    session/stream.ndjson.gz  session/session.json.gz
+  ```
+
+  The folder is by sandbox, not by issue or PR: a fix sandbox serves its issue and then its PR, and its tasks stay in one place. The index answers by issue or PR.
+* **Read back:** `GET /v1/tasks?repo=&issue=&pr=&sandbox=` lists the index (folder, files with size and sha256, recipe, exit code, pushed head…). The collector never serves a task's files; readers go to the bucket.
 
 ### When harvests run
 
-One pass sends a task's usage and its trace (`usagereport.HarvestTaskFiles` / `HarvestSandbox`):
+One pass sends a task's usage and its files (`usagereport.HarvestTask` / `HarvestSandbox`):
 
 1. **At task end**, over the connection the recipe runner already has (`commands/recipe.go`).
 2. **Before an idle sandbox is suspended**, while its pod is still up (`SuspendSandboxIfIdle`'s `beforeSuspend`, bounded to 3 minutes), so a later delete does not have to wake it.

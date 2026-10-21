@@ -74,7 +74,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/tasks/{id}/log", s.handleLog)
 	mux.HandleFunc("GET /v1/tasks/{id}/files", s.handleFiles)
 	mux.HandleFunc("GET /v1/tasks/{id}/files/{name}", s.handleReadFile)
-	mux.HandleFunc("GET /v1/tasks/{id}/files/session/{name}", s.handleReadSessionFile)
+	mux.HandleFunc("GET /v1/tasks/{id}/files/{dir}/{name}", s.handleReadSubdirFile)
 	mux.HandleFunc("PUT /v1/tasks/{id}/files/{name}", s.handleWriteFile)
 	mux.HandleFunc("POST /v1/tasks/{id}/cancel", s.handleCancel)
 	if s.sessions != nil {
@@ -392,10 +392,29 @@ func (s *Server) handleFiles(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	// With subdirs=1, the files one level down too (steps/, session/,
+	// ci-logs/), as "<dir>/<name>": the harvest archives the whole task.
+	subdirs := r.URL.Query().Get("subdirs") == "1"
 	names := []string{}
 	for _, e := range entries {
-		if !e.IsDir() && !unserved(e.Name()) && !strings.HasPrefix(e.Name(), ".") {
+		if strings.HasPrefix(e.Name(), ".") || unserved(e.Name()) {
+			continue
+		}
+		if !e.IsDir() {
 			names = append(names, e.Name())
+			continue
+		}
+		if !subdirs || !name.MatchString(e.Name()) {
+			continue
+		}
+		sub, err := os.ReadDir(filepath.Join(taskDir, e.Name()))
+		if err != nil {
+			continue
+		}
+		for _, f := range sub {
+			if !f.IsDir() && !strings.HasPrefix(f.Name(), ".") && name.MatchString(f.Name()) {
+				names = append(names, e.Name()+"/"+f.Name())
+			}
 		}
 	}
 	writeJSON(w, http.StatusOK, names)
@@ -429,11 +448,15 @@ func (s *Server) handleReadFile(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleReadSessionFile serves a file of the task's session directory
-// (<taskDir>/session: the transcript, stream.ndjson, and the engine's
-// logs), for the usage and trace harvest.
-func (s *Server) handleReadSessionFile(w http.ResponseWriter, r *http.Request) {
+// handleReadSubdirFile serves a file one directory down in the task
+// (session/stream.ndjson, steps/02-setup-fork.log, ci-logs/…), for the
+// harvest that archives the task.
+func (s *Server) handleReadSubdirFile(w http.ResponseWriter, r *http.Request) {
 	taskDir, ok := s.taskDir(w, r)
+	if !ok {
+		return
+	}
+	dir, ok := pathName(w, r, "dir")
 	if !ok {
 		return
 	}
@@ -441,10 +464,10 @@ func (s *Server) handleReadSessionFile(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	data, err := os.ReadFile(filepath.Join(taskDir, SessionDir, file))
+	data, err := os.ReadFile(filepath.Join(taskDir, dir, file))
 	switch {
 	case os.IsNotExist(err):
-		writeError(w, http.StatusNotFound, fmt.Sprintf("no file %s/%s", SessionDir, file))
+		writeError(w, http.StatusNotFound, fmt.Sprintf("no file %s/%s", dir, file))
 	case err != nil:
 		writeError(w, http.StatusInternalServerError, err.Error())
 	default:
