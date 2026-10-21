@@ -441,7 +441,7 @@ func (s *Scanner) queueTask(ctx context.Context, issue *githubv39.Issue, refIssu
 	// once per update - asked on these cheap facts before the reads below;
 	// the scanner's own cooldown and "processed since" checks are for the
 	// rules it still decides.
-	if s.rec != nil && s.rules.Takes(rule, labelNames(issue.Labels)) {
+	if s.rec != nil && s.rules.Takes(rule) {
 		if s.engineHolds(ctx, issue, filename, workflowPath, workflowName, rule) {
 			return
 		}
@@ -465,10 +465,10 @@ func (s *Scanner) queueTask(ctx context.Context, issue *githubv39.Issue, refIssu
 			klog.V(2).Infof("Skipping issue #%d: its workflow %s is unavailable and the workflow-missing rule is disabled", num, wf.Path)
 			return
 		}
-		if s.rec != nil && s.rules.Takes("workflow-missing", labelNames(issue.Labels)) {
+		if s.rec != nil && s.rules.Takes("workflow-missing") {
 			s.rec.Handed("workflow-missing", true)
 		}
-		if s.rec != nil && s.rules.Takes("workflow-missing", labelNames(issue.Labels)) &&
+		if s.rec != nil && s.rules.Takes("workflow-missing") &&
 			!rules.Decided(s.rules.Decide(*s.rec.Item, s.rulesEnv()), "workflow-missing") {
 			klog.Infof("Skipping issue #%d: the rules engine does not decide workflow-missing", num)
 			return
@@ -595,7 +595,7 @@ func (s *Scanner) queueTask(ctx context.Context, issue *githubv39.Issue, refIssu
 	// An engine's give-up stops the issue instead: the rule has run its
 	// failed attempts out since a human last spoke on it or it was last
 	// paused.
-	if s.rec != nil && s.rules.Takes(rule, labelNames(issue.Labels)) {
+	if s.rec != nil && s.rules.Takes(rule) {
 		s.rec.Handed(rule, true)
 		s.recordSpoken(ctx, num)
 		d, ok := decisionOf(s.rules.Decide(*s.rec.Item, s.rulesEnv()), rule)

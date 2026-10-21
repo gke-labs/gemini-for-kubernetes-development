@@ -137,8 +137,8 @@ type QueueResponse struct {
 	// Failures are the tasks that failed and have not succeeded since,
 	// with what their child said went wrong. An older watch serves none.
 	Failures []QueueFailureItem `json:"failures,omitempty"`
-	// Shadow is the watch rules' tally beside the scanners, when they run
-	// in shadow (the Overseer's spec.rules.engine); none otherwise.
+	// Shadow is the watch rules' tally beside the scanners' own conditions;
+	// an older watch serves none.
 	Shadow *QueueShadow `json:"shadow,omitempty"`
 }
 

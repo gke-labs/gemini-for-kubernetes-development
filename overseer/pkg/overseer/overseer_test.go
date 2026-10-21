@@ -255,37 +255,19 @@ func TestBuildSandboxManifest_SharedScan(t *testing.T) {
 // when it is not off.
 func TestBuildSandboxManifest_RulesEngine(t *testing.T) {
 	o := &overseerv1alpha1.Overseer{Spec: overseerv1alpha1.OverseerSpec{RepoURL: "https://github.com/owner/repo"}}
-	for _, engine := range []string{"", "off"} {
-		o.Spec.Rules = &overseerv1alpha1.OverseerRules{Engine: engine}
-		if _, ok := overseerEnv(t, o)["WATCH_RULES_ENGINE"]; ok {
-			t.Errorf("WATCH_RULES_ENGINE is set with engine %q", engine)
-		}
+	o.Spec.Rules = &overseerv1alpha1.OverseerRules{}
+	if _, ok := overseerEnv(t, o)["WATCH_RULES_DISABLED"]; ok {
+		t.Error("WATCH_RULES_DISABLED is set with nothing disabled")
 	}
-	o.Spec.Rules = &overseerv1alpha1.OverseerRules{Engine: "shadow"}
-	if got := overseerEnv(t, o)["WATCH_RULES_ENGINE"]; got != "shadow" {
-		t.Errorf("WATCH_RULES_ENGINE = %v, want shadow", got)
-	}
-	o.Spec.Rules = &overseerv1alpha1.OverseerRules{
-		Engine: "on", Use: map[string]string{"conflict": "engine", "ci": "legacy"},
-		CanaryLabel: "overseer/engine", CanaryPercent: 20, Disabled: []string{"review", "inactive"},
-	}
+	o.Spec.Rules = &overseerv1alpha1.OverseerRules{Disabled: []string{"review", "inactive"}}
 	env := overseerEnv(t, o)
-	for name, want := range map[string]string{
-		"WATCH_RULES_ENGINE": "on", "WATCH_RULES_USE": "ci=legacy,conflict=engine",
-		"WATCH_RULES_CANARY_LABEL": "overseer/engine", "WATCH_RULES_CANARY_PERCENT": "20", "WATCH_RULES_DISABLED": "review,inactive",
-	} {
-		if got := env[name]; got != want {
-			t.Errorf("%s = %v, want %q", name, got, want)
+	if env["WATCH_RULES_DISABLED"] != "review,inactive" {
+		t.Errorf("WATCH_RULES_DISABLED = %v", env["WATCH_RULES_DISABLED"])
+	}
+	for _, gone := range []string{"WATCH_RULES_ENGINE", "WATCH_RULES_USE", "WATCH_RULES_CANARY_LABEL", "WATCH_RULES_CANARY_PERCENT"} {
+		if _, ok := env[gone]; ok {
+			t.Errorf("%s is set: %v", gone, env)
 		}
-	}
-	// Disabled alone, the engine off.
-	o.Spec.Rules = &overseerv1alpha1.OverseerRules{Disabled: []string{"review"}}
-	env = overseerEnv(t, o)
-	if _, ok := env["WATCH_RULES_CANARY_PERCENT"]; ok {
-		t.Errorf("WATCH_RULES_CANARY_PERCENT is set at 0: %v", env)
-	}
-	if _, ok := env["WATCH_RULES_ENGINE"]; ok || env["WATCH_RULES_DISABLED"] != "review" {
-		t.Errorf("env = %v", env)
 	}
 }
 

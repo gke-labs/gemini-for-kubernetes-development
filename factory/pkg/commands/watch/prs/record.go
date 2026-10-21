@@ -196,7 +196,7 @@ func (s *Scanner) engineDecide() []rules.Decision {
 // request: the engine on, the rule handed to it, the canary label on the
 // pull request when there is one, and the facts recorded.
 func (s *Scanner) takes(rule string, prIssue *githubv39.Issue) bool {
-	return s.rec != nil && s.rules.Takes(rule, labelNames(prIssue.Labels))
+	return s.rec != nil && s.rules.Takes(rule)
 }
 
 // decides is whether the scanner goes on to act on rule, a rule of its own

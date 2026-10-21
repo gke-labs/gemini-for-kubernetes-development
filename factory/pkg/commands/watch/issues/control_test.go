@@ -17,8 +17,8 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/watch/rules"
 )
 
-// A labelled issue is fixed, unless fix is disabled, or handed to an engine
-// that does not decide it.
+// A labelled issue is fixed, unless fix is disabled, or the engine does
+// not decide it.
 func TestQueueTasks_RulesControl(t *testing.T) {
 	base, err := rules.Builtin()
 	if err != nil {
@@ -35,8 +35,8 @@ func TestQueueTasks_RulesControl(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	control := func(engine string, use map[string]string, disabled []string, set rules.Set) *rules.Control {
-		c, err := rules.NewControl(engine, use, "", disabled, set)
+	control := func(disabled []string, set rules.Set) *rules.Control {
+		c, err := rules.NewControl(disabled, set)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -48,9 +48,9 @@ func TestQueueTasks_RulesControl(t *testing.T) {
 		fixed   bool
 	}{
 		{"no control", nil, true},
-		{"fix disabled", control("", nil, []string{"fix"}, base), false},
-		{"the engine, handed fix, does not decide it", control("on", map[string]string{"fix": "engine"}, nil, neverFix), false},
-		{"the engine, handed fix, decides it", control("on", map[string]string{"fix": "engine"}, nil, base), true},
+		{"fix disabled", control([]string{"fix"}, base), false},
+		{"the engine does not decide fix", control(nil, neverFix), false},
+		{"the engine decides fix", control(nil, base), true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

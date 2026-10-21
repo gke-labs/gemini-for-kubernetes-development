@@ -11,11 +11,9 @@ how a rule is evaluated. Why the watch is moving to rules, and the plan for
 getting there without changing what it does, is in
 [design/watch-rules.md](../design/watch-rules.md).
 
-> **Status.** The rules describe what today's watch does and can be
-> evaluated and replayed against it (`factory watch rules replay`), but the
-> watch still acts through its scanners. A rule takes over only once its
-> replay and shadow-mode comparisons agree with today's code (the design's
-> Phase 3).
+> **Status.** The rules engine decides every rule; the scanners list the
+> items, read their facts and carry out what the engine decides. The
+> overseer's only say is turning rules off (`spec.rules.disabled`).
 
 ---
 
@@ -407,7 +405,8 @@ before it:
    A repository's file that is a whole rule replaces factory's rule of that
    name, or adds a rule of a new name.
 3. **the overseer** (`spec.rules.disabled: [review]`): the operator's
-   emergency switch, which only turns rules off.
+   emergency switch, which only turns rules off: nothing decides a disabled
+   rule, and its queued tasks are dropped before they start.
 
 `factory watch rules --dir <checkout>` shows whose each rule is (SOURCE) and
 whose its enabled is (`false (repo)`).
@@ -497,10 +496,7 @@ the suite CI runs.
 
 ---
 
-## Comparing the rules with today's watch
-
-The rules take over from today's scanners one at a time, and only once they
-decide the same. To compare them:
+## The record, and replaying it
 
 1. **Record.** With the Overseer's `spec.rulesRecord: true` (`factory watch
    --rules-record <file>`), the issue and PR scanners record every decision
@@ -508,10 +504,11 @@ decide the same. To compare them:
    `/workspaces/.cache/factory-watch/decisions.jsonl` on the overseer's
    volume, rotated daily into `decisions-<date>.jsonl` and kept 30 days (at
    most 5 GiB). Recording reads what the scanners already fetched - no extra
-   GitHub calls - and changes nothing they decide. A decision a gate outside
-   the rules held back (a busy sandbox, one needing a person) is recorded as
-   such.
-2. **Replay.**
+   GitHub calls. A decision a gate outside the rules held back (a busy
+   sandbox, one needing a person) is recorded as such. The record also
+   keeps what the scanners' own conditions would have said, which the
+   overseer's view counts as the shadow (`ci by engine N`, differing M).
+2. **Replay** - the rules, or a change to them, on what was recorded:
 
    ```sh
    kubectl exec -n overseer-kcc overseer-kcc -- \
@@ -521,53 +518,25 @@ decide the same. To compare them:
    factory watch rules replay decisions.jsonl --dir .  # with a checkout's rules laid over
    kubectl cp overseer-kcc/overseer-kcc:/workspaces/.cache/factory-watch ./record
    factory watch rules replay ./record                 # every day kept, in order
+   factory watch rules explain <URL> --record decisions.jsonl
    ```
 
-   Every record where the rules decide something else than the scanner did
-   is a difference to explain: a rule file to fix, or a fact recorded wrong.
-
-Next, shadow mode runs the same comparison live, and the overseer's view
-shows the disagreements per rule (the design's Phase 2b).
-
-3. **Hand rules over, on a canary first.** On the Overseer:
-
-   ```yaml
-   rules:
-     engine: on
-     use: {conflict: engine, ci: engine, review: engine}
-     canaryLabel: overseer/rules-canary
-     canaryPercent: 20
-   ```
-
-   The engine decides those rules only on PRs labelled
-   `overseer/rules-canary`. With `canaryPercent`, the watch labels that share
-   of the pool's PRs itself (the same ones every pass, by number; never one a
-   person took the label off; handed to the humans or not), so the canary
-   is public: `is:pr is:open label:overseer/rules-canary`. Add the label by
-   hand to include a PR. On those PRs the record keeps what the scanner's
-   own condition would have picked, so the overseer's view (`ci by engine N`)
-   and `factory watch rules replay` still compare them, and
-   `factory watch rules explain <PR> --record decisions.jsonl` shows each.
-
-4. **Decide again at start** (always on). Just before a queued task of a
-   rule the engine decides starts, the watch reads the item's facts again (what
-   `factory watch rules explain <URL>` reads live) and asks the engine
-   whether it still decides that rule, its own task taken out. A task it
-   no longer decides is dropped: feedback that came while a ci task waited
-   (comments, earlier, takes the PR), checks re-run and green, a head that
-   moved, a PR linked to the issue, the trigger label taken off, the item
-   closed or stopped. A dropped task is journalled `Dropped` with the
-   reason and served with the queue's drops; it is not an attempt and
-   starts no cooldown, and the next scan decides anew. It costs one read of
-   the item per task started. A workflow step the nudge queued (a linked
-   issue closed) is held to the gates alone (stopped, closed): it steps the
-   workflow inside its cooldown on purpose. A comments task acknowledges the
-   feedback it answers (the 👀 reaction, the addressed time) when it starts,
-   not when it is queued, so one dropped before it starts leaves the
-   feedback for the next scan. A task of a rule the scanner still decides
-   (`use: legacy`) is held to the facts it was decided on, as the removed
-   `preconditions` setting held it: a rebase, an investigation or a review
-   to its head, a fix to its issue having no linked PR.
+3. **Decided again at start.** Just before a queued task starts, the watch
+   reads the item's facts again (what `factory watch rules explain <URL>`
+   reads live) and asks the engine whether it still decides the task's
+   rule, its own task taken out. A task it no longer decides is dropped:
+   feedback that came while a ci task waited (comments, earlier, takes the
+   PR), checks re-run and green, a head that moved, a PR linked to the
+   issue, the trigger label taken off, the item closed or stopped, the rule
+   disabled. A dropped task is journalled `Dropped` with the reason and
+   served with the queue's drops; it is not an attempt and starts no
+   cooldown, and the next scan decides anew. It costs one read of the item
+   per task started. A workflow step the nudge queued (a linked issue
+   closed) is held to the gates alone (stopped, closed): it steps the
+   workflow inside its cooldown on purpose. A comments task acknowledges
+   the feedback it answers (the 👀 reaction, the addressed time) when it
+   starts, not when it is queued, so one dropped before it starts leaves
+   the feedback for the next scan.
 
 ---
 

@@ -281,7 +281,7 @@ func TestQueueTask_MissingWorkflowIsARule(t *testing.T) {
 		t.Errorf("unresolved: gate %q, decided %v; want a gate and nothing", rec.Gate, rec.Decided)
 	}
 
-	off, err := rules.NewControl("", nil, "", []string{"workflow-missing"}, set)
+	off, err := rules.NewControl([]string{"workflow-missing"}, set)
 	if err != nil {
 		t.Fatal(err)
 	}

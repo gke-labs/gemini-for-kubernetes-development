@@ -42,8 +42,7 @@ func neverConflict(t *testing.T) rules.Set {
 }
 
 // A conflicting PR: the scanner queues a rebase, unless conflict is
-// disabled, or handed to an engine that decides otherwise - and then only
-// on items with the canary label, when there is one.
+// disabled, or the engine decides otherwise.
 func TestEvaluate_RulesControl(t *testing.T) {
 	no := false
 	for _, tc := range []struct {
@@ -54,36 +53,22 @@ func TestEvaluate_RulesControl(t *testing.T) {
 		{"no control: as before", func(*testing.T) *rules.Control { return nil }, true},
 		{"conflict disabled", func(t *testing.T) *rules.Control {
 			base, _ := rules.Builtin()
-			c, err := rules.NewControl("", nil, "", []string{"conflict"}, base)
+			c, err := rules.NewControl([]string{"conflict"}, base)
 			if err != nil {
 				t.Fatal(err)
 			}
 			return c
 		}, false},
 		{"the engine, handed conflict, decides no rebase", func(t *testing.T) *rules.Control {
-			c, err := rules.NewControl("on", map[string]string{"conflict": "engine"}, "", nil, neverConflict(t))
+			c, err := rules.NewControl(nil, neverConflict(t))
 			if err != nil {
 				t.Fatal(err)
 			}
 			return c
 		}, false},
-		{"the engine, handed conflict on a canary the PR lacks: the scanner's", func(t *testing.T) *rules.Control {
-			c, err := rules.NewControl("on", map[string]string{"conflict": "engine"}, "overseer/engine", nil, neverConflict(t))
-			if err != nil {
-				t.Fatal(err)
-			}
-			return c
-		}, true},
-		{"the engine on, conflict left legacy", func(t *testing.T) *rules.Control {
-			c, err := rules.NewControl("on", nil, "", nil, neverConflict(t))
-			if err != nil {
-				t.Fatal(err)
-			}
-			return c
-		}, true},
 		{"the engine, handed conflict, decides the rebase", func(t *testing.T) *rules.Control {
 			base, _ := rules.Builtin()
-			c, err := rules.NewControl("on", map[string]string{"conflict": "engine"}, "", nil, base)
+			c, err := rules.NewControl(nil, base)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -115,7 +100,7 @@ func TestEvaluate_ReadyDisabled(t *testing.T) {
 		var c *rules.Control
 		if disabled {
 			base, _ := rules.Builtin()
-			c, _ = rules.NewControl("", nil, "", []string{"ready"}, base)
+			c, _ = rules.NewControl([]string{"ready"}, base)
 		}
 		s, _ := newTestScanner(t, t.TempDir(), testOpts{
 			GitHub: f.start(t), BotUsers: []string{"bot1"}, GitHubLogin: "bot1", TriggerLabel: "factory", Rules: c,
@@ -161,7 +146,7 @@ func handedCI(t *testing.T, f *prFixture, set rules.Set) (*Scanner, interface {
 	TaskExists(string) bool
 }, string) {
 	t.Helper()
-	c, err := rules.NewControl("on", map[string]string{"ci": "engine"}, "", nil, set)
+	c, err := rules.NewControl(nil, set)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -212,7 +197,7 @@ func TestEvaluate_EngineGivesCIUp(t *testing.T) {
 	if f.count("POST /repos/test-owner/test-repo/issues/14/comments") == 0 {
 		t.Error("no give-up comment")
 	}
-	assertRecorded(t, record, `"ci give-up"`, `"handed":[{"rule":"ci","legacy":true}]`)
+	assertRecorded(t, record, `"ci give-up"`, `{"rule":"ci","legacy":true}`)
 }
 
 // The handler's own count says give up (three "started investigating"
@@ -230,7 +215,7 @@ func TestEvaluate_EngineRunsCIPastTheHandlersCount(t *testing.T) {
 	}
 	f := &prFixture{num: 15, headSHA: "sha-1", updated: time.Now(), failing: true, comments: comments}
 	base, _ := rules.Builtin()
-	c, err := rules.NewControl("on", map[string]string{"ci": "engine"}, "", nil, base)
+	c, err := rules.NewControl(nil, base)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -252,7 +237,7 @@ func TestEvaluate_EngineRunsCIPastTheHandlersCount(t *testing.T) {
 	if f.count("POST /repos/test-owner/test-repo/issues/15/labels") != 0 {
 		t.Error("the handler gave up on its own count")
 	}
-	assertRecorded(t, record, `"ci run"`, `"handed":[{"rule":"ci","legacy":true}]`)
+	assertRecorded(t, record, `"ci run"`, `{"rule":"ci","legacy":true}`)
 	// The task carries the engine's decision: the runner runs the rule's
 	// recipe and apply.
 	data, err := os.ReadFile(filepath.Join(dir, "incoming", "task-pr-15-investigate.yaml"))
@@ -281,66 +266,11 @@ func assertRecorded(t *testing.T, path string, wants ...string) {
 	}
 }
 
-// The canary: a pull request the rules pick by number gets the canary label,
-// so the engine takes it in the same pass, handed to the humans or not; one
-// a person took the label off, or a dry run, does not.
-func TestEvaluate_LabelsTheCanary(t *testing.T) {
-	base, _ := rules.Builtin()
-	control := func(t *testing.T, percent int) *rules.Control {
-		c, err := rules.NewControl("on", map[string]string{"ci": "engine"}, "factory/rules-canary", nil, base)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := c.SetCanaryPercent(percent); err != nil {
-			t.Fatal(err)
-		}
-		return c
-	}
-	removed := []*githubv39.Timeline{{Event: githubv39.String("unlabeled"), Label: &githubv39.Label{Name: githubv39.String("factory/rules-canary")}}}
-	for _, tc := range []struct {
-		name     string
-		percent  int
-		timeline []*githubv39.Timeline
-		ready    bool
-		dryRun   bool
-		want     bool
-	}{
-		{"picked: labelled", 100, nil, false, false, true},
-		{"not picked (0%)", 0, nil, false, false, false},
-		{"a person took it off: not again", 100, removed, false, false, false},
-		{"handed to the humans: picked as any other", 100, nil, true, false, true},
-		{"dry run: nothing written", 100, nil, false, true, false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			f := &prFixture{num: 31, headSHA: "sha-31", updated: time.Now(), pending: true, timeline: tc.timeline, readyForHuman: tc.ready}
-			s, _ := newTestScanner(t, t.TempDir(), testOpts{
-				GitHub: f.start(t), BotUsers: []string{"bot1"}, GitHubLogin: "bot1", TriggerLabel: "factory",
-				Recorder: rules.NewRecorder(filepath.Join(t.TempDir(), "d.jsonl"), 0, nil),
-				Rules:    control(t, tc.percent),
-			})
-			s.cfg.DryRun = tc.dryRun
-			f.mu.Lock()
-			listed := f.listingIssueLocked()
-			f.mu.Unlock()
-			s.evaluate(context.Background(), listed)
-			f.mu.Lock()
-			got := slices.Contains(f.added, "factory/rules-canary")
-			f.mu.Unlock()
-			if got != tc.want {
-				t.Errorf("labelled %v, want %v (added %v)", got, tc.want, f.added)
-			}
-			if inPR := slices.ContainsFunc(listed.Labels, func(l *githubv39.Label) bool { return l.GetName() == "factory/rules-canary" }); inPR != tc.want {
-				t.Errorf("label on the evaluated PR %v, want %v (the engine takes it this pass)", inPR, tc.want)
-			}
-		})
-	}
-}
-
 // handedComments is a scanner over f whose engine decides comments, with
 // rule set set, recording to a file.
 func handedComments(t *testing.T, f *prFixture, set rules.Set) (*Scanner, *concurrency.TaskQueueManager, string) {
 	t.Helper()
-	c, err := rules.NewControl("on", map[string]string{"comments": "engine"}, "", nil, set)
+	c, err := rules.NewControl(nil, set)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -442,7 +372,7 @@ func TestEvaluate_EngineRetriesCommentsPastTheHandlersCount(t *testing.T) {
 // is not idle.
 func TestEvaluate_RecordsBatchCHanded(t *testing.T) {
 	base, _ := rules.Builtin()
-	c, err := rules.NewControl("on", map[string]string{"ready": "engine", "ready-unreview": "engine", "inherit-labels": "engine", "inactive": "engine"}, "", nil, base)
+	c, err := rules.NewControl(nil, base)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -492,7 +422,7 @@ func TestEvaluate_EngineInactiveStopsThePR(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c, err := rules.NewControl("on", map[string]string{"inactive": "engine", "ready": "engine"}, "", nil, set)
+	c, err := rules.NewControl(nil, set)
 	if err != nil {
 		t.Fatal(err)
 	}
