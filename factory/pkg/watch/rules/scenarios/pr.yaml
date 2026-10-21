@@ -130,3 +130,13 @@ item:
   mergeable: true
   runs: [{rule: comments, startedAt: 2026-10-20T10:00:00Z, endedAt: 2026-10-20T10:10:00Z, head: h1, failed: true}]
 expect: [comments run]
+---
+name: "a ready PR inherits its issue's stop label, and nothing more decides on it (ci with failing checks included)"
+env: {pool: [ada-coder-bot], now: 2026-10-20T12:00:00Z}
+item: {kind: pr, number: 20, author: ada-coder-bot, labels: [overseer, overseer/ready-for-human], head: h1, checks: failing, mergeable: true, closes: [{number: 19, labels: [overseer, overseer/stop]}]}
+expect: [inherit-labels run]
+---
+name: "a ready PR does not inherit */review from its issue: nothing to write, nothing decided"
+env: {pool: [ada-coder-bot], now: 2026-10-20T12:00:00Z}
+item: {kind: pr, number: 21, author: ada-coder-bot, labels: [overseer, overseer/ready-for-human], head: h1, checks: green, mergeable: true, reviewedAtHead: true, closes: [{number: 19, labels: [overseer, overseer/review]}]}
+expect: []

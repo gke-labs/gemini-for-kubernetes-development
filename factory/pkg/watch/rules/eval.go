@@ -434,11 +434,16 @@ func resolveWrites(run Run, it Item, env Env) Writes {
 	for _, l := range run.Label {
 		var names []string
 		if l == "{{closing-issue-labels}}" {
+			// Never ready-for-human; and once the PR is handed to the
+			// humans, not */review either, which would set bot reviews
+			// going again on a PR a person now owns.
+			ready := hasLabel(it.Labels, env.Prefixes, "*/ready-for-human")
 			for _, ci := range it.Closes {
 				for _, cl := range ci.Labels {
-					if !labelIs(cl, env.Prefixes, "*/ready-for-human") {
-						names = append(names, cl)
+					if labelIs(cl, env.Prefixes, "*/ready-for-human") || (ready && labelIs(cl, env.Prefixes, "*/review")) {
+						continue
 					}
+					names = append(names, cl)
 				}
 			}
 		} else {
