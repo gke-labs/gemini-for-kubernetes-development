@@ -772,10 +772,6 @@ func TestEvaluate_CommentsPrioritizedOverCIFailures(t *testing.T) {
 	// When another new comment arrives, comments task MUST still be created (no starvation due to failing CI).
 	_ = os.Remove(commentsTaskFile)
 	_ = queue.RemoveTask("task-pr-10-comments.yaml")
-	s.state.set(10, prState{
-		lastInvestigatedSHA:  headSHA,
-		lastInvestigatedTime: time.Now(),
-	})
 	commentTime = commentTime.Add(10 * time.Minute)
 	s.evaluateAll(context.Background(), []*githubv39.Issue{prIssue})
 
@@ -1502,23 +1498,6 @@ func (f *prFixture) route(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// listingIssueLocked is the pull request as the issue listings report it. The
-// caller must hold f.mu.
-func (f *prFixture) listingIssueLocked() *githubv39.Issue {
-	updated := f.updated
-	labels := []*githubv39.Label{{Name: githubv39.String("factory")}}
-	if f.readyForHuman {
-		labels = append(labels, &githubv39.Label{Name: githubv39.String("factory/ready-for-human")})
-	}
-	return &githubv39.Issue{
-		Number:           githubv39.Int(f.num),
-		UpdatedAt:        &updated,
-		PullRequestLinks: &githubv39.PullRequestLinks{},
-		Assignees:        []*githubv39.User{{Login: githubv39.String("bot1")}},
-		Labels:           labels,
-	}
-}
-
 // count returns how many recorded paths contain substr.
 func (f *prFixture) count(substr string) int {
 	f.mu.Lock()
@@ -1745,36 +1724,6 @@ func TestFastPass_ReevaluatesWhenMergeableUnknown(t *testing.T) {
 	}
 }
 
-// TestSweep_PreservesReadyForHumanWhenMergeableUnknown verifies that an
-// already-ready pull request never has its ready-for-human label stripped by
-// the watcher, whether mergeability is temporarily unknown or CI is pending.
-func TestSweep_PreservesReadyForHumanWhenMergeableUnknown(t *testing.T) {
-	f := &prFixture{
-		num:           10,
-		headSHA:       "sha-1",
-		updated:       time.Now().Add(-time.Hour),
-		mergeableNil:  true,
-		readyForHuman: true,
-	}
-	s := newFixtureScanner(t, f)
-	ctx := context.Background()
-
-	// 1. Mergeable == nil while all other gates pass: ready-for-human must not be removed.
-	s.sweep(ctx)
-	if f.count("DELETE /repos/test-owner/test-repo/issues/10/labels/") > 0 {
-		t.Fatal("ready-for-human label was removed when Mergeable was temporarily nil")
-	}
-
-	// 2. Even if another readiness gate fails (e.g., CI pending), ready-for-human
-	// must never be removed by the watcher.
-	f.reset()
-	f.set(func(f *prFixture) { f.pending = true })
-	s.sweep(ctx)
-	if f.count("DELETE /repos/test-owner/test-repo/issues/10/labels/") > 0 {
-		t.Fatal("expected ready-for-human label never to be removed when CI became pending")
-	}
-}
-
 func TestEvaluate_ReadyForHuman_ReviewLabelAndHumanAssignees(t *testing.T) {
 	tempDir := t.TempDir()
 	incomingDir := filepath.Join(tempDir, "incoming")
@@ -1890,7 +1839,7 @@ func TestEvaluate_ReadyForHuman_ReviewLabelAndHumanAssignees(t *testing.T) {
 	s, queue := newTestScanner(t, tempDir, testOpts{
 		GitHub:         ghClient,
 		Kube:           newTestKubeClient(),
-		BotUsers:       []string{"bot1"},
+		BotUsers:       []string{"bot1", "reviewbot"}, // the pool holds every role's users, the reviewer too
 		GitHubLogin:    "bot1",
 		TriggerLabel:   "factory",
 		ReviewerLogins: []string{"reviewbot"},
@@ -2002,5 +1951,52 @@ func TestEvaluate_ReadyForHuman_ReviewLabelAndHumanAssignees(t *testing.T) {
 
 	if len(removedPRLabels) != 1 || removedPRLabels[0] != "overseer/review" {
 		t.Fatalf("step 4: removedPRLabels = %v, want [overseer/review] removed after re-review settled", removedPRLabels)
+	}
+}
+
+// listingIssueLocked is the pull request as the issue listings report it. The
+// caller must hold f.mu.
+func (f *prFixture) listingIssueLocked() *githubv39.Issue {
+	updated := f.updated
+	labels := []*githubv39.Label{{Name: githubv39.String("factory")}}
+	if f.readyForHuman {
+		labels = append(labels, &githubv39.Label{Name: githubv39.String("factory/ready-for-human")})
+	}
+	return &githubv39.Issue{
+		Number:           githubv39.Int(f.num),
+		UpdatedAt:        &updated,
+		PullRequestLinks: &githubv39.PullRequestLinks{},
+		Assignees:        []*githubv39.User{{Login: githubv39.String("bot1")}},
+		Labels:           labels,
+	}
+}
+
+// TestSweep_PreservesReadyForHumanWhenMergeableUnknown verifies that an
+// already-ready pull request never has its ready-for-human label stripped by
+// the watcher, whether mergeability is temporarily unknown or CI is pending.
+func TestSweep_PreservesReadyForHumanWhenMergeableUnknown(t *testing.T) {
+	f := &prFixture{
+		num:           10,
+		headSHA:       "sha-1",
+		updated:       time.Now().Add(-time.Hour),
+		mergeableNil:  true,
+		readyForHuman: true,
+	}
+	s := newFixtureScanner(t, f)
+	ctx := context.Background()
+
+	// 1. Mergeable == nil while all other gates pass: ready-for-human must not be removed.
+	s.sweep(ctx)
+	if f.count("DELETE /repos/test-owner/test-repo/issues/10/labels/") > 0 {
+		t.Fatal("ready-for-human label was removed when Mergeable was temporarily nil")
+	}
+
+	// 2. Even if another readiness gate fails (e.g., CI pending), ready-for-human
+	// must never be removed by the watcher.
+	f.reset()
+	f.set(func(f *prFixture) { f.pending = true })
+	s.sweep(ctx)
+	if f.count("DELETE /repos/test-owner/test-repo/issues/10/labels/") > 0 {
+		t.Fatal("expected ready-for-human label never to be removed when CI became pending")
 	}
 }

@@ -399,7 +399,13 @@ until step 4 - step 4's second part, done: the engine decides every rule
 (`spec.rules.engine`, `use`, `canaryLabel`, `canaryPercent` and the watch's
 canary labelling gone; `spec.rules.disabled` the operator's only say, and a
 disabled rule's queued task dropped at start); the scanners' legacy
-branches, now unreached, go next - step 4's first part, done: the decision at start is always
+branches, now unreached, go next (B1, done: the PR scanner's - evaluate
+is the facts, the engine's inherit-labels/inactive writes, its one
+pr-care rule through that rule's handler or its give-up's writes, its
+ready/ready-unreview writes; the handlers' own retry limits, cooldowns and
+give-ups, the label sync, the inactivity pause, the readiness reconcile
+and the PR scanner's Handed recording are gone) - step 4's first part,
+done: the decision at start is always
 on (`spec.rules.atStart` and `spec.preconditions` gone, `Expect`/`StaleTask`
 deleted), a task of a rule the scanner still decides held to the
 preconditions' checks on the facts read (`stale`); step 3a, done: `watch/act.ApplyWrites` carries out a

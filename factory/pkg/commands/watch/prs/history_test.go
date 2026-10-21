@@ -218,46 +218,6 @@ func TestGetLastPRActivityTime(t *testing.T) {
 	}
 }
 
-func TestHasInactivityComment(t *testing.T) {
-	baseTime := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
-	pauseBody := "🤖 AI Factory has paused automated processing on this pull request due to a period of inactivity with no human comments"
-
-	// Case 1: No comments
-	if hasInactivityComment(nil, baseTime) {
-		t.Errorf("Case 1 failed: expected false for nil comments")
-	}
-
-	// Case 2: Inactivity comment posted AFTER lastActivity
-	commentAfter := baseTime.Add(2 * time.Hour)
-	comments := []*githubv39.IssueComment{
-		{
-			CreatedAt: &commentAfter,
-			Body:      &pauseBody,
-		},
-	}
-	if !hasInactivityComment(comments, baseTime) {
-		t.Errorf("Case 2 failed: expected true when pause comment is after lastActivity")
-	}
-
-	// Case 3: Inactivity comment posted BEFORE lastActivity (e.g. human commented afterwards)
-	humanTimeAfter := baseTime.Add(4 * time.Hour)
-	if hasInactivityComment(comments, humanTimeAfter) {
-		t.Errorf("Case 3 failed: expected false when pause comment is before lastActivity")
-	}
-
-	// Case 4: Other comments with different body
-	otherBody := "LGTM"
-	otherComments := []*githubv39.IssueComment{
-		{
-			CreatedAt: &commentAfter,
-			Body:      &otherBody,
-		},
-	}
-	if hasInactivityComment(otherComments, baseTime) {
-		t.Errorf("Case 4 failed: expected false for non-pause comment")
-	}
-}
-
 // TestFetchHistory_ReadsInlineCommentsInOneRequest covers the change from the
 // per-review endpoint to the pull request-wide one: the cost of reading a
 // conversation must not grow with the number of reviews it contains.

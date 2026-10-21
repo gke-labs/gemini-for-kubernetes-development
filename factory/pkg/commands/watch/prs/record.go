@@ -179,65 +179,19 @@ func logins(users []*githubv39.User) []string {
 	return out
 }
 
-// prCareRules are the pr-care group's rules, in the scanner's order.
-var prCareRules = []string{"comments", "conflict", "ci", "review", "ready", "ready-unreview"}
+// prCareRules are the pr-care rules that take the PR, in the scanner's
+// order: at most one decides.
+var prCareRules = []string{"comments", "conflict", "ci", "review"}
 
 // engineDecide is the engine's decisions on the pull request being
-// evaluated, from the facts recorded so far; nil without a record (the
-// engine needs the facts the record holds).
+// evaluated, from the facts recorded so far.
 func (s *Scanner) engineDecide() []rules.Decision {
-	if s.rec == nil {
-		return nil
-	}
 	return s.rules.Decide(*s.rec.Item, s.rulesEnv())
 }
 
-// takes is whether the engine decides rule for the scanner on the pull
-// request: the engine on, the rule handed to it, the canary label on the
-// pull request when there is one, and the facts recorded.
-func (s *Scanner) takes(rule string, prIssue *githubv39.Issue) bool {
-	return s.rec != nil && s.rules.Takes(rule)
-}
-
-// decides is whether the scanner goes on to act on rule, a rule of its own
-// step (inherit-labels, inactive): never when the rule is disabled; on the
-// engine's decision when the engine decides it; else as the scanner would
-// (legacy), whose own checks follow.
-func (s *Scanner) decides(rule string, prIssue *githubv39.Issue, legacy bool) bool {
-	if s.rules.Off(rule) {
-		return false
-	}
-	if s.takes(rule, prIssue) {
-		return rules.Decided(s.engineDecide(), rule)
-	}
-	return legacy
-}
-
-// picks is a pr-care case's condition: never when its rule is disabled; the
-// engine's decision (engineCare) when the engine decides the rule; else the
-// scanner's own condition. The handler it leads to keeps its outside gates
-// (a busy sandbox). An engine's give-up leads only to a handler that gives
-// up on it (ci's, given the outcome by engineOutcome); any other handler
-// would run instead.
-func (s *Scanner) picks(rule string, prIssue *githubv39.Issue, legacy bool) bool {
-	if s.rules.Off(rule) {
-		return false
-	}
-	if s.takes(rule, prIssue) {
-		// The engine's give-up was acted on before the cases
-		// (engineGivesUp): only its run takes a case.
-		return s.engineOutcome(rule, prIssue) == rules.OutcomeRun
-	}
-	return legacy
-}
-
-// engineOutcome is the engine's decision on rule for the pull request when
-// it decides the rule for the scanner: its outcome, or "" when the engine
-// does not decide the rule or decided nothing.
-func (s *Scanner) engineOutcome(rule string, prIssue *githubv39.Issue) string {
-	if !s.takes(rule, prIssue) {
-		return ""
-	}
+// engineOutcome is the outcome of the engine's decision on rule among the
+// pull request's pr-care decisions, "" when it decided none.
+func (s *Scanner) engineOutcome(rule string) string {
 	for _, d := range s.engineCare {
 		if d.Rule == rule {
 			return d.Outcome
@@ -246,65 +200,15 @@ func (s *Scanner) engineOutcome(rule string, prIssue *githubv39.Issue) string {
 	return ""
 }
 
-// recordHandedStep notes, when the engine decides rule for the scanner on
-// the pull request, what the scanner's own condition said: legacy.
-func (s *Scanner) recordHandedStep(rule string, prIssue *githubv39.Issue, legacy bool) {
-	if s.takes(rule, prIssue) {
-		s.rec.Handed(rule, legacy)
-	}
-}
-
-// recordHanded notes, for each pr-care rule the engine decides for the
-// scanner, whether the scanner's own pick (legacyPick, the first case its
-// conditions take, "" for none) was that rule: what the record compares
-// once Decided is the engine's.
-func (s *Scanner) recordHanded(prIssue *githubv39.Issue, legacyPick string) {
-	for _, rule := range prCareRules {
-		if rule == "ready" || rule == "ready-unreview" {
-			continue
-		}
-		if s.takes(rule, prIssue) {
-			s.rec.Handed(rule, legacyPick == rule)
-		}
-	}
-}
-
-// picksReadiness is whether readiness is reconciled: not when ready is
-// disabled (both its halves go with it); when the engine decides ready, on
-// its deciding ready or ready-unreview; else always, as before.
-func (s *Scanner) picksReadiness(prIssue *githubv39.Issue) bool {
-	if s.rules.Off("ready") {
-		return false
-	}
-	if s.takes("ready", prIssue) {
-		return rules.Decided(s.engineCare, "ready") || rules.Decided(s.engineCare, "ready-unreview")
-	}
-	return true
-}
-
-// engineActs is whether the engine's decision on rule is carried out as
-// its writes (act.ApplyWrites) rather than by the scanner's handler: the
-// rule not disabled, and the engine deciding it for the scanner.
-func (s *Scanner) engineActs(rule string, prIssue *githubv39.Issue) bool {
-	return !s.rules.Off(rule) && s.takes(rule, prIssue)
-}
-
-// engineCareRule is the pr-care rule the engine decided, the first: they
-// are exclusive, so at most one of comments, conflict, ci and review.
+// engineCareRule is the pr-care rule the engine decided, "" when none:
+// they take the PR, so there is at most one.
 func (s *Scanner) engineCareRule() string {
 	for _, d := range s.engineCare {
-		if slices.Contains(prCareRules[:4], d.Rule) {
+		if slices.Contains(prCareRules, d.Rule) {
 			return d.Rule
 		}
 	}
 	return ""
-}
-
-// engineGivesUp is whether the pr-care rule the engine decided for the
-// scanner gives up.
-func (s *Scanner) engineGivesUp(prIssue *githubv39.Issue) bool {
-	rule := s.engineCareRule()
-	return rule != "" && s.engineActs(rule, prIssue) && s.engineOutcome(rule, prIssue) == rules.OutcomeGiveUp
 }
 
 // actOn carries out the engine's decision on rule for the pull request
@@ -338,13 +242,10 @@ func (s *Scanner) actOn(ctx context.Context, prIssue *githubv39.Issue, rule stri
 	return true
 }
 
-// stampDecision puts the engine's run decision on rule, when the engine
-// decides it for the scanner, on the task the handler built: the runner
-// then runs the rule's recipe, apply and inputs (act.Task).
-func (s *Scanner) stampDecision(task *api.QueueTask, rule string, prIssue *githubv39.Issue) {
-	if !s.engineActs(rule, prIssue) {
-		return
-	}
+// stampDecision puts the engine's run decision on rule on the task the
+// handler built: the runner then runs the rule's recipe, apply and inputs
+// (act.Task).
+func (s *Scanner) stampDecision(task *api.QueueTask, rule string) {
 	for _, d := range s.engineCare {
 		if d.Rule == rule {
 			act.Task(task, d, s.rules.Set().Named(rule))

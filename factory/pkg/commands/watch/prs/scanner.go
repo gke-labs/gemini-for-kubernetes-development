@@ -176,13 +176,12 @@ type Deps struct {
 	// Run is what stops the scanner, and unlike this signal it also aborts a
 	// cycle that has already started.
 	Paused func() bool
-	// Recorder, when set, records each evaluation's decisions with the
-	// facts they were made on, for the watch rules' replay
-	// (rules.Record); nil records nothing.
+	// Recorder records each evaluation's decisions with the facts they were
+	// made on, which the engine decides on, for the watch rules' replay
+	// (rules.Record); nil keeps the record for the evaluation alone.
 	Recorder *rules.Recorder
 	// Rules is the operator's say over the rules: those disabled, which
-	// the scanner does not act on, and those the engine decides for it.
-	// nil: the scanner alone, every rule on.
+	// the engine does not decide. nil: every rule on.
 	Rules *rules.Control
 }
 
@@ -197,11 +196,10 @@ type Scanner struct {
 	paused    func() bool
 	recorder  *rules.Recorder
 	rules     *rules.Control
-	// rec is the record of the pull request evaluate is deciding about,
-	// nil when not recording. Evaluations run one at a time.
+	// rec is the record of the pull request evaluate is deciding about:
+	// the facts the engine decides on. Evaluations run one at a time.
 	rec *rules.Recording
-	// engineCare is the engine's decisions on that pull request when it
-	// decides one of the pr-care rules for the scanner.
+	// engineCare is the engine's decisions on that pull request.
 	engineCare []rules.Decision
 
 	// reactions reads the acknowledgement state the watcher records on
@@ -229,6 +227,19 @@ func New(cfg Config, deps Deps) *Scanner {
 	if cfg.ScanLimit <= 0 {
 		cfg.ScanLimit = defaultScanLimit
 	}
+	// The engine decides every rule, on the facts the evaluation records:
+	// without a control the prebaked rules, all on; without a recorder one
+	// that keeps nothing.
+	control := deps.Rules
+	if control == nil {
+		if set, err := rules.Builtin(); err == nil {
+			control, _ = rules.NewControl(nil, set)
+		}
+	}
+	recorder := deps.Recorder
+	if recorder == nil {
+		recorder = rules.NewSinkRecorder(func(rules.Record) {})
+	}
 	return &Scanner{
 		cfg:       cfg,
 		gh:        deps.GitHub,
@@ -237,8 +248,8 @@ func New(cfg Config, deps Deps) *Scanner {
 		sandboxes: deps.Sandboxes,
 		listings:  deps.Listings,
 		paused:    deps.Paused,
-		recorder:  deps.Recorder,
-		rules:     deps.Rules,
+		recorder:  recorder,
+		rules:     control,
 		reactions: conventions.NewReactionInterpreter(deps.GitHub, cfg.GitHubLogin, cfg.AllowlistedBots),
 		state:     newStateStore(deps.Queue),
 	}
@@ -535,14 +546,9 @@ func (s *Scanner) evaluate(ctx context.Context, prIssue *githubv39.Issue) {
 	refs := newRefIssues(s.gh, pr)
 	s.recordCloses(ctx, refs)
 
-	// Sync labels from referenced parent issues to the PR, then re-check: the
-	// stop label may have been inherited by the sync we just performed.
-	s.recordHandedStep("inherit-labels", prIssue, len(getMissingLabelsForPR(prIssue.Labels, refs.all(ctx), s.cfg.TriggerLabel)) > 0)
-	if s.engineActs("inherit-labels", prIssue) {
-		s.actOn(ctx, prIssue, "inherit-labels")
-	} else if s.decides("inherit-labels", prIssue, true) {
-		s.syncReferencedIssueLabels(ctx, pr, prIssue, refs)
-	}
+	// The closing issues' labels the engine has the PR inherit, then the
+	// stop label checked again: it may have been inherited.
+	s.actOn(ctx, prIssue, "inherit-labels")
 	if conventions.HasStopLabel(prIssue.Labels, s.cfg.TriggerLabel) {
 		klog.Infof("Skipping PR #%d after label sync because it has the stop label ('overseer/stop' or '%s/stop')", num, s.cfg.TriggerLabel)
 		_ = s.queue.RemovePendingTasksForNumber(num)
@@ -578,29 +584,16 @@ func (s *Scanner) evaluate(ctx context.Context, prIssue *githubv39.Issue) {
 	state := s.state.get(num)
 	s.recordHistory(pr, history, headSHA)
 
-	if s.takes("inactive", prIssue) {
-		_, inactive := s.inactiveSince(pr, history)
-		s.recordHandedStep("inactive", prIssue, inactive)
-	}
-	if s.engineActs("inactive", prIssue) {
-		if s.actOn(ctx, prIssue, "inactive") {
-			return
-		}
-	} else if s.decides("inactive", prIssue, true) && s.pauseIfInactive(ctx, pr, prIssue, history, headSHA) {
+	// The engine's pause of an inactive PR: nothing more on it.
+	if s.actOn(ctx, prIssue, "inactive") {
 		return
 	}
 
-	// Check Phase 1: Rebase/Conflicts
 	isConflicting := pr.Mergeable != nil && !*pr.Mergeable
-
-	var checkAnalysis prCheckAnalysis
-	var canReview bool
-
 	commentAnalysis := s.evaluateComments(ctx, pr, history, history.lastCommitTime, state.lastCommentAddressedTime)
 	s.rec.Fill(func(it *rules.Item) { it.NewTrustedFeedback = commentAnalysis.hasNewComments })
-	shouldAddressComments := commentAnalysis.hasNewComments || s.shouldRetryComments(num, headSHA)
-	hasUnresolvedComments := shouldAddressComments || s.hasFailedCommentsOnHead(num, headSHA)
 
+	var checkAnalysis prCheckAnalysis
 	if !isConflicting {
 		checkAnalysis, err = s.evaluateChecks(ctx, headSHA)
 		if err != nil {
@@ -610,29 +603,17 @@ func (s *Scanner) evaluate(ctx context.Context, prIssue *githubv39.Issue) {
 		}
 		isApproved := isPRApprovedOrLGTM(pr, prIssue, history.reviews)
 		s.rec.Fill(func(it *rules.Item) { fillChecks(it, checkAnalysis, isApproved) })
-		if isApproved {
-			klog.V(2).Infof("PR #%d is approved / LGTM'd", num)
-		}
-		if !checkAnalysis.hasFailure && !checkAnalysis.hasPending && !hasUnresolvedComments && !isApproved && state.lastReviewedSHA != headSHA && s.shouldAutoReviewPR(ctx, prIssue, refs) {
-			canReview = s.automatedReviewOfHead(history.reviews, headSHA, history.lastCommitTime) == nil
-		}
 	}
 
 	assignedBot := conventions.AssignedBotUser(prIssue, s.cfg.BotUsers)
-	isExplicitlyAssigned := assignedBot != ""
-
 	taskAssignee := assignedBot
 	if taskAssignee == "" {
 		taskAssignee = author
 	}
-
-	canInvestigate := !isConflicting && checkAnalysis.hasFailure && s.canInvestigatePR(num, headSHA, isExplicitlyAssigned, state, history.comments, history.lastCommitTime)
-
 	shortSHA := headSHA
 	if len(shortSHA) > 7 {
 		shortSHA = shortSHA[:7]
 	}
-
 	pc := &prContext{
 		pr:                   pr,
 		prIssue:              prIssue,
@@ -640,73 +621,42 @@ func (s *Scanner) evaluate(ctx context.Context, prIssue *githubv39.Issue) {
 		shortSHA:             shortSHA,
 		lastCommitTime:       history.lastCommitTime,
 		taskAssignee:         taskAssignee,
-		isExplicitlyAssigned: isExplicitlyAssigned,
+		isExplicitlyAssigned: assignedBot != "",
 		prURL:                fmt.Sprintf("https://github.com/%s/%s/pull/%d", s.gh.Owner(), s.gh.Repo(), num),
 		refIssues:            refs,
 	}
 
-	// Top level case statement for handling each type of PR task. A rule
-	// the engine decides for the scanner (rules.Control.Takes) takes its
-	// case on the engine's decision instead of the condition above; a
-	// disabled rule takes none.
-	s.engineCare = nil
-	if s.rules.TakesAny(prCareRules...) {
-		s.engineCare = s.engineDecide()
-		legacyPick := ""
-		for _, c := range []struct {
-			rule string
-			ok   bool
-		}{{"comments", shouldAddressComments}, {"conflict", isConflicting}, {"ci", canInvestigate}, {"review", canReview}} {
-			if c.ok {
-				legacyPick = c.rule
-				break
-			}
-		}
-		s.recordHanded(prIssue, legacyPick)
-	}
+	// The pr-care rule the engine decides, at most one (they take the PR):
+	// its give-up is its writes, its run its handler's task.
+	s.engineCare = s.engineDecide()
 	completed := true
+	rule := s.engineCareRule()
 	switch {
-	// A give-up the engine decides is its writes (the stop label and the
-	// rule's comment), whichever rule's.
-	case s.engineGivesUp(prIssue):
-		s.actOn(ctx, prIssue, s.engineCareRule())
-
-	case s.picks("comments", prIssue, shouldAddressComments):
-		completed = s.handlePRComments(ctx, pc, commentAnalysis, history.comments, s.engineOutcome("comments", prIssue))
-
-	case s.picks("conflict", prIssue, isConflicting):
+	case rule == "":
+	case s.engineOutcome(rule) == rules.OutcomeGiveUp:
+		s.actOn(ctx, prIssue, rule)
+	case rule == "comments":
+		completed = s.handlePRComments(ctx, pc, commentAnalysis)
+	case rule == "conflict":
 		// Returns without recording the evaluation, so a conflicted pull
-		// request is re-evaluated every cycle: whether the conflict is gone is
-		// answered by GetPullRequest, and nothing about resolving it upstream
-		// necessarily moves this pull request's updated_at.
+		// request is evaluated again every cycle: whether the conflict is
+		// gone is answered by GetPullRequest, and nothing about resolving
+		// it upstream necessarily moves this pull request's updated_at.
 		s.handlePRIterate(ctx, pc)
 		return
-
-	case s.picks("ci", prIssue, canInvestigate):
-		completed = s.handlePRInvestigate(ctx, pc, checkAnalysis, history.comments, s.engineOutcome("ci", prIssue))
-
-	case s.picks("review", prIssue, canReview):
+	case rule == "ci":
+		completed = s.handlePRInvestigate(ctx, pc, checkAnalysis)
+	case rule == "review":
 		completed = s.handlePRReview(ctx, pc, checkAnalysis.checkRuns)
 	}
 
-	if s.takes("ready", prIssue) || s.takes("ready-unreview", prIssue) {
-		ready := s.readyForHuman(ctx, pc, checkAnalysis, hasUnresolvedComments, history, isConflicting) && s.gh.Ready()
-		already := hasReadyForHumanLabel(prIssue.Labels, s.cfg.TriggerLabel)
-		s.recordHandedStep("ready", prIssue, ready && !already)
-		s.recordHandedStep("ready-unreview", prIssue, ready && already && len(getReviewLabels(prIssue.Labels, s.cfg.TriggerLabel)) > 0)
-	}
-	switch {
-	case s.engineActs("ready", prIssue):
-		// The engine's ready or ready-unreview: its writes.
-		if s.gh.Ready() {
-			for _, rule := range []string{"ready", "ready-unreview"} {
-				if rules.Decided(s.engineCare, rule) {
-					s.actOn(ctx, prIssue, rule)
-				}
+	// The engine's ready or ready-unreview: its writes.
+	if s.gh.Ready() {
+		for _, rule := range []string{"ready", "ready-unreview"} {
+			if rules.Decided(s.engineCare, rule) {
+				s.actOn(ctx, prIssue, rule)
 			}
 		}
-	case s.picksReadiness(prIssue):
-		s.reconcileReadiness(ctx, pc, checkAnalysis, hasUnresolvedComments, history, isConflicting, assignedBot)
 	}
 	if !completed {
 		return
@@ -731,124 +681,4 @@ func (s *Scanner) recordEvaluation(prIssue *githubv39.Issue, pr *githubv39.PullR
 	state.lastEvaluationActive = checkAnalysis.hasPending || checkAnalysis.hasFailure || pr.Mergeable == nil
 	state.lastEvaluationHadTask = s.queue.HasActivePRTask(num)
 	s.state.set(num, state)
-}
-
-// readyForHuman is whether the pull request is ready to hand to the
-// humans: it merges, its checks are green, no feedback waits, no task of it
-// is active, its review (if one is wanted) is done at its head, and it is
-// open, neither stopped nor a draft.
-func (s *Scanner) readyForHuman(ctx context.Context, pc *prContext, checkAnalysis prCheckAnalysis, hasPendingComments bool, history *prHistory, isConflicting bool) bool {
-	isReviewRequired := s.shouldAutoReviewPR(ctx, pc.prIssue, pc.refIssues)
-	hasBotReviewOnHead := s.hasCompletedBotReviewOnHead(history.reviews, pc.headSHA, history.lastCommitTime)
-	reviewSatisfied := !isReviewRequired || hasBotReviewOnHead
-	return !isConflicting &&
-		pc.pr.GetMergeable() &&
-		!checkAnalysis.hasFailure &&
-		!checkAnalysis.hasPending &&
-		!hasPendingComments &&
-		!s.queue.HasActivePRTask(pc.prIssue.GetNumber()) &&
-		reviewSatisfied &&
-		!conventions.HasStopLabel(pc.prIssue.Labels, s.cfg.TriggerLabel) &&
-		!pc.pr.GetDraft() &&
-		pc.pr.GetState() == "open"
-}
-
-// reconcileReadiness decides whether a pull request is ready for a human and
-// applies the consequences: adding the ready-for-human label, removing any
-// review label, inheriting human assignees from the parent issues, and
-// unassigning the bot that was working on it.
-//
-// Every gate has to hold, including that no task is queued or running for the
-// pull request. Reading that from the in-memory queue rather than from disk is
-// what stopped the label from flapping while a task file was being renamed
-// between directories.
-func (s *Scanner) reconcileReadiness(
-	ctx context.Context,
-	pc *prContext,
-	checkAnalysis prCheckAnalysis,
-	hasPendingComments bool,
-	history *prHistory,
-	isConflicting bool,
-	assignedBot string,
-) {
-	num := pc.prIssue.GetNumber()
-	if !s.readyForHuman(ctx, pc, checkAnalysis, hasPendingComments, history, isConflicting) || !s.gh.Ready() || pc.prIssue == nil {
-		return
-	}
-
-	alreadyReady := hasReadyForHumanLabel(pc.prIssue.Labels, s.cfg.TriggerLabel)
-	if alreadyReady {
-		// The label is already there, so there is nothing to add — but
-		// a review label can arrive AFTER a PR goes ready (adoption
-		// re-adds overseer/review to bot-authored PRs carrying no
-		// trigger label), and returning here left it on the PR
-		// forever, re-arming bot reviews on work a human already owns.
-		if len(getReviewLabels(pc.prIssue.Labels, s.cfg.TriggerLabel)) > 0 {
-			s.rec.Decided("ready-unreview", rules.OutcomeRun)
-		}
-		s.removeReviewLabels(ctx, pc, num)
-		return
-	}
-	s.rec.Decided("ready", rules.OutcomeRun)
-	readyLabel := readyForHumanLabel(s.cfg.TriggerLabel)
-	// Add ready label
-	if s.cfg.DryRun {
-		fmt.Printf("[DRYRUN] Would add label '%s' to PR #%d (passed review on SHA %s)\n", readyLabel, num, pc.headSHA)
-	} else {
-		klog.Infof("PR #%d passed automated review on SHA %s. Adding label '%s'.", num, pc.headSHA, readyLabel)
-		if err := s.gh.AddLabels(ctx, num, []string{readyLabel}); err != nil {
-			klog.Errorf("Failed to add label '%s' to PR #%d: %v", readyLabel, num, err)
-		}
-	}
-	s.removeReviewLabels(ctx, pc, num)
-	// Inherit human assignees from parent issue
-	if pc.refIssues != nil {
-		if humanAssignees := s.getMissingHumanAssigneesForPR(pc.prIssue.Assignees, pc.refIssues.all(ctx)); len(humanAssignees) > 0 {
-			if s.cfg.DryRun {
-				fmt.Printf("[DRYRUN] Would assign inherited human assignees %v to PR #%d (ready for human review)\n", humanAssignees, num)
-			} else {
-				klog.Infof("Assigning inherited human assignees %v to PR #%d (ready for human review)", humanAssignees, num)
-				if err := s.gh.AddAssignees(ctx, num, humanAssignees); err != nil {
-					klog.Errorf("Failed to assign inherited human assignees %v to PR #%d: %v", humanAssignees, num, err)
-				}
-			}
-		}
-	}
-	// Remove bot assignee
-	if assignedBot != "" {
-		if s.cfg.DryRun {
-			fmt.Printf("[DRYRUN] Would unassign bot %s from PR #%d (ready for human review)\n", assignedBot, num)
-		} else {
-			fmt.Printf("Unassigning bot %s from PR #%d (ready for human review)...\n", assignedBot, num)
-			if err := s.gh.RemoveAssignees(ctx, num, []string{assignedBot}); err != nil {
-				klog.Errorf("Failed to unassign bot %s from PR #%d: %v", assignedBot, num, err)
-			}
-		}
-	}
-}
-
-// removeReviewLabels takes the review label off a PR that is ready for
-// a human, so bot reviews stay disabled. Idempotent: a PR with no
-// review label makes no API calls, which is what lets it run on every
-// pass over an already-ready PR.
-func (s *Scanner) removeReviewLabels(ctx context.Context, pc *prContext, num int) {
-	for _, revLabel := range getReviewLabels(pc.prIssue.Labels, s.cfg.TriggerLabel) {
-		if s.cfg.DryRun {
-			fmt.Printf("[DRYRUN] Would remove label '%s' from PR #%d (ready for human review)\n", revLabel, num)
-			continue
-		}
-		klog.Infof("PR #%d is ready for human review on SHA %s. Removing label '%s'.", num, pc.headSHA, revLabel)
-		if err := s.gh.RemoveLabel(ctx, num, revLabel); err != nil {
-			klog.Errorf("Failed to remove label '%s' from PR #%d: %v", revLabel, num, err)
-		}
-	}
-}
-
-// comment posts a comment on a pull request, reporting a failure rather than
-// propagating it. A missed comment is cosmetic and must not abort the cycle
-// that was about to queue the actual work.
-func (s *Scanner) comment(ctx context.Context, num int, body string) {
-	if err := s.gh.AddComment(ctx, num, body); err != nil {
-		klog.Errorf("Failed to create GitHub comment on #%d: %v", num, err)
-	}
 }
