@@ -854,27 +854,3 @@ func (s *Scanner) comment(ctx context.Context, num int, body string) {
 		klog.Errorf("Failed to create GitHub comment on #%d: %v", num, err)
 	}
 }
-
-// react records a reaction on a conversation comment. Reactions are how the
-// watcher signals what it has picked up, so a failure is worth reporting but is
-// never a reason to abandon the work itself.
-func (s *Scanner) react(ctx context.Context, commentID int64, content conventions.Reaction) {
-	if err := s.gh.AddIssueCommentReaction(ctx, commentID, string(content)); err != nil {
-		klog.Warningf("Failed to create reaction '%s' on comment %d: %v", content, commentID, err)
-	}
-}
-
-// reactToReviewComment records a reaction on an inline review comment.
-func (s *Scanner) reactToReviewComment(ctx context.Context, commentID int64, content conventions.Reaction) {
-	if err := s.gh.AddPullRequestCommentReaction(ctx, commentID, string(content)); err != nil {
-		klog.Warningf("Failed to create reaction '%s' on PR review comment %d: %v", content, commentID, err)
-	}
-}
-
-// reactToReview records a reaction on the top-level body of a review,
-// addressed by the review's node ID.
-func (s *Scanner) reactToReview(ctx context.Context, reviewNodeID string, content conventions.Reaction) {
-	if err := s.gh.AddReviewReaction(ctx, reviewNodeID, string(content)); err != nil {
-		klog.Warningf("Failed to create reaction '%s' on PR review %s: %v", content, reviewNodeID, err)
-	}
-}

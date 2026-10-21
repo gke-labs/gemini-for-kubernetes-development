@@ -96,16 +96,13 @@ func atStart(set rules.Set, rule string, task *api.QueueTask, it rules.Item, env
 //
 //   - a workflow step the nudge queued (a linked issue closed): the nudge
 //     steps the workflow at once, inside the workflow rule's cooldown, and
-//     is not on the engine yet, so the workflow rule's answer is not its;
-//   - a comments task: queueing it marked the feedback it answers as
-//     addressed and acknowledged it with a reaction, so on the facts read
-//     now there is no new feedback, and the rule would drop every one.
+//     is not on the engine yet, so the workflow rule's answer is not its.
+//
+// A comments task decides again: it acknowledges the feedback it answers
+// when it starts (NotifyTaskStarted), so the feedback is still new at start.
 func gatesOnly(rule string, task *api.QueueTask) string {
-	switch {
-	case rule == "workflow" && task.TriggerReason == api.TriggerReasonLinkedIssueClosed:
+	if rule == "workflow" && task.TriggerReason == api.TriggerReasonLinkedIssueClosed {
 		return "the nudge queued it"
-	case rule == "comments":
-		return "queueing it acknowledged the feedback it answers"
 	}
 	return ""
 }

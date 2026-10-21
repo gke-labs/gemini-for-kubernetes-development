@@ -222,3 +222,16 @@ func foldProcessedPRTask(t *api.QueueTask, name string, state prState) prState {
 	}
 	return state
 }
+
+// MarkCommentsAddressed records that a comments task enqueued at at has
+// started on PR num: feedback until then is the task's to answer, and no
+// longer new to the next cycle (NotifyTaskStarted). A restarted watcher
+// recovers the same from the task once it has finished
+// (processedPRStates).
+func (s *Scanner) MarkCommentsAddressed(num int, at time.Time) {
+	state := s.state.get(num)
+	if at.After(state.lastCommentAddressedTime) {
+		state.lastCommentAddressedTime = at
+		s.state.set(num, state)
+	}
+}

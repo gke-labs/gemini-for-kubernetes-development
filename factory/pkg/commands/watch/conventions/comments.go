@@ -82,6 +82,9 @@ type ResolveOptions struct {
 	// the task's trigger event time, so anything earlier was never this task's
 	// and need not cost a request to rule out. Zero considers everything.
 	Since time.Time
+	// TriggerLabel names the ignore prefix (HasIgnorePrefix): feedback
+	// opting out is never acknowledged, as the scanner never picks it up.
+	TriggerLabel string
 }
 
 // ResolveCommentReactions closes out the acknowledgements on a pull request:
@@ -99,28 +102,48 @@ type ResolveOptions struct {
 // The three kinds of feedback are resolved independently: failing to list one
 // of them is logged and does not stop the others from being resolved.
 func ResolveCommentReactions(ctx context.Context, client CommentResolverClient, opts ResolveOptions) {
+	stampFeedback(ctx, client, opts, string(opts.Resolution), "resolve", CommentState.AwaitingOutcome)
+}
+
+// AcknowledgeCommentReactions marks the feedback a task is about to answer
+// as picked up, when the task starts: the acknowledged reaction on every
+// conversation comment, review and inline review comment since opts.Since
+// from an author the scanner listens to that still needs attention (no
+// reaction of the watcher's yet). Done at start, not when the task is
+// queued: a task dropped before it starts (a gate, its rule no longer
+// deciding it) leaves the feedback unmarked, for the next scan to pick up.
+// opts.Resolution is unused.
+func AcknowledgeCommentReactions(ctx context.Context, client CommentResolverClient, opts ResolveOptions) {
+	stampFeedback(ctx, client, opts, string(ReactionAcknowledged), "acknowledge", CommentState.NeedsAttention)
+}
+
+// stampFeedback adds content to every piece of the PR's feedback opts
+// selects whose reactions want it (what says what reaction it is).
+func stampFeedback(ctx context.Context, client CommentResolverClient, opts ResolveOptions, content, what string, want func(CommentState) bool) {
 	interpreter := NewReactionInterpreter(client, opts.SelfLogin, opts.AllowlistedBots)
-	content := string(opts.Resolution)
 	prNum := opts.PRNumber
 	// candidate reports whether a piece of feedback could have been picked up
 	// by the task: the author is one the scanner listens to, and it is not
 	// older than the task's trigger.
-	candidate := func(u *githubv39.User, association string, at time.Time) bool {
+	candidate := func(u *githubv39.User, association, body string, at time.Time) bool {
 		if !opts.Since.IsZero() && at.Before(opts.Since) {
+			return false
+		}
+		if opts.TriggerLabel != "" && HasIgnorePrefix(body, opts.TriggerLabel) {
 			return false
 		}
 		return IsFeedbackAuthor(u, association, opts.SelfLogin, opts.AllowlistedBots, opts.ReviewerLogins, opts.TrustedLogins)
 	}
 
 	if comments, err := client.ListIssueComments(ctx, prNum); err != nil {
-		klog.Warningf("Failed to list comments on PR #%d to resolve reactions: %v", prNum, err)
+		klog.Warningf("Failed to list comments on PR #%d to %s reactions: %v", prNum, what, err)
 	} else {
 		for _, c := range comments {
-			if !candidate(c.GetUser(), c.GetAuthorAssociation(), c.GetCreatedAt()) {
+			if !candidate(c.GetUser(), c.GetAuthorAssociation(), c.GetBody(), c.GetCreatedAt()) {
 				continue
 			}
 			id := c.GetID()
-			resolveIfAwaiting(interpreter, fmt.Sprintf("comment %d", id),
+			stampIf(interpreter, want, fmt.Sprintf("comment %d", id),
 				func() ([]*githubv39.Reaction, error) { return client.IssueCommentReactions(ctx, id) },
 				func() error { return client.AddIssueCommentReaction(ctx, id, content) },
 			)
@@ -133,17 +156,17 @@ func ResolveCommentReactions(ctx context.Context, client CommentResolverClient, 
 	// creation time.
 	reviewSubmittedAt := make(map[int64]time.Time)
 	if reviews, err := client.ListReviews(ctx, prNum); err != nil {
-		klog.Warningf("Failed to list reviews on PR #%d to resolve reactions: %v", prNum, err)
+		klog.Warningf("Failed to list reviews on PR #%d to %s reactions: %v", prNum, what, err)
 	} else {
 		for _, r := range reviews {
 			reviewSubmittedAt[r.GetID()] = r.GetSubmittedAt()
 			// Reviews are only reachable for reactions by node ID; a review
 			// without one cannot have been acknowledged in the first place.
 			nodeID := r.GetNodeID()
-			if nodeID == "" || !candidate(r.GetUser(), r.GetAuthorAssociation(), r.GetSubmittedAt()) {
+			if nodeID == "" || !candidate(r.GetUser(), r.GetAuthorAssociation(), r.GetBody(), r.GetSubmittedAt()) {
 				continue
 			}
-			resolveIfAwaiting(interpreter, fmt.Sprintf("review %d", r.GetID()),
+			stampIf(interpreter, want, fmt.Sprintf("review %d", r.GetID()),
 				func() ([]*githubv39.Reaction, error) { return client.ReviewReactions(ctx, nodeID) },
 				func() error { return client.AddReviewReaction(ctx, nodeID, content) },
 			)
@@ -151,14 +174,14 @@ func ResolveCommentReactions(ctx context.Context, client CommentResolverClient, 
 	}
 
 	if revComments, err := client.ListAllReviewComments(ctx, prNum); err != nil {
-		klog.Warningf("Failed to list review comments on PR #%d to resolve reactions: %v", prNum, err)
+		klog.Warningf("Failed to list review comments on PR #%d to %s reactions: %v", prNum, what, err)
 	} else {
 		for _, rc := range revComments {
-			if !candidate(rc.GetUser(), rc.GetAuthorAssociation(), ReviewCommentTime(rc, reviewSubmittedAt[rc.GetPullRequestReviewID()])) {
+			if !candidate(rc.GetUser(), rc.GetAuthorAssociation(), rc.GetBody(), ReviewCommentTime(rc, reviewSubmittedAt[rc.GetPullRequestReviewID()])) {
 				continue
 			}
 			id := rc.GetID()
-			resolveIfAwaiting(interpreter, fmt.Sprintf("review comment %d", id),
+			stampIf(interpreter, want, fmt.Sprintf("review comment %d", id),
 				func() ([]*githubv39.Reaction, error) { return client.PullRequestCommentReactions(ctx, id) },
 				func() error { return client.AddPullRequestCommentReaction(ctx, id, content) },
 			)
@@ -192,23 +215,24 @@ func ReviewCommentTime(rc *githubv39.PullRequestComment, reviewSubmittedAt time.
 	return created
 }
 
-// resolveIfAwaiting adds the outcome reaction to a single piece of feedback
-// if it is awaiting one.
+// stampIf adds a reaction to a single piece of feedback if its reactions
+// want it (want: CommentState.AwaitingOutcome for an outcome,
+// NeedsAttention for the acknowledgement).
 //
-// A failed read leaves the feedback alone. The outcome reaction is a signal
-// rather than the work itself, and stamping one on feedback the watcher cannot
+// A failed read leaves the feedback alone. The reaction is a signal rather
+// than the work itself, and stamping one on feedback the watcher cannot
 // show it picked up would misreport what this task addressed.
-func resolveIfAwaiting(interpreter *ReactionInterpreter, desc string, list func() ([]*githubv39.Reaction, error), add func() error) {
+func stampIf(interpreter *ReactionInterpreter, want func(CommentState) bool, desc string, list func() ([]*githubv39.Reaction, error), add func() error) {
 	reactions, err := list()
 	if err != nil {
 		klog.Warningf("Failed to read reactions on %s: %v", desc, err)
 		return
 	}
-	if !interpreter.Interpret(reactions).AwaitingOutcome() {
+	if !want(interpreter.Interpret(reactions)) {
 		return
 	}
 	if err := add(); err != nil {
-		klog.Warningf("Failed to resolve reaction on %s: %v", desc, err)
+		klog.Warningf("Failed to react on %s: %v", desc, err)
 	}
 }
 
