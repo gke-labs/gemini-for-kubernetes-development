@@ -75,7 +75,39 @@ func (c *watcherTaskCoordinator) Redecide(ctx context.Context, filename string, 
 	if !w.rulesControl.Takes(rule, it.Labels) {
 		return false, ""
 	}
-	return redecide(w.rulesControl.Set(), rule, task, it, env)
+	return atStart(w.rulesControl.Set(), rule, task, it, env)
+}
+
+// atStart is Redecide on the facts read: a task held to the gates alone
+// (gatesOnly) is dropped only on a gate; any other, on redecide's answer.
+func atStart(set rules.Set, rule string, task *api.QueueTask, it rules.Item, env rules.Env) (bool, string) {
+	if why := gatesOnly(rule, task); why != "" {
+		if g, ok := rules.GateOf(it, env); ok {
+			return true, "the item " + g.Why
+		}
+		klog.V(2).Infof("Deciding %s on #%d again before it starts: only the gates, %s", rule, it.Number, why)
+		return false, ""
+	}
+	return redecide(set, rule, task, it, env)
+}
+
+// gatesOnly says why a task is held to the gates alone at start, not to its
+// rule, "" when its rule decides again:
+//
+//   - a workflow step the nudge queued (a linked issue closed): the nudge
+//     steps the workflow at once, inside the workflow rule's cooldown, and
+//     is not on the engine yet, so the workflow rule's answer is not its;
+//   - a comments task: queueing it marked the feedback it answers as
+//     addressed and acknowledged it with a reaction, so on the facts read
+//     now there is no new feedback, and the rule would drop every one.
+func gatesOnly(rule string, task *api.QueueTask) string {
+	switch {
+	case rule == "workflow" && task.TriggerReason == api.TriggerReasonLinkedIssueClosed:
+		return "the nudge queued it"
+	case rule == "comments":
+		return "queueing it acknowledged the feedback it answers"
+	}
+	return ""
 }
 
 // redecide is Redecide on facts read: whether the set no longer decides
