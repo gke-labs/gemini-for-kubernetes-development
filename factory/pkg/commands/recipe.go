@@ -932,12 +932,17 @@ func settleRun(ctx context.Context, rec *recipe.Recipe, sandboxName string, e sp
 	_ = factorysandbox.SettleRecordedRun(ctx, kubeClient, rootFlags.Namespace, sandboxName, taskType, side, e.ID, state)
 }
 
-// needsAPerson is what a failed task's error adds when it needs a person.
+// needsAPerson is what a failed task's error adds when it needs a person,
+// or its agent ran out of turns.
 func needsAPerson(e spool.Entry) string {
-	if e.RequiresHuman == "" {
-		return ""
+	var why string
+	if e.OutOfTurns() {
+		why += ": its agent ran out of turns (" + e.StopReason + "), the engine's limit of model turns for one request"
 	}
-	return " and needs a person: " + e.RequiresHuman
+	if e.RequiresHuman != "" {
+		why += " and needs a person: " + e.RequiresHuman
+	}
+	return why
 }
 
 // startRecipeTask records the task on its sandbox and hands it over.

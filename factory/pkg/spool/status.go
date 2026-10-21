@@ -153,6 +153,7 @@ func readCode(path string) string {
 func Overlay(e *Entry, taskDir string) {
 	e.EngineRetries = engineRetries(taskDir)
 	e.RequiresHuman = requiresHuman(taskDir)
+	e.StopReason = stopReason(taskDir)
 	st, ok := ReadStatus(taskDir)
 	if !ok {
 		return

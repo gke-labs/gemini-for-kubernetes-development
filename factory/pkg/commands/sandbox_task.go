@@ -249,6 +249,13 @@ func newTaskStatusCommand(ctx context.Context) *cobra.Command {
 			if e.Reason != "" {
 				fmt.Fprintf(w, "Reason:\t%s\n", e.Reason)
 			}
+			if e.StopReason != "" {
+				stop := e.StopReason
+				if e.OutOfTurns() {
+					stop += " (the agent ran out of turns: the engine's limit of model turns for one request)"
+				}
+				fmt.Fprintf(w, "Stopped:\t%s\n", stop)
+			}
 			if e.EngineRetries != nil {
 				fmt.Fprintf(w, "Engine retries:\t%s\n", engineRetriesText(e.EngineRetries))
 			}

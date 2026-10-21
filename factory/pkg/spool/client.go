@@ -46,6 +46,17 @@ type Entry struct {
 	// RequiresHuman is why the task failed in a way running it again would
 	// repeat (RequiresHumanFile), when it did.
 	RequiresHuman string `json:"requires_human,omitempty"`
+	// StopReason is the ACP stop reason of the turn the task failed on,
+	// when that turn ended otherwise than with the agent's answer
+	// (StopReasonFile): "step 8:ask: max_turn_requests" is a task whose
+	// agent ran out of turns.
+	StopReason string `json:"stop_reason,omitempty"`
+}
+
+// OutOfTurns is whether the task failed because its agent ran out of
+// turns: the engine cut a request off at its limit of model turns.
+func (e Entry) OutOfTurns() bool {
+	return strings.HasSuffix(e.StopReason, ": max_turn_requests")
 }
 
 // taskName splits a task directory name into its kind and the time in it.
