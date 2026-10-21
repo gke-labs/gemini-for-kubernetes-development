@@ -130,22 +130,7 @@ type QueueTask struct {
 	Apply    string            `yaml:"apply,omitempty" json:"apply,omitempty"`
 	Inputs   map[string]string `yaml:"inputs,omitempty" json:"inputs,omitempty"`
 	PRLabels bool              `yaml:"prLabels,omitempty" json:"prLabels,omitempty"`
-	// Expect names the facts the task was decided on (ExpectHead,
-	// ExpectNoLinkedPR), which the dispatcher checks again before it
-	// starts the task, when preconditions are on: a task whose facts no
-	// longer hold is dropped, not run (design/watch-rules.md, The queue).
-	Expect []string `yaml:"expect,omitempty"`
 }
-
-// The facts a task may be decided on (QueueTask.Expect).
-const (
-	// ExpectHead is the PR's head: the task was decided at CommitSHA, and
-	// a PR that has moved on since is no longer what it was decided on.
-	ExpectHead = "head"
-	// ExpectNoLinkedPR is that no open PR was linked to the issue: one
-	// opened since makes the fix redundant.
-	ExpectNoLinkedPR = "no-linked-pr"
-)
 
 // Duration returns the elapsed execution duration between StartedAt and CompletedAt,
 // or 0 if either timestamp is unset or CompletedAt is before StartedAt.
@@ -168,7 +153,6 @@ func (t *QueueTask) DeepCopy() *QueueTask {
 	}
 	copied := *t
 	copied.Instructions = slices.Clone(t.Instructions)
-	copied.Expect = slices.Clone(t.Expect)
 	return &copied
 }
 

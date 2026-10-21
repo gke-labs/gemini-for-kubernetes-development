@@ -3,7 +3,8 @@ package api
 import "time"
 
 // Drop is a queued task the dispatcher dropped before starting it,
-// because a fact it was decided on no longer held (QueueTask.Expect). A
+// because the rules no longer decide it on the item's facts read then
+// (TaskCoordinator.Redecide). A
 // drop is not a run: it leaves no processed task, so it counts toward
 // no cooldown, retry or give-up.
 type Drop struct {

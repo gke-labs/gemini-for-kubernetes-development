@@ -84,14 +84,6 @@ type OverseerRules struct {
 	// scanners or the engine: the operator's emergency switch.
 	// +kubebuilder:validation:Optional
 	Disabled []string `json:"disabled,omitempty"`
-
-	// AtStart has the engine decide again, just before a queued task of a
-	// rule it decides starts, on the item's facts read then: a task it no
-	// longer decides (feedback came while ci waited, the checks went
-	// green, the issue got a PR, the trigger label went) is dropped, not
-	// counted as an attempt. It replaces preconditions for those rules.
-	// +kubebuilder:validation:Optional
-	AtStart bool `json:"atStart,omitempty"`
 }
 
 // OverseerSpec defines the desired state of Overseer
@@ -164,13 +156,6 @@ type OverseerSpec struct {
 	// Defaults to 24h when unset.
 	// +kubebuilder:validation:Optional
 	TaskTimeout *metav1.Duration `json:"taskTimeout,omitempty"`
-
-	// Preconditions makes the watcher drop a queued task, before it starts,
-	// when a fact it was decided on no longer holds: a PR task whose head
-	// moved, a fix whose issue got a linked PR. A drop is not a run: it
-	// counts toward no cooldown, retry or give-up.
-	// +kubebuilder:validation:Optional
-	Preconditions bool `json:"preconditions,omitempty"`
 
 	// Attempts makes the watcher count a give-up's attempts (CI
 	// investigations of a PR) from its queue's journal of runs, which

@@ -357,7 +357,10 @@ three attempts. Today `HasActivePRTask` avoids it by enqueuing nothing
 for a PR while a task of it is queued or running, and evaluating again
 at the new head once it ends.
 
-**Preconditions.** A task records the facts it was decided on, and the
+**Preconditions** (superseded by the decision at start, Phase 4 step 4,
+which keeps exactly these checks for a rule the scanner still decides;
+`QueueTask.Expect`, `StaleTask` and the `preconditions` setting are gone).
+A task records the facts it was decided on, and the
 dispatcher checks them before it starts it, as it already checks the
 stop label and whether the item is closed (one call, nearly free with
 the HTTP cache). Which facts follow from the task, not from the rule
@@ -392,7 +395,10 @@ too; step 2, done: `spec.rules.atStart` → `WATCH_RULES_AT_START` →
 `dispatcher.Config.AtStart`, `watcherTaskCoordinator.Redecide` maps the task
 file to its rule, reads `Facts`, and drops the task on a gate, a moved head
 or a rule that no longer decides, before the preconditions, which stay
-until step 4; step 3a, done: `watch/act.ApplyWrites` carries out a
+until step 4 - step 4's first part, done: the decision at start is always
+on (`spec.rules.atStart` and `spec.preconditions` gone, `Expect`/`StaleTask`
+deleted), a task of a rule the scanner still decides held to the
+preconditions' checks on the facts read (`stale`); step 3a, done: `watch/act.ApplyWrites` carries out a
 decision's writes - labels, assignees, then a stop's label and a comment
 naming it - for inherit-labels, inactive, ready, ready-unreview and every
 give-up the engine decides (PR and issue), in place of their handlers;

@@ -549,9 +549,8 @@ shows the disagreements per rule (the design's Phase 2b).
    and `factory watch rules replay` still compare them, and
    `factory watch rules explain <PR> --record decisions.jsonl` shows each.
 
-4. **Decide again at start.** With the rules handed over, add
-   `atStart: true` to `rules`. Just before a queued task of a rule the
-   engine decides starts, the watch reads the item's facts again (what
+4. **Decide again at start** (always on). Just before a queued task of a
+   rule the engine decides starts, the watch reads the item's facts again (what
    `factory watch rules explain <URL>` reads live) and asks the engine
    whether it still decides that rule, its own task taken out. A task it
    no longer decides is dropped: feedback that came while a ci task waited
@@ -565,7 +564,10 @@ shows the disagreements per rule (the design's Phase 2b).
    workflow inside its cooldown on purpose. A comments task acknowledges the
    feedback it answers (the 👀 reaction, the addressed time) when it starts,
    not when it is queued, so one dropped before it starts leaves the
-   feedback for the next scan.
+   feedback for the next scan. A task of a rule the scanner still decides
+   (`use: legacy`) is held to the facts it was decided on, as the removed
+   `preconditions` setting held it: a rebase, an investigation or a review
+   to its head, a fix to its issue having no linked PR.
 
 ---
 

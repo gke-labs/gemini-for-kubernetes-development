@@ -64,10 +64,6 @@ type TaskCoordinator interface {
 	// (e.g. the target issue/PR was closed or carries a stop label) along with
 	// a human readable reason.
 	ShouldCancelTask(ctx context.Context, task *api.QueueTask) (bool, string)
-	// StaleTask reports whether a fact the task was decided on
-	// (task.Expect) no longer holds, and which. A fact that cannot be
-	// read is taken to hold: the task runs, as it would without the check.
-	StaleTask(ctx context.Context, task *api.QueueTask) (bool, string)
 	// Redecide has the engine decide again, on the item's facts read now,
 	// whether it decides the task's rule (filename names it), as if the
 	// task were not there; drop is that it does not, and why. A task of a
@@ -98,14 +94,6 @@ type Config struct {
 	ShutdownGracePeriod time.Duration
 	// DryRun reports what would be dispatched without executing anything.
 	DryRun bool
-	// Preconditions drops a task, before it starts, whose recorded facts
-	// (QueueTask.Expect) no longer hold, rather than running it on what it
-	// was decided against.
-	Preconditions bool
-	// AtStart has the engine decide again before a first start
-	// (TaskCoordinator.Redecide), dropping a task it no longer decides,
-	// before the preconditions, which a task it keeps is still held to.
-	AtStart bool
 }
 
 // Deps holds the collaborators of a Dispatcher.
@@ -369,23 +357,13 @@ func (d *Dispatcher) dispatchTask(ctx context.Context, filename string, task *ap
 		return false, false
 	}
 
-	// The engine, deciding again on the item's facts now, as if the task
-	// were not there, no longer decides it: dropped, not an attempt. Only
-	// before a first start, as the preconditions below.
-	if d.cfg.AtStart && !task.Recovered {
+	// The rules, deciding again on the item's facts now, as if the task
+	// were not there, no longer decide it (or, for a rule the scanner
+	// still decides, a fact it was decided on no longer holds): dropped,
+	// not an attempt. Only before a first start: a recovered task was
+	// running, and is followed by its run name.
+	if !task.Recovered {
 		if drop, reason := d.coordinator.Redecide(ctx, filename, task); drop {
-			klog.Infof("Dropping task %s before it starts: %s", filename, reason)
-			_ = d.queue.DropTask(filename, task, reason)
-			return false, false
-		}
-	}
-
-	// A task decided on facts that have since changed (a PR whose head
-	// moved, an issue that got a PR) is dropped, not run: a run on them
-	// would be wasted and counted as an attempt. Only before a first start:
-	// a recovered task was running, and is followed by its run name.
-	if d.cfg.Preconditions && !task.Recovered && len(task.Expect) > 0 {
-		if stale, reason := d.coordinator.StaleTask(ctx, task); stale {
 			klog.Infof("Dropping task %s before it starts: %s", filename, reason)
 			_ = d.queue.DropTask(filename, task, reason)
 			return false, false
