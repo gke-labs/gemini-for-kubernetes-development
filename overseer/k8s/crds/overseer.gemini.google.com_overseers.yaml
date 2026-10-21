@@ -108,6 +108,8 @@ spec:
                 type: object
               rules:
                 properties:
+                  atStart:
+                    type: boolean
                   canaryLabel:
                     type: string
                   canaryPercent:

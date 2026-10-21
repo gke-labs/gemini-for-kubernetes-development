@@ -38,6 +38,7 @@ func (w *Watcher) newDispatcher(runner dispatcher.TaskRunner) *dispatcher.Dispat
 		TaskTimeout:   w.TaskTimeout,
 		DryRun:        w.DryRun,
 		Preconditions: w.Preconditions,
+		AtStart:       w.RulesAtStart,
 	}, dispatcher.Deps{
 		Queue:        w.queueMgr,
 		SandboxLocks: w.sandboxLocks,

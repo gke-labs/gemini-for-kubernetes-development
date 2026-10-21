@@ -137,3 +137,52 @@ func TestPreconditionsOffChecksNothing(t *testing.T) {
 		t.Errorf("with preconditions off facts were checked %d times", coordinator.staleAsk)
 	}
 }
+
+// With AtStart, the engine decides again before a first start: a task it
+// no longer decides is dropped as a stale one is (journalled, not an
+// attempt), one it still decides runs, and a recovered one is never
+// asked about. Off, it is never asked.
+func TestAtStartDropsWhatTheEngineNoLongerDecides(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		atStart   bool
+		recovered bool
+		drop      bool
+		ran, ask  int
+	}{
+		{"no longer decided: dropped", true, false, true, 0, 1},
+		{"still decided: runs", true, false, false, 1, 1},
+		{"recovered: followed, not asked", true, true, true, 1, 0},
+		{"off: not asked", false, false, true, 1, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			d, queue, _, coordinator, runner := testDispatcher(t, dir, func(cfg *Config, _ *Deps) { cfg.AtStart = tc.atStart })
+			coordinator.redecide = func(string) (bool, string) {
+				if tc.drop {
+					return true, "the rules no longer decide ci: comments took the item"
+				}
+				return false, ""
+			}
+			enqueueInvestigate(t, queue, "task-pr-7-investigate.yaml", tc.recovered)
+
+			d.DispatchOnce(context.Background())
+			d.Wait()
+
+			if calls := runner.invocations(); len(calls) != tc.ran {
+				t.Fatalf("ran %d, want %d", len(calls), tc.ran)
+			}
+			if len(coordinator.asked) != tc.ask || (tc.ask > 0 && coordinator.asked[0] != "task-pr-7-investigate.yaml") {
+				t.Errorf("asked %v, want %d", coordinator.asked, tc.ask)
+			}
+			if tc.ran == 0 {
+				if queue.GetProcessedTask("task-pr-7-investigate.yaml") != nil {
+					t.Error("a dropped task was recorded as processed")
+				}
+				if drops := queue.GetQueueResponse().Drops; len(drops) != 1 || drops[0].Reason != "the rules no longer decide ci: comments took the item" {
+					t.Errorf("queue drops = %+v", drops)
+				}
+			}
+		})
+	}
+}

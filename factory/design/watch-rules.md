@@ -388,7 +388,11 @@ scanners set them (`prs/task.go` expectFor, the issue scanner):
 records them with - read-only, every fact, not stopping at an active task -
 and `explain` reads live through it; "pointed at", the issue listings'
 filter, is the issue rules' `any-of` so a decision outside a scan holds it
-too): (1) the gates in code (`rules.Gates`, with
+too; step 2, done: `spec.rules.atStart` → `WATCH_RULES_AT_START` →
+`dispatcher.Config.AtStart`, `watcherTaskCoordinator.Redecide` maps the task
+file to its rule, reads `Facts`, and drops the task on a gate, a moved head
+or a rule that no longer decides, before the preconditions, which stay
+until step 4): (1) the gates in code (`rules.Gates`, with
 `closed` and `below-min-number`) and the facts built outside the scanners
 (`facts.Build(kind, number) → rules.Item`: the reads in `prs/` and
 `issues/` moved to one package both scanners and the dispatcher call,

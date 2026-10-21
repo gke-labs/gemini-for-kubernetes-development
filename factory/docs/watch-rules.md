@@ -549,6 +549,19 @@ shows the disagreements per rule (the design's Phase 2b).
    and `factory watch rules replay` still compare them, and
    `factory watch rules explain <PR> --record decisions.jsonl` shows each.
 
+4. **Decide again at start.** With the rules handed over, add
+   `atStart: true` to `rules`. Just before a queued task of a rule the
+   engine decides starts, the watch reads the item's facts again (what
+   `factory watch rules explain <URL>` reads live) and asks the engine
+   whether it still decides that rule, its own task taken out. A task it
+   no longer decides is dropped: feedback that came while a ci task waited
+   (comments, earlier, takes the PR), checks re-run and green, a head that
+   moved, a PR linked to the issue, the trigger label taken off, the item
+   closed or stopped. A dropped task is journalled `Dropped` with the
+   reason and served with the queue's drops; it is not an attempt and
+   starts no cooldown, and the next scan decides anew. It costs one read of
+   the item per task started.
+
 ---
 
 ## The prebaked rules

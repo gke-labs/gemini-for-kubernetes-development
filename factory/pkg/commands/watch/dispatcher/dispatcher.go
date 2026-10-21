@@ -68,6 +68,12 @@ type TaskCoordinator interface {
 	// (task.Expect) no longer holds, and which. A fact that cannot be
 	// read is taken to hold: the task runs, as it would without the check.
 	StaleTask(ctx context.Context, task *api.QueueTask) (bool, string)
+	// Redecide has the engine decide again, on the item's facts read now,
+	// whether it decides the task's rule (filename names it), as if the
+	// task were not there; drop is that it does not, and why. A task of a
+	// rule the engine does not decide, or whose facts cannot be read, is
+	// not dropped.
+	Redecide(ctx context.Context, filename string, task *api.QueueTask) (drop bool, reason string)
 	// SelectUser returns the GitHub user the task should be executed as.
 	SelectUser(ctx context.Context, task *api.QueueTask) (string, error)
 	// NotifyTaskStarted reports that execution of the task has begun.
@@ -96,6 +102,10 @@ type Config struct {
 	// (QueueTask.Expect) no longer hold, rather than running it on what it
 	// was decided against.
 	Preconditions bool
+	// AtStart has the engine decide again before a first start
+	// (TaskCoordinator.Redecide), dropping a task it no longer decides,
+	// before the preconditions, which a task it keeps is still held to.
+	AtStart bool
 }
 
 // Deps holds the collaborators of a Dispatcher.
@@ -357,6 +367,17 @@ func (d *Dispatcher) dispatchTask(ctx context.Context, filename string, task *ap
 		klog.Infof("Skipping task %s and removing from incoming because %s", filename, reason)
 		_ = d.queue.RemoveTask(filename)
 		return false, false
+	}
+
+	// The engine, deciding again on the item's facts now, as if the task
+	// were not there, no longer decides it: dropped, not an attempt. Only
+	// before a first start, as the preconditions below.
+	if d.cfg.AtStart && !task.Recovered {
+		if drop, reason := d.coordinator.Redecide(ctx, filename, task); drop {
+			klog.Infof("Dropping task %s before it starts: %s", filename, reason)
+			_ = d.queue.DropTask(filename, task, reason)
+			return false, false
+		}
 	}
 
 	// A task decided on facts that have since changed (a PR whose head
