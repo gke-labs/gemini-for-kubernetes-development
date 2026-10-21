@@ -146,6 +146,14 @@ spec:
     image: ""
     diskSize: 10Gi
     idleMinutes: 60
+    storageClass: ""            # workspace PVC class; "" = cluster default
+    ephemeralStorage: ""        # pod ephemeral storage (/tmp, build output
+                                #   outside /workspaces); "" = factory's 6Gi
+    cpuRequest: ""              # "" = factory's defaults:
+    cpuLimit: ""                #   cpu 500m / 4,
+    memoryRequest: ""           #   memory 2Gi / 6Gi
+    memoryLimit: ""             # all apply when a sandbox is made, research
+                                #   sandboxes included
 
   prepIdentity:
     secretName: ""              # identity for draft-only intake tasks; a bot

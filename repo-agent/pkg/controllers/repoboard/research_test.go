@@ -291,6 +291,32 @@ func TestResearchClaimLaunchesOnTheBoardImage(t *testing.T) {
 	g.Expect(launches[0].ResearchOpts.Image).To(gomega.Equal("registry.example/factory-golang:abc"))
 }
 
+// A research sandbox is sized as the board's other sandboxes are: its
+// disk, ephemeral storage, CPU and memory.
+func TestResearchClaimLaunchesWithTheBoardSandboxSize(t *testing.T) {
+	g := gomega.NewWithT(t)
+	req := researchRequest(testSession, time.Now().Add(-time.Minute), aQuestion)
+	board := testBoard(nil)
+	board.Spec.Sandbox.DiskSize = "40Gi"
+	board.Spec.Sandbox.EphemeralStorage = "20Gi"
+	board.Spec.Sandbox.CPURequest, board.Spec.Sandbox.CPULimit = "2", "8"
+	board.Spec.Sandbox.MemoryRequest, board.Spec.Sandbox.MemoryLimit = "8Gi", "16Gi"
+	board.Spec.Sandbox.StorageClass = "premium-rwo"
+	fake := newFakeLauncher()
+	r := newTestReconciler(fake, testGithubClient(`[]`), board, githubSecret(), req)
+
+	_, err := r.Reconcile(context.Background(), boardRequest())
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+
+	launches := researchLaunches(fake)
+	g.Expect(launches).To(gomega.HaveLen(1))
+	g.Expect(launches[0].ResearchOpts.WorkspaceDiskSize).To(gomega.Equal("40Gi"))
+	g.Expect(launches[0].ResearchOpts.Sandbox).To(gomega.Equal(factorycli.SandboxSize{
+		StorageClass: "premium-rwo", EphemeralStorage: "20Gi",
+		CPURequest: "2", CPULimit: "8", MemoryRequest: "8Gi", MemoryLimit: "16Gi",
+	}))
+}
+
 // The finished sandbox is the receipt. This is the anti-loop property:
 // without it every reconcile would start another engine for a
 // conversation that already has one.

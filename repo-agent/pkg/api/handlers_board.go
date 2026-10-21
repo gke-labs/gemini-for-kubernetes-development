@@ -36,11 +36,13 @@ import (
 	"github.com/google/go-github/v39/github"
 	yamlv3 "go.yaml.in/yaml/v3"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/klog/v2"
 
 	boardv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repoboard/v1alpha1"
@@ -1537,8 +1539,8 @@ var markPRReadyForReview = func(ctx context.Context, token, nodeID string) error
 }
 
 // boardSpecView is the editable subset of a RepoBoard spec exposed to the
-// gear panel. Access/prepIdentity/sandbox stay kubectl-only (owner-level
-// governance and operator concerns).
+// gear panel. Access and prepIdentity stay kubectl-only (owner-level
+// governance); of the sandbox, the image does.
 type boardSpecView struct {
 	Editable   bool     `json:"editable"`
 	ViewLabels []string `json:"viewLabels"`
@@ -1557,6 +1559,67 @@ type boardSpecView struct {
 	Engine            string       `json:"engine"`
 	AutoIterate       bool         `json:"autoIterate"`
 	Disclose          bool         `json:"disclose"`
+	// The size the board's sandboxes are made with (spec.sandbox); empty
+	// is factory's default.
+	DiskSize         string `json:"diskSize"`
+	StorageClass     string `json:"storageClass"`
+	EphemeralStorage string `json:"ephemeralStorage"`
+	CPURequest       string `json:"cpuRequest"`
+	CPULimit         string `json:"cpuLimit"`
+	MemoryRequest    string `json:"memoryRequest"`
+	MemoryLimit      string `json:"memoryLimit"`
+}
+
+// sandboxSizeFields are the spec.sandbox fields of a board's sandbox size,
+// each with where it is in the spec view.
+func sandboxSizeFields(v *boardSpecView) []struct {
+	key   string
+	value *string
+} {
+	return []struct {
+		key   string
+		value *string
+	}{
+		{"diskSize", &v.DiskSize},
+		{"storageClass", &v.StorageClass},
+		{"ephemeralStorage", &v.EphemeralStorage},
+		{"cpuRequest", &v.CPURequest},
+		{"cpuLimit", &v.CPULimit},
+		{"memoryRequest", &v.MemoryRequest},
+		{"memoryLimit", &v.MemoryLimit},
+	}
+}
+
+// checkSandboxSize trims the view's sandbox size and refuses what a pod
+// would: a size that is no quantity, a storage class that is no name, a
+// request above its limit. It says so at save, not when a sandbox pod
+// fails to be made.
+func checkSandboxSize(v *boardSpecView) error {
+	for _, f := range sandboxSizeFields(v) {
+		*f.value = strings.TrimSpace(*f.value)
+		if *f.value == "" {
+			continue
+		}
+		if f.key == "storageClass" {
+			if errs := validation.IsDNS1123Subdomain(*f.value); len(errs) > 0 {
+				return fmt.Errorf("storage class %q: %s", *f.value, strings.Join(errs, "; "))
+			}
+			continue
+		}
+		if _, err := resource.ParseQuantity(*f.value); err != nil {
+			return fmt.Errorf("%s %q is not a size: %v", f.key, *f.value, err)
+		}
+	}
+	for _, pair := range [][2]string{{v.CPURequest, v.CPULimit}, {v.MemoryRequest, v.MemoryLimit}} {
+		if pair[0] == "" || pair[1] == "" {
+			continue
+		}
+		req, limit := resource.MustParse(pair[0]), resource.MustParse(pair[1])
+		if req.Cmp(limit) > 0 {
+			return fmt.Errorf("request %s is more than its limit %s", pair[0], pair[1])
+		}
+	}
+	return nil
 }
 
 // specRecipe is a catalog recipe as the gear's rules offer it: what it
@@ -1609,6 +1672,9 @@ func (s *Server) getBoardSpec(c *gin.Context) {
 	}
 	view.AutoIterate, _, _ = unstructured.NestedBool(board.Object, "spec", "policy", "autoIterate")
 	view.Disclose, _, _ = unstructured.NestedBool(board.Object, "spec", "policy", "disclose")
+	for _, f := range sandboxSizeFields(&view) {
+		*f.value, _, _ = unstructured.NestedString(board.Object, "spec", "sandbox", f.key)
+	}
 	c.JSON(http.StatusOK, view)
 }
 
@@ -1659,6 +1725,22 @@ func (s *Server) putBoardSpec(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	if err := checkSandboxSize(&payload); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	// An empty size is no field, so factory's default (the CRD's, for the
+	// disk) applies.
+	setSize := func() bool {
+		for _, f := range sandboxSizeFields(&payload) {
+			if *f.value == "" {
+				unstructured.RemoveNestedField(target.Object, "spec", "sandbox", f.key)
+			} else if !set(*f.value, "spec", "sandbox", f.key) {
+				return false
+			}
+		}
+		return true
+	}
 	// The rules replace the deprecated settings, which are set off.
 	apply := func(b *unstructured.Unstructured) bool {
 		target = b
@@ -1674,7 +1756,8 @@ func (s *Server) putBoardSpec(c *gin.Context) {
 			set(idleMinutes, "spec", "sandbox", "idleMinutes") &&
 			set(engineOrDefault(payload.Engine), "spec", "sandbox", "engine") &&
 			set(payload.AutoIterate, "spec", "policy", "autoIterate") &&
-			set(payload.Disclose, "spec", "policy", "disclose")
+			set(payload.Disclose, "spec", "policy", "disclose") &&
+			setSize()
 	}
 	if !apply(board) {
 		return

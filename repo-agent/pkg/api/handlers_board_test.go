@@ -853,6 +853,73 @@ func TestBoardSpecAuto(t *testing.T) {
 	}
 }
 
+// The gear sizes the board's sandboxes: what it saves is spec.sandbox, an
+// empty field is no field (factory's default), and what a pod would refuse
+// is refused at save.
+func TestBoardSpecSandboxSize(t *testing.T) {
+	server, r, dyn := boardTestServer(t, map[string]string{}, boardCR())
+	r.GET("/board/:board/spec", server.getBoardSpec)
+	r.PUT("/board/:board/spec", server.putBoardSpec)
+	put := func(body string) *httptest.ResponseRecorder {
+		req, _ := http.NewRequest("PUT", "/board/myboard/spec", strings.NewReader(body))
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		return w
+	}
+	sandbox := func() map[string]interface{} {
+		board, err := dyn.Resource(repoBoardGVR).Namespace("alice").Get(context.Background(), "myboard", v1.GetOptions{})
+		if err != nil {
+			t.Fatalf("get board: %v", err)
+		}
+		sb, _, _ := unstructured.NestedMap(board.Object, "spec", "sandbox")
+		return sb
+	}
+
+	if w := put(`{"diskSize": "40Gi", "storageClass": "premium-rwo", "ephemeralStorage": " 10Gi ",
+		"cpuRequest": "2", "cpuLimit": "8", "memoryRequest": "8Gi", "memoryLimit": "16Gi"}`); w.Code != http.StatusOK {
+		t.Fatalf("put: %d %s", w.Code, w.Body.String())
+	}
+	sb := sandbox()
+	for key, want := range map[string]string{"diskSize": "40Gi", "storageClass": "premium-rwo", "ephemeralStorage": "10Gi",
+		"cpuRequest": "2", "cpuLimit": "8", "memoryRequest": "8Gi", "memoryLimit": "16Gi"} {
+		if sb[key] != want {
+			t.Errorf("spec.sandbox.%s = %v, want %s", key, sb[key], want)
+		}
+	}
+	req, _ := http.NewRequest("GET", "/board/myboard/spec", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	for _, want := range []string{`"diskSize":"40Gi"`, `"ephemeralStorage":"10Gi"`, `"cpuLimit":"8"`, `"memoryRequest":"8Gi"`, `"storageClass":"premium-rwo"`} {
+		if !strings.Contains(w.Body.String(), want) {
+			t.Errorf("spec view missing %s: %s", want, w.Body.String())
+		}
+	}
+
+	// Saved without them, the sizes are gone: factory's defaults again.
+	if w := put(`{"ephemeralStorage": "10Gi"}`); w.Code != http.StatusOK {
+		t.Fatalf("put: %d", w.Code)
+	}
+	sb = sandbox()
+	if sb["ephemeralStorage"] != "10Gi" || sb["cpuLimit"] != nil || sb["storageClass"] != nil || sb["diskSize"] != nil {
+		t.Errorf("spec.sandbox = %v, want only ephemeralStorage", sb)
+	}
+
+	for _, bad := range []string{
+		`{"ephemeralStorage": "ten gigs"}`,
+		`{"cpuLimit": "8 cores"}`,
+		`{"storageClass": "Premium RWO"}`,
+		`{"cpuRequest": "8", "cpuLimit": "4"}`,
+		`{"memoryRequest": "32Gi", "memoryLimit": "16Gi"}`,
+	} {
+		if w := put(bad); w.Code != http.StatusBadRequest {
+			t.Errorf("put %s: %d, want 400", bad, w.Code)
+		}
+	}
+	if sandbox()["ephemeralStorage"] != "10Gi" {
+		t.Errorf("a refused save changed the board: %v", sandbox())
+	}
+}
+
 // A board not yet converted shows its deprecated settings as rules.
 func TestBoardSpecShowsLegacyAutoAsRules(t *testing.T) {
 	cr := boardCR()

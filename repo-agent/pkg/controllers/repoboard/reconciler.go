@@ -467,7 +467,7 @@ func (r *Reconciler) loadSandboxes(ctx context.Context, work *workState, namespa
 
 // recipeOptions are the board's options for a run of recipe on url, in
 // sandbox (empty: factory's for url), as member, named runName: the
-// board's sandbox image and disk, its engine and its disclosure.
+// board's sandbox image, disk and size, its engine and its disclosure.
 func (r *Reconciler) recipeOptions(work *workState, recipe, member, sandbox, url, token, runName string) factorycli.RecipeOptions {
 	return factorycli.RecipeOptions{
 		Recipe:            recipe,
@@ -476,10 +476,23 @@ func (r *Reconciler) recipeOptions(work *workState, recipe, member, sandbox, url
 		Namespace:         member,
 		Image:             work.board.Spec.Sandbox.Image,
 		WorkspaceDiskSize: work.board.Spec.Sandbox.DiskSize,
+		Sandbox:           boardSandboxSize(work.board.Spec.Sandbox),
 		GithubToken:       token,
 		Engine:            boardEngine(work.board),
 		Disclose:          work.board.Spec.Policy.Disclose,
 		RunName:           runName,
+	}
+}
+
+// boardSandboxSize is the size the board's sandboxes are made with.
+func boardSandboxSize(s boardv1alpha1.SandboxSpec) factorycli.SandboxSize {
+	return factorycli.SandboxSize{
+		StorageClass:     s.StorageClass,
+		EphemeralStorage: s.EphemeralStorage,
+		CPURequest:       s.CPURequest,
+		CPULimit:         s.CPULimit,
+		MemoryRequest:    s.MemoryRequest,
+		MemoryLimit:      s.MemoryLimit,
 	}
 }
 
