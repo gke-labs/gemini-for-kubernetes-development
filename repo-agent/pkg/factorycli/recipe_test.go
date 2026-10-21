@@ -103,6 +103,7 @@ func TestStartRecipeRunsAndReadsBack(t *testing.T) {
 		Recipe: "plan", Namespace: "alice", SandboxName: "fix-repo-5", URL: "https://github.com/o/repo/issues/5",
 		RunName: "plan/b/5/1", Inputs: map[string]string{"feedback": "merge steps", "a": "b"},
 		Instructions: []string{"skip vendor/", ""}, Engine: "claude", Image: "img:1", WorkspaceDiskSize: "20Gi", Disclose: true,
+		Sandbox: SandboxSize{EphemeralStorage: "20Gi", CPURequest: "2", MemoryLimit: "16Gi", StorageClass: "premium-rwo"},
 	})
 	res := waitResult(t, r, "alice/plan-repo-5")
 	if res.Err != nil {
@@ -116,7 +117,8 @@ func TestStartRecipeRunsAndReadsBack(t *testing.T) {
 		t.Fatalf("commands run = %q, want recipe then sandbox task output", args)
 	}
 	for _, want := range []string{"--url https://github.com/o/repo/issues/5", "--namespace alice", "--timeout 30m0s", "--abort-on-cancel=false",
-		"--input a=b --input feedback=merge steps", "--instruction skip vendor/ ", "--engine claude", "--image img:1", "--workspace-disk-size 20Gi", "--disclose=true"} {
+		"--input a=b --input feedback=merge steps", "--instruction skip vendor/ ", "--engine claude", "--image img:1", "--workspace-disk-size 20Gi",
+		"--workspace-storage-class premium-rwo --ephemeral-storage 20Gi --cpu-request 2 --memory-limit 16Gi", "--disclose=true"} {
 		if !strings.HasPrefix(args[0], "recipe plan --run-name plan/b/5/1 ") || !strings.Contains(args[0], want) {
 			t.Errorf("recipe args = %q, want %q", args[0], want)
 		}
@@ -262,6 +264,20 @@ func TestNormalizeTriageDraft(t *testing.T) {
 }
 
 // A run for a new conversation says so; any other continues its session's.
+// A size field left empty passes no flag, so factory's default (or its
+// config file's) applies.
+func TestRecipeArgsSandboxSizeOnlySetFields(t *testing.T) {
+	args := strings.Join(recipeArgs(RecipeOptions{Recipe: "fix", Sandbox: SandboxSize{EphemeralStorage: "10Gi"}}, time.Minute), " ")
+	if !strings.Contains(args, "--ephemeral-storage 10Gi") {
+		t.Errorf("args = %q, want --ephemeral-storage 10Gi", args)
+	}
+	for _, flag := range []string{"--cpu-request", "--cpu-limit", "--memory-request", "--memory-limit", "--workspace-storage-class"} {
+		if strings.Contains(args, flag) {
+			t.Errorf("args = %q, has %s though it was not set", args, flag)
+		}
+	}
+}
+
 func TestRecipeArgsNewSession(t *testing.T) {
 	opts := RecipeOptions{Recipe: "care-ci", URL: "https://github.com/o/repo/pull/9", Namespace: "alice", RunName: "r/1"}
 	if args := strings.Join(recipeArgs(opts, time.Minute), " "); strings.Contains(args, "--new-session") {

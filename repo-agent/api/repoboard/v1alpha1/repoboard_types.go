@@ -222,6 +222,30 @@ type SandboxSpec struct {
 	// +kubebuilder:default="10Gi"
 	DiskSize string `json:"diskSize,omitempty"`
 
+	// StorageClass is the workspace PVC's StorageClass (factory
+	// --workspace-storage-class); empty uses the cluster default.
+	// +kubebuilder:validation:Optional
+	StorageClass string `json:"storageClass,omitempty"`
+
+	// EphemeralStorage is the sandbox pod's ephemeral storage, request
+	// and limit (factory --ephemeral-storage): /tmp and anything written
+	// outside /workspaces. Empty is factory's default (6Gi), which a KCC
+	// build overflows.
+	// +kubebuilder:validation:Optional
+	EphemeralStorage string `json:"ephemeralStorage,omitempty"`
+
+	// CPURequest, CPULimit, MemoryRequest and MemoryLimit size the
+	// sandbox pod (factory --cpu-request …); empty is factory's default
+	// (cpu 500m/4, memory 2Gi/6Gi).
+	// +kubebuilder:validation:Optional
+	CPURequest string `json:"cpuRequest,omitempty"`
+	// +kubebuilder:validation:Optional
+	CPULimit string `json:"cpuLimit,omitempty"`
+	// +kubebuilder:validation:Optional
+	MemoryRequest string `json:"memoryRequest,omitempty"`
+	// +kubebuilder:validation:Optional
+	MemoryLimit string `json:"memoryLimit,omitempty"`
+
 	// IdleMinutes pauses finished sandboxes after this idle period.
 	// +kubebuilder:default=60
 	IdleMinutes int `json:"idleMinutes,omitempty"`

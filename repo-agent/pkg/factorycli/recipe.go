@@ -43,6 +43,9 @@ type RecipeOptions struct {
 	Image string
 	// WorkspaceDiskSize overrides the workspace PVC size.
 	WorkspaceDiskSize string
+	// Sandbox sizes the sandbox a run makes (empty fields: factory's
+	// defaults). Like the disk size, they apply when the sandbox is made.
+	Sandbox SandboxSize
 	// GithubToken authenticates factory's host-side GitHub reads, and the
 	// write of Apply.
 	GithubToken string
@@ -66,6 +69,35 @@ type RecipeOptions struct {
 	// (factory apply --action): a fix's open-pr, a review's post-review.
 	// Empty applies nothing.
 	Apply string
+}
+
+// SandboxSize is the size of a sandbox factory makes, each field a factory
+// flag; empty leaves factory's default.
+type SandboxSize struct {
+	StorageClass     string // --workspace-storage-class
+	EphemeralStorage string // --ephemeral-storage
+	CPURequest       string // --cpu-request
+	CPULimit         string // --cpu-limit
+	MemoryRequest    string // --memory-request
+	MemoryLimit      string // --memory-limit
+}
+
+// args are the size's factory flags, for the fields that are set.
+func (s SandboxSize) args() []string {
+	var args []string
+	for _, f := range []struct{ flag, value string }{
+		{"--workspace-storage-class", s.StorageClass},
+		{"--ephemeral-storage", s.EphemeralStorage},
+		{"--cpu-request", s.CPURequest},
+		{"--cpu-limit", s.CPULimit},
+		{"--memory-request", s.MemoryRequest},
+		{"--memory-limit", s.MemoryLimit},
+	} {
+		if f.value != "" {
+			args = append(args, f.flag, f.value)
+		}
+	}
+	return args
 }
 
 // StartRecipe runs `factory recipe <name>` and, unless Detached, reads its
@@ -130,6 +162,7 @@ func recipeArgs(opts RecipeOptions, timeout time.Duration) []string {
 	if opts.WorkspaceDiskSize != "" {
 		args = append(args, "--workspace-disk-size", opts.WorkspaceDiskSize)
 	}
+	args = append(args, opts.Sandbox.args()...)
 	if opts.Engine != "" {
 		args = append(args, "--engine", opts.Engine)
 	}

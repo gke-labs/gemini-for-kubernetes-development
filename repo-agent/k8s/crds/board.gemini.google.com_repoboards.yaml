@@ -133,6 +133,10 @@ spec:
                   rule: self == oldSelf
               sandbox:
                 properties:
+                  cpuLimit:
+                    type: string
+                  cpuRequest:
+                    type: string
                   diskSize:
                     default: 10Gi
                     type: string
@@ -143,10 +147,18 @@ spec:
                     - claude
                     - antigravity
                     type: string
+                  ephemeralStorage:
+                    type: string
                   idleMinutes:
                     default: 60
                     type: integer
                   image:
+                    type: string
+                  memoryLimit:
+                    type: string
+                  memoryRequest:
+                    type: string
+                  storageClass:
                     type: string
                 type: object
               view:

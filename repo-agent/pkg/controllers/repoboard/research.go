@@ -185,8 +185,10 @@ func (r *Reconciler) ensureResearchClaims(ctx context.Context, work *workState, 
 		// wedged create becomes a failure rather than a permanent
 		// "starting". Deliberately no secret: mounting the member secret
 		// would put the engine key on the sandbox's disk, where the agent
-		// running in it could read it.
-		opts.Timeout, opts.WorkspaceDiskSize = 20*time.Minute, ""
+		// running in it could read it. The sandbox is sized as the
+		// board's others are: building the repository in a research
+		// session needs what building it in a fix does.
+		opts.Timeout = 20 * time.Minute
 		if r.Factory.StartRecipe(key, opts) {
 			logger.Info("launched factory recipe research", "session", claim.sessionID, "board", work.board.Name)
 		}
