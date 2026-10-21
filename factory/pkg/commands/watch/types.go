@@ -71,9 +71,6 @@ type Flags struct {
 	SandboxEvictionAge  string
 	SandboxIdleTimeout  time.Duration
 	PRInactivityTimeout time.Duration
-	// Preconditions drops a queued task before it starts when a fact it
-	// was decided on no longer holds (api.QueueTask.Expect).
-	Preconditions bool
 	// Attempts counts a give-up's attempts from the queue's journal of runs
 	// rather than from the watcher's comments (prs.Config.Attempts).
 	Attempts bool
@@ -106,10 +103,6 @@ type Flags struct {
 	// share of the pull requests it works on, chosen by number
 	// (rules.Control.Canary).
 	RulesCanaryPercent int
-	// RulesAtStart has the engine decide again at start, for the rules it
-	// decides, and drop a task it no longer decides
-	// (dispatcher.Config.AtStart, watcherTaskCoordinator.Redecide).
-	RulesAtStart bool
 	// RulesDisabled are rules the watch does not act on at all, through
 	// the scanners or the engine: the operator's emergency switch
 	// ("review,ci").

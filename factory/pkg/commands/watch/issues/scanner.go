@@ -583,9 +583,6 @@ func (s *Scanner) queueTask(ctx context.Context, issue *githubv39.Issue, refIssu
 			TriggerReason:    triggerReason,
 			TriggerNotes:     triggerNotes,
 		})
-		// A fix is decided on the issue having no linked PR, checked above;
-		// one opened while the task waits makes it redundant.
-		task.Expect = []string{api.ExpectNoLinkedPR}
 	}
 
 	// A rule the engine decides for the scanner is queued only when the

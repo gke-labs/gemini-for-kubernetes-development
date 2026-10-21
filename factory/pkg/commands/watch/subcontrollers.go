@@ -32,13 +32,11 @@ import (
 // The runner is passed in so tests can substitute the child process execution.
 func (w *Watcher) newDispatcher(runner dispatcher.TaskRunner) *dispatcher.Dispatcher {
 	return dispatcher.New(dispatcher.Config{
-		Interval:      dispatcher.DefaultInterval,
-		MaxActions:    w.MaxActions,
-		MaxPending:    w.MaxPending,
-		TaskTimeout:   w.TaskTimeout,
-		DryRun:        w.DryRun,
-		Preconditions: w.Preconditions,
-		AtStart:       w.RulesAtStart,
+		Interval:    dispatcher.DefaultInterval,
+		MaxActions:  w.MaxActions,
+		MaxPending:  w.MaxPending,
+		TaskTimeout: w.TaskTimeout,
+		DryRun:      w.DryRun,
 	}, dispatcher.Deps{
 		Queue:        w.queueMgr,
 		SandboxLocks: w.sandboxLocks,
@@ -454,43 +452,6 @@ func (c *watcherTaskCoordinator) ShouldCancelTask(ctx context.Context, task *api
 	}
 	if issueOrPR.GetState() == "closed" {
 		return true, fmt.Sprintf("target #%d is closed", task.Number)
-	}
-	return false, ""
-}
-
-// StaleTask reports whether a fact the task was decided on no longer holds:
-// for ExpectHead, the PR's head is no longer the CommitSHA it was decided
-// at; for ExpectNoLinkedPR, an open PR has since been linked to the issue.
-// A fact it cannot read (an error, no client) is taken to hold, so the
-// task runs as it would without the check.
-func (c *watcherTaskCoordinator) StaleTask(ctx context.Context, task *api.QueueTask) (bool, string) {
-	w := c.w
-	if task.Number <= 0 || w.repoClient == nil {
-		return false, ""
-	}
-	for _, fact := range task.Expect {
-		switch fact {
-		case api.ExpectHead:
-			if task.CommitSHA == "" {
-				continue
-			}
-			pr, err := w.repoClient.GetPullRequest(ctx, task.Number)
-			if err != nil || pr == nil {
-				continue
-			}
-			if head := pr.GetHead().GetSHA(); head != "" && head != task.CommitSHA {
-				return true, fmt.Sprintf("head moved %s→%s", shortSHA(task.CommitSHA), shortSHA(head))
-			}
-		case api.ExpectNoLinkedPR:
-			linked, err := w.repoClient.HasLinkedPR(ctx, task.Number)
-			if err != nil {
-				klog.Warningf("Checking issue #%d for a linked PR before starting its task: %v", task.Number, err)
-				continue
-			}
-			if linked {
-				return true, fmt.Sprintf("an open PR is now linked to #%d", task.Number)
-			}
-		}
 	}
 	return false, ""
 }

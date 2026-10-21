@@ -22,7 +22,6 @@ func enqueueInvestigate(t *testing.T, queue *concurrency.TaskQueueManager, filen
 		URL:        "https://github.com/test-owner/test-repo/pull/7",
 		EnqueuedAt: time.Now(),
 		CommitSHA:  "aaaaaaaaaaaa",
-		Expect:     []string{api.ExpectHead},
 		Recovered:  recovered,
 	}
 	if err := queue.Enqueue(filename, task); err != nil {
@@ -48,14 +47,14 @@ func journalEvents(t *testing.T, queueDir string) []api.JournalEvent {
 	return out
 }
 
-// With preconditions on, a task whose head moved while it waited is
-// dropped before it starts: never run, journalled as Dropped with the
+// A task the rules no longer decide (here, its head moved while it
+// waited) is dropped before it starts: never run, journalled as Dropped with the
 // reason, served with the queue, and left out of processed, so it counts
 // toward no cooldown, retry or give-up, and its name is free again.
 func TestStaleTaskIsDroppedNotRun(t *testing.T) {
 	dir := t.TempDir()
-	d, queue, _, coordinator, runner := testDispatcher(t, dir, func(cfg *Config, _ *Deps) { cfg.Preconditions = true })
-	coordinator.stale = func(*api.QueueTask) (bool, string) { return true, "head moved aaaaaaa→bbbbbbb" }
+	d, queue, _, coordinator, runner := testDispatcher(t, dir, nil)
+	coordinator.redecide = func(string) (bool, string) { return true, "head moved aaaaaaa→bbbbbbb" }
 	enqueueInvestigate(t, queue, "task-pr-7-investigate.yaml", false)
 
 	d.DispatchOnce(context.Background())
@@ -89,7 +88,7 @@ func TestStaleTaskIsDroppedNotRun(t *testing.T) {
 // A task whose facts still hold runs as before.
 func TestTaskWhoseFactsHoldRuns(t *testing.T) {
 	dir := t.TempDir()
-	d, queue, _, _, runner := testDispatcher(t, dir, func(cfg *Config, _ *Deps) { cfg.Preconditions = true })
+	d, queue, _, _, runner := testDispatcher(t, dir, nil)
 	enqueueInvestigate(t, queue, "task-pr-7-investigate.yaml", false)
 
 	d.DispatchOnce(context.Background())
@@ -104,8 +103,8 @@ func TestTaskWhoseFactsHoldRuns(t *testing.T) {
 // its run name, never dropped, whatever its facts say now.
 func TestRecoveredTaskIsNeverDropped(t *testing.T) {
 	dir := t.TempDir()
-	d, queue, _, coordinator, runner := testDispatcher(t, dir, func(cfg *Config, _ *Deps) { cfg.Preconditions = true })
-	coordinator.stale = func(*api.QueueTask) (bool, string) { return true, "head moved" }
+	d, queue, _, coordinator, runner := testDispatcher(t, dir, nil)
+	coordinator.redecide = func(string) (bool, string) { return true, "head moved" }
 	enqueueInvestigate(t, queue, "task-pr-7-investigate.yaml", true)
 
 	d.DispatchOnce(context.Background())
@@ -114,50 +113,28 @@ func TestRecoveredTaskIsNeverDropped(t *testing.T) {
 	if calls := runner.invocations(); len(calls) != 1 {
 		t.Fatalf("a recovered task was not followed: %+v", calls)
 	}
-	if coordinator.staleAsk != 0 {
-		t.Errorf("a recovered task's facts were checked %d times", coordinator.staleAsk)
+	if len(coordinator.asked) != 0 {
+		t.Errorf("a recovered task was decided again %d times", len(coordinator.asked))
 	}
 }
 
-// With preconditions off (the default) nothing is checked: today's
-// behaviour exactly.
-func TestPreconditionsOffChecksNothing(t *testing.T) {
-	dir := t.TempDir()
-	d, queue, _, coordinator, runner := testDispatcher(t, dir, nil)
-	coordinator.stale = func(*api.QueueTask) (bool, string) { return true, "head moved" }
-	enqueueInvestigate(t, queue, "task-pr-7-investigate.yaml", false)
-
-	d.DispatchOnce(context.Background())
-	d.Wait()
-
-	if calls := runner.invocations(); len(calls) != 1 {
-		t.Fatalf("with preconditions off the task did not run: %+v", calls)
-	}
-	if coordinator.staleAsk != 0 {
-		t.Errorf("with preconditions off facts were checked %d times", coordinator.staleAsk)
-	}
-}
-
-// With AtStart, the engine decides again before a first start: a task it
-// no longer decides is dropped as a stale one is (journalled, not an
-// attempt), one it still decides runs, and a recovered one is never
-// asked about. Off, it is never asked.
+// The rules decide again before a first start: a task they no longer
+// decide is dropped (journalled, not an attempt), one they still decide
+// runs, and a recovered one is never asked about.
 func TestAtStartDropsWhatTheEngineNoLongerDecides(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
-		atStart   bool
 		recovered bool
 		drop      bool
 		ran, ask  int
 	}{
-		{"no longer decided: dropped", true, false, true, 0, 1},
-		{"still decided: runs", true, false, false, 1, 1},
-		{"recovered: followed, not asked", true, true, true, 1, 0},
-		{"off: not asked", false, false, true, 1, 0},
+		{"no longer decided: dropped", false, true, 0, 1},
+		{"still decided: runs", false, false, 1, 1},
+		{"recovered: followed, not asked", true, true, 1, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
-			d, queue, _, coordinator, runner := testDispatcher(t, dir, func(cfg *Config, _ *Deps) { cfg.AtStart = tc.atStart })
+			d, queue, _, coordinator, runner := testDispatcher(t, dir, nil)
 			coordinator.redecide = func(string) (bool, string) {
 				if tc.drop {
 					return true, "the rules no longer decide ci: comments took the item"
