@@ -38,12 +38,18 @@ func TestQueueTask_EngineGivesUpOnAFailingFix(t *testing.T) {
 		name     string
 		comments []*githubv39.IssueComment
 		giveUp   bool
+		// lastEnded is when the last failed run ended: an hour ago, or
+		// inside the failure cooldown.
+		lastEnded time.Time
 	}{
-		{"no human since the failures", nil, true},
+		{"no human since the failures", nil, true, time.Time{}},
+		// The policy is asked first on the cheap facts, and a give-up due
+		// is not held back by the cooldown (#13090 waited it out).
+		{"the give-up is due inside the failure cooldown", nil, true, now.Add(-5 * time.Minute)},
 		{"a human spoke after two of them", []*githubv39.IssueComment{{
 			User: &githubv39.User{Login: githubv39.String("alice")}, AuthorAssociation: githubv39.String("MEMBER"),
 			Body: githubv39.String("try the other flag"), CreatedAt: &spoke,
-		}}, false},
+		}}, false, time.Time{}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var mu sync.Mutex
@@ -86,7 +92,11 @@ func TestQueueTask_EngineGivesUpOnAFailingFix(t *testing.T) {
 			queue.ended = map[string][]api.EndedRun{"task-issue-71.yaml": {
 				{StartedAt: runAt(-4), Failed: true}, {StartedAt: runAt(-3), Failed: true}, {StartedAt: runAt(-2), Failed: true},
 			}}
-			queue.processed["task-issue-71.yaml"] = &api.QueueTask{Status: api.StatusFailed, StartedAt: runAt(-2), CompletedAt: runAt(-1)}
+			ended := runAt(-1)
+			if !tc.lastEnded.IsZero() {
+				ended = tc.lastEnded
+			}
+			queue.processed["task-issue-71.yaml"] = &api.QueueTask{Status: api.StatusFailed, StartedAt: runAt(-2), CompletedAt: ended}
 			updated := runAt(-5)
 			s.queueTasks(context.Background(), []*githubv39.Issue{{
 				Number: githubv39.Int(71), UpdatedAt: &updated,
@@ -117,5 +127,52 @@ func TestQueueTask_EngineGivesUpOnAFailingFix(t *testing.T) {
 				t.Errorf("queued %v, labels %v, comments %q; want the fix queued and nothing written", queued, labelled, commented)
 			}
 		})
+	}
+}
+
+// A fix the engine takes, fixed since the issue last changed: its policy
+// (once per update) holds it back on the cheap facts, before the timeline
+// and linked-PR reads, and nothing is queued.
+func TestQueueTask_EnginePolicyHoldsBeforeTheReads(t *testing.T) {
+	set, err := rules.Builtin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	control, err := rules.NewControl("on", map[string]string{"fix": "engine"}, "", nil, set)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	var paths []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		paths = append(paths, r.URL.Path)
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte("{}"))
+	}))
+	defer server.Close()
+	gh := githubv39.NewClient(nil)
+	gh.BaseURL, _ = url.Parse(server.URL + "/")
+	s, queue, _ := newScanner(t, Config{TargetAssignee: "bot1", BotUsers: []string{"bot1"}}, Deps{
+		GitHub: github.ForRepo(gh, "test-owner", "test-repo"), Rules: control,
+		Recorder: rules.NewSinkRecorder(func(rules.Record) {}),
+	})
+	now := time.Now().UTC()
+	queue.processed["task-issue-72.yaml"] = &api.QueueTask{Status: api.StatusCompleted, StartedAt: now.Add(-3 * time.Hour), CompletedAt: now.Add(-2 * time.Hour)}
+	updated := now.Add(-4 * time.Hour)
+	s.queueTasks(context.Background(), []*githubv39.Issue{{
+		Number: githubv39.Int(72), UpdatedAt: &updated,
+		Labels: []*githubv39.Label{{Name: githubv39.String("factory")}},
+		User:   &githubv39.User{Login: githubv39.String("someone")},
+	}}, map[int]bool{})
+
+	if len(queue.enqueued) != 0 {
+		t.Errorf("queued %v, want nothing: fixed since the issue last changed", keys(queue.enqueued))
+	}
+	for _, p := range paths {
+		if strings.HasSuffix(p, "/timeline") || strings.HasPrefix(p, "/search") {
+			t.Errorf("read %s for an issue its policy holds back", p)
+		}
 	}
 }

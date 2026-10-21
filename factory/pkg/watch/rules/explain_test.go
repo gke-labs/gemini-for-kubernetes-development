@@ -115,3 +115,42 @@ func TestHuman(t *testing.T) {
 		}
 	}
 }
+
+// Held is the policy alone, on the cheap facts: a cooldown holds with
+// when it ends, once-per-update holds with no end, a give-up due holds
+// nothing (the rule must be decided on every fact), and a rule with no
+// past run is not held.
+func TestHeld(t *testing.T) {
+	set, err := Builtin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	failed := func(ago ...time.Duration) []PastRun {
+		var runs []PastRun
+		for _, a := range ago {
+			runs = append(runs, PastRun{Rule: "fix", StartedAt: now.Add(-a - time.Minute), EndedAt: now.Add(-a), Failed: true})
+		}
+		return runs
+	}
+	if why, until := set.Held("fix", issue(nil), testEnv); why != "" || !until.IsZero() {
+		t.Errorf("no runs: held %q", why)
+	}
+	cooling := issue(func(it *Item) { it.Runs = failed(5 * time.Minute) })
+	if why, until := set.Held("fix", cooling, testEnv); !strings.HasPrefix(why, "cooldown:") || !until.Equal(now.Add(15*time.Minute)) {
+		t.Errorf("cooling: held %q until %v", why, until)
+	}
+	fixed := issue(func(it *Item) {
+		it.UpdatedAt = now.Add(-3 * time.Hour)
+		it.Runs = []PastRun{{Rule: "fix", StartedAt: now.Add(-2*time.Hour - time.Minute), EndedAt: now.Add(-2 * time.Hour)}}
+	})
+	if why, until := set.Held("fix", fixed, testEnv); !strings.HasPrefix(why, "dedupe: update") || !until.IsZero() {
+		t.Errorf("fixed since the last change: held %q until %v", why, until)
+	}
+	dueInCooldown := issue(func(it *Item) { it.Runs = failed(3*time.Hour, 2*time.Hour, 5*time.Minute) })
+	if why, _ := set.Held("fix", dueInCooldown, testEnv); why != "" {
+		t.Errorf("a give-up due was held: %q", why)
+	}
+	if why, _ := set.Held("no-such-rule", issue(nil), testEnv); why != "" {
+		t.Errorf("an unknown rule was held: %q", why)
+	}
+}
