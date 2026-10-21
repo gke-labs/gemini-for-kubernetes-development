@@ -2105,12 +2105,13 @@ func (s *askThenFull) Ask(context.Context, string) (string, error) {
 }
 func (s *askThenFull) Close() error { return nil }
 
-// A run: step runs in the checkout, so in every built-in recipe the step
-// that makes it (setup-git, setup-repo, setup-fork or clone) comes first:
-// on a sandbox without one, an earlier run: fails to start at all (the KCC
-// release chore failed every run on a new sandbox, 2026-10-15 to 21).
+// A run: step runs in the checkout, so in every built-in recipe a step
+// that makes it (setup-repo, setup-fork or clone; not setup-git, which only
+// configures git and gh) comes first: on a sandbox without one, an earlier
+// run: fails to start at all (the KCC release chore failed every run on a
+// new sandbox, 2026-10-15 to 21).
 func TestBuiltinRunStepsComeAfterTheCheckout(t *testing.T) {
-	makesCheckout := map[string]bool{"setup-git": true, "setup-repo": true, "setup-fork": true, "clone": true}
+	makesCheckout := map[string]bool{"setup-repo": true, "setup-fork": true, "clone": true}
 	for _, name := range BuiltinNames() {
 		_, rec, err := Builtin(name)
 		if err != nil {
