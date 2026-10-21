@@ -295,3 +295,29 @@ func TestDecideReadyUnreview(t *testing.T) {
 		})
 	}
 }
+
+// inherit-labels writes the closing issues' labels the PR lacks, never
+// ready-for-human; on a PR already handed to the humans, everything but
+// */review too (an issue's stop label reaches it; bot reviews are not set
+// going again).
+func TestInheritLabelsOnReadyPRs(t *testing.T) {
+	set, err := Builtin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	closes := []Closing{{Number: 19, Labels: []string{"overseer", "overseer/review", "overseer/stop", "overseer/ready-for-human", "priority/high"}}}
+	writes := func(labels []string) []string {
+		for _, d := range set.Decide(pr(func(it *Item) { it.Labels, it.Closes = labels, closes }), testEnv) {
+			if d.Rule == "inherit-labels" {
+				return d.Writes.Label
+			}
+		}
+		return nil
+	}
+	if got := strings.Join(writes([]string{"overseer"}), ","); got != "overseer/review,overseer/stop,priority/high" {
+		t.Errorf("a PR not yet ready inherits %q", got)
+	}
+	if got := strings.Join(writes([]string{"overseer", "overseer/ready-for-human"}), ","); got != "overseer/stop,priority/high" {
+		t.Errorf("a ready PR inherits %q, want the stop label and priority, not review", got)
+	}
+}
