@@ -17,6 +17,7 @@ limitations under the License.
 package usagereport
 
 import (
+	"archive/tar"
 	"context"
 	"encoding/json"
 	"errors"
@@ -24,6 +25,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -150,6 +152,16 @@ func (f *fakeTasks) ReadFile(_ context.Context, id, name string) ([]byte, error)
 	return []byte(data), nil
 }
 func (f *fakeTasks) Close() { f.closed = true }
+func (f *fakeTasks) AllFiles(_ context.Context, id string) ([]string, error) {
+	var names []string
+	for key := range f.files {
+		if name, ok := strings.CutPrefix(key, id+"/"); ok {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	return names, nil
+}
 
 // The sweep before a delete harvests every task dir through the sandbox's
 // task server, a classic command's and a recipe's alike, keyed as before
@@ -218,28 +230,37 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
-// collector records the usage keys and trace PUTs it is sent, and answers
-// traces with traceStatus.
-func collector(t *testing.T, traceStatus int) (keys, traces *[]string) {
+// collector records the usage keys and task PUTs it is sent (the path and
+// query, and the files in the tar), and answers tasks with taskStatus.
+func collector(t *testing.T, taskStatus int) (keys, tasks *[]string) {
 	t.Helper()
-	keys, traces = &[]string{}, &[]string{}
+	keys, tasks = &[]string{}, &[]string{}
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/usage":
 			var rec UsageRecord
 			_ = json.NewDecoder(r.Body).Decode(&rec)
 			*keys = append(*keys, rec.Key)
-		case r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, "/v1/traces/"):
-			body, _ := io.ReadAll(r.Body)
-			*traces = append(*traces, r.URL.Path+"?"+r.URL.RawQuery+" "+string(body))
-			w.WriteHeader(traceStatus)
+		case r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, "/v1/tasks/"):
+			var names []string
+			tr := tar.NewReader(r.Body)
+			for {
+				hdr, err := tr.Next()
+				if err != nil {
+					break
+				}
+				body, _ := io.ReadAll(tr)
+				names = append(names, hdr.Name+"="+strings.TrimSpace(string(body)))
+			}
+			*tasks = append(*tasks, r.URL.Path+"?"+r.URL.RawQuery+" "+strings.Join(names, ","))
+			w.WriteHeader(taskStatus)
 			return
 		}
 		w.WriteHeader(http.StatusOK)
 	}))
 	t.Cleanup(ts.Close)
 	t.Setenv("COLLECTOR_URL", ts.URL)
-	return keys, traces
+	return keys, tasks
 }
 
 func withTasks(t *testing.T, fake *fakeTasks) *bool {
@@ -262,36 +283,42 @@ func sessionTasks() *fakeTasks {
 		},
 		files: map[string]string{
 			"recipe-fix-20261020-100000-ab12/session/stream.ndjson": `{"seq":1}` + "\n",
+			"recipe-fix-20261020-100000-ab12/push.json":             `{"head":"abc"}`,
+			"recipe-fix-20261020-100000-ab12/recipe.yaml":           "generated",
+			"recipe-fix-20261020-100000-ab12/steps/uses.sh":         "generated",
+			"recipe-fix-20261020-100000-ab12/pid":                   "123",
+			"recipe-fix-20261020-100000-ab12/exit_code":             "",
 		},
 	}
 }
 
-// One pass sends a task's usage and its transcript, and marks the sandbox
-// harvested once everything is in.
-func TestHarvestSandboxSendsTraces(t *testing.T) {
-	_, traces := collector(t, http.StatusOK)
+// One pass sends a task's usage and its files (not the generated or the
+// bookkeeping ones, not the empty ones), and marks the sandbox harvested
+// once everything is in.
+func TestHarvestSandboxArchivesTasks(t *testing.T) {
+	_, tasks := collector(t, http.StatusOK)
 	withTasks(t, sessionTasks())
 	marked = nil
 	if !HarvestSandbox(context.Background(), "overseer-kcc", "fix-kcc-7", Meta{Repo: "o/r", PR: 7}) {
 		t.Fatal("HarvestSandbox reported a failure")
 	}
-	want := "/v1/traces/fix-kcc-7/recipe-fix-20261020-100000-ab12?pr=7&repo=o%2Fr&taskType=recipe {\"seq\":1}\n"
-	if len(*traces) != 1 || (*traces)[0] != want {
-		t.Errorf("traces sent = %q, want [%q]", *traces, want)
+	want := `/v1/tasks/fix-kcc-7/recipe-fix-20261020-100000-ab12?pr=7&repo=o%2Fr&taskType=recipe push.json={"head":"abc"},session/stream.ndjson={"seq":1}`
+	if len(*tasks) != 1 || (*tasks)[0] != want {
+		t.Errorf("tasks sent = %q, want [%q]", *tasks, want)
 	}
 	if len(marked) != 1 || marked[0] != "overseer-kcc/fix-kcc-7" {
 		t.Errorf("marked = %v", marked)
 	}
 }
 
-// A trace the collector refuses leaves the sandbox unmarked, so the next
+// A task the collector refuses leaves the sandbox unmarked, so the next
 // pass tries again; a collector without an archive (501) wants none.
-func TestHarvestSandboxTraceFailures(t *testing.T) {
+func TestHarvestSandboxArchiveFailures(t *testing.T) {
 	collector(t, http.StatusInsufficientStorage)
 	withTasks(t, sessionTasks())
 	marked = nil
 	if HarvestSandbox(context.Background(), "ns", "sb", Meta{Repo: "o/r"}) || len(marked) != 0 {
-		t.Errorf("a refused trace counted as harvested (marked %v)", marked)
+		t.Errorf("a refused task counted as harvested (marked %v)", marked)
 	}
 
 	collector(t, http.StatusNotImplemented)
@@ -329,4 +356,32 @@ func TestHarvestSandboxSkipsHarvestedSuspended(t *testing.T) {
 	if !HarvestSandbox(context.Background(), "ns", "sb", Meta{Repo: "o/r"}) || !*connected {
 		t.Errorf("skipped a sandbox active since its harvest")
 	}
+}
+
+// A task server that lists the top level only still has its transcript
+// read by name.
+func TestArchiveTaskReadsTranscriptUnlisted(t *testing.T) {
+	_, tasks := collector(t, http.StatusOK)
+	fake := &topLevelOnly{fakeTasks: sessionTasks()}
+	withTasks(t, fake.fakeTasks)
+	if err := archiveTask(context.Background(), fake, "recipe-fix-20261020-100000-ab12", Meta{Repo: "o/r", Sandbox: "sb"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(*tasks) != 1 || !strings.Contains((*tasks)[0], `session/stream.ndjson={"seq":1}`) {
+		t.Errorf("tasks sent = %q", *tasks)
+	}
+}
+
+// topLevelOnly is a task server from before AllFiles listed subdirectories.
+type topLevelOnly struct{ *fakeTasks }
+
+func (f *topLevelOnly) AllFiles(ctx context.Context, id string) ([]string, error) {
+	all, _ := f.fakeTasks.AllFiles(ctx, id)
+	var top []string
+	for _, n := range all {
+		if !strings.Contains(n, "/") {
+			top = append(top, n)
+		}
+	}
+	return top, nil
 }

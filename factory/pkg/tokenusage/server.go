@@ -52,30 +52,30 @@ func NewServerForStore(store *Store) *Server {
 	s.mux.HandleFunc("GET /v1/usage/rollups/workflows/{session}", s.handleWorkflowDetail)
 	s.mux.HandleFunc("POST /v1/workflows/{session}/mark-summarized", s.handleMarkSummarized)
 	s.mux.HandleFunc("GET /v1/usage/tools", s.handleUsageTools)
-	s.mux.HandleFunc("PUT /v1/traces/{sandbox}/{task}", s.handleTracePut)
-	s.mux.HandleFunc("GET /v1/traces", s.handleTraces)
+	s.mux.HandleFunc("PUT /v1/tasks/{sandbox}/{task}", s.handleTaskPut)
+	s.mux.HandleFunc("GET /v1/tasks", s.handleTasks)
 	s.mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
 	return s
 }
 
-// handleTracePut takes a task's trace (stream.ndjson) as the body, with
-// repo, issue, pr and taskType in the query, and spools it for the
+// handleTaskPut takes a task's files as a tar stream in the body, with
+// repo, issue, pr and taskType in the query, and spools them for the
 // archive.
-func (s *Server) handleTracePut(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleTaskPut(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	issue, err1 := traceQueryInt(q.Get("issue"))
-	pr, err2 := traceQueryInt(q.Get("pr"))
+	issue, err1 := queryInt(q.Get("issue"))
+	pr, err2 := queryInt(q.Get("pr"))
 	if err1 != nil || err2 != nil {
 		http.Error(w, "issue and pr must be numbers", http.StatusBadRequest)
 		return
 	}
-	rec := TraceRecord{
+	rec := TaskRecord{
 		Repo: q.Get("repo"), Sandbox: r.PathValue("sandbox"), Task: r.PathValue("task"),
 		TaskType: q.Get("taskType"), Issue: issue, PR: pr,
 	}
-	err := s.store.PutTraceContent(rec, r.Body)
+	err := s.store.PutTask(rec, r.Body)
 	switch {
 	case err == nil:
 		w.WriteHeader(http.StatusOK)
@@ -83,27 +83,26 @@ func (s *Server) handleTracePut(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusNotImplemented)
 	case errors.Is(err, ErrSpoolFull):
 		http.Error(w, err.Error(), http.StatusInsufficientStorage)
-	case errors.Is(err, ErrTraceTooLarge):
+	case errors.Is(err, ErrTaskTooLarge):
 		http.Error(w, err.Error(), http.StatusRequestEntityTooLarge)
 	case strings.HasPrefix(err.Error(), "invalid "):
 		http.Error(w, err.Error(), http.StatusBadRequest)
 	default:
-		log.Printf("trace ingest failed for %s/%s: %v", rec.Sandbox, rec.Task, err)
+		log.Printf("task ingest failed for %s/%s: %v", rec.Sandbox, rec.Task, err)
 		http.Error(w, "storage error", http.StatusInternalServerError)
 	}
 }
 
-// handleTraces lists the archived traces' index records, never their
-// content.
-func (s *Server) handleTraces(w http.ResponseWriter, r *http.Request) {
+// handleTasks lists the archived tasks' index records, never their files.
+func (s *Server) handleTasks(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	issue, err1 := traceQueryInt(q.Get("issue"))
-	pr, err2 := traceQueryInt(q.Get("pr"))
+	issue, err1 := queryInt(q.Get("issue"))
+	pr, err2 := queryInt(q.Get("pr"))
 	if err1 != nil || err2 != nil {
 		http.Error(w, "issue and pr must be numbers", http.StatusBadRequest)
 		return
 	}
-	writeJSON(w, map[string]any{"traces": s.store.ListTraces(TraceFilter{
+	writeJSON(w, map[string]any{"tasks": s.store.ListTasks(TaskFilter{
 		Repo: q.Get("repo"), Issue: issue, PR: pr, Sandbox: q.Get("sandbox"),
 	})})
 }

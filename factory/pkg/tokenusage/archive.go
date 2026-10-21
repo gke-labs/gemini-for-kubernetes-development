@@ -45,8 +45,8 @@ import (
 //	records/<seq>.seg.jsonl.gz    a sealed segment of the records log
 //	records/<seq>.snap.jsonl.gz   every record as of segment <seq>
 //	subjects/…                    the same for the subjects log
-//	trace-index/…                 the same for the trace index (traces.go)
-//	traces/…                      the traces themselves (traces.go)
+//	task-index/…                  the same for the index of archived tasks (tasks.go)
+//	tasks/…                       the archived tasks themselves (tasks.go)
 //	summarized.json               the workflows whose summary was posted
 
 // Archive is an object store: flat names, whole-object reads and writes.
@@ -75,7 +75,7 @@ const (
 // a few objects rather than every flush since the beginning.
 var compactAfter = 100
 
-var logKinds = []string{logRecords, logSubjects, logTraces}
+var logKinds = []string{logRecords, logSubjects, logTasks}
 
 func segmentName(kind string, seq int64) string {
 	return fmt.Sprintf("%s/%020d.seg.jsonl.gz", kind, seq)
@@ -279,8 +279,8 @@ func (s *Store) logFile(kind string) **os.File {
 	switch kind {
 	case logSubjects:
 		return &s.subjectsLog
-	case logTraces:
-		return &s.tracesLog
+	case logTasks:
+		return &s.tasksLog
 	}
 	return &s.log
 }
@@ -295,9 +295,9 @@ func (s *Store) Flush(ctx context.Context) error {
 	}
 	s.flushMu.Lock()
 	defer s.flushMu.Unlock()
-	// Traces first: indexing one appends to the traces log, which this
+	// Tasks first: indexing one appends to the task index, which this
 	// flush then seals and uploads with the rest.
-	if err := s.uploadTraces(ctx); err != nil {
+	if err := s.uploadTasks(ctx); err != nil {
 		return err
 	}
 	s.mu.Lock()
@@ -443,9 +443,9 @@ func (s *Store) snapshotLocked(kind string) ([]byte, error) {
 				return nil, err
 			}
 		}
-	case logTraces:
-		for _, key := range sortedKeys(s.traces) {
-			if err := write(s.traces[key]); err != nil {
+	case logTasks:
+		for _, key := range sortedKeys(s.tasks) {
+			if err := write(s.tasks[key]); err != nil {
 				return nil, err
 			}
 		}

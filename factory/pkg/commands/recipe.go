@@ -980,7 +980,7 @@ func startRecipeTask(ctx context.Context, kubeClient *clients.KubernetesClient, 
 		usage(&meta)
 	}
 	taskDir := spool.TaskDir(task.ID)
-	usagereport.HarvestTaskFiles(ctx, taskDir, func(name string) ([]byte, error) { return sb.ReadFile(ctx, task.ID, name) }, meta)
+	usagereport.HarvestTask(ctx, sb, task.ID, meta)
 
 	if err := printRecipeOutputs(ctx, sb, rec, task.ID); err != nil {
 		return false, err

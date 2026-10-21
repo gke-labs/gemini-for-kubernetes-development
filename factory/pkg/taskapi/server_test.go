@@ -404,3 +404,37 @@ func TestReadSessionFile(t *testing.T) {
 		t.Errorf("session/../outside was served")
 	}
 }
+
+// AllFiles lists the task's files one directory down too, which ReadFile
+// then reads by their relative names; the secrets stay out.
+func TestAllFiles(t *testing.T) {
+	c, _ := newTestServer(t)
+	ctx := context.Background()
+	req := post("fix-20261021-120000", "", `mkdir -p session steps .hidden && echo t > session/stream.ndjson && echo s > steps/01-clone.log && echo h > .hidden/x && echo r > result.yaml`)
+	req.Secrets = map[string]string{"GITHUB_TOKEN": "tok3n"}
+	resp, err := c.Post(ctx, req)
+	if err != nil {
+		t.Fatalf("Post: %v", err)
+	}
+	readLog(t, c, resp.Task.ID, 0)
+	names, err := c.AllFiles(ctx, resp.Task.ID)
+	if err != nil {
+		t.Fatalf("AllFiles: %v", err)
+	}
+	for _, want := range []string{"session/stream.ndjson", "steps/01-clone.log", "result.yaml"} {
+		if !contains(names, want) {
+			t.Errorf("AllFiles = %v, missing %s", names, want)
+		}
+	}
+	for _, not := range []string{spool.SecretsFile, spool.EnvFile, ".hidden/x"} {
+		if contains(names, not) {
+			t.Errorf("AllFiles = %v, lists %s", names, not)
+		}
+	}
+	if data, err := c.ReadFile(ctx, resp.Task.ID, "steps/01-clone.log"); err != nil || string(data) != "s\n" {
+		t.Errorf("ReadFile steps/01-clone.log = %q, %v", data, err)
+	}
+	if top, _ := c.Files(ctx, resp.Task.ID); contains(top, "steps/01-clone.log") {
+		t.Errorf("Files lists a subdirectory's file: %v", top)
+	}
+}

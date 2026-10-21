@@ -40,11 +40,11 @@ type Store struct {
 	root        string
 	records     map[string]UsageRecord
 	subjects    map[string]Subject
-	traces      map[string]TraceRecord
+	tasks       map[string]TaskRecord
 	summarized  map[string]bool // workflow session -> summary comment posted
 	log         *os.File
 	subjectsLog *os.File
-	tracesLog   *os.File
+	tasksLog    *os.File
 
 	// The archive tier (archive.go); nil keeps everything on the PVC.
 	archive         Archive
@@ -65,13 +65,13 @@ func OpenStore(ctx context.Context, root string, archive Archive) (*Store, error
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		return nil, fmt.Errorf("creating storage root: %w", err)
 	}
-	// A trace PUT that died half-way left its temporary directory.
-	_ = os.RemoveAll(filepath.Join(root, "traces.tmp"))
+	// A task PUT that died half-way left its temporary directory.
+	_ = os.RemoveAll(filepath.Join(root, "tasks.tmp"))
 	s := &Store{
 		root:          root,
 		records:       map[string]UsageRecord{},
 		subjects:      map[string]Subject{},
-		traces:        map[string]TraceRecord{},
+		tasks:         map[string]TaskRecord{},
 		summarized:    map[string]bool{},
 		archive:       archive,
 		nextSeq:       1,
@@ -87,8 +87,8 @@ func OpenStore(ctx context.Context, root string, archive Archive) (*Store, error
 	}); err != nil {
 		return nil, err
 	}
-	if err := s.loadLog(ctx, logTraces, func(r io.Reader) error {
-		return replayLog(r, func(rec TraceRecord) string { return rec.Key }, s.traces)
+	if err := s.loadLog(ctx, logTasks, func(r io.Reader) error {
+		return replayLog(r, func(rec TaskRecord) string { return rec.Key }, s.tasks)
 	}); err != nil {
 		return nil, err
 	}
@@ -112,13 +112,13 @@ func OpenStore(ctx context.Context, root string, archive Archive) (*Store, error
 		return nil, fmt.Errorf("opening subjects log: %w", err)
 	}
 	s.subjectsLog = subjectsLog
-	tracesLog, err := os.OpenFile(s.activePath(logTraces), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	tasksLog, err := os.OpenFile(s.activePath(logTasks), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
 		_ = log.Close()
 		_ = subjectsLog.Close()
-		return nil, fmt.Errorf("opening traces log: %w", err)
+		return nil, fmt.Errorf("opening task index log: %w", err)
 	}
-	s.tracesLog = tracesLog
+	s.tasksLog = tasksLog
 	return s, nil
 }
 
@@ -599,7 +599,7 @@ func (s *Store) Close() error {
 	if err2 := s.subjectsLog.Close(); err == nil {
 		err = err2
 	}
-	if err2 := s.tracesLog.Close(); err == nil {
+	if err2 := s.tasksLog.Close(); err == nil {
 		err = err2
 	}
 	return err

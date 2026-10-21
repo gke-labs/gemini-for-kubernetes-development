@@ -75,6 +75,14 @@ func (c *Client) Files(ctx context.Context, id string) ([]string, error) {
 	return names, err
 }
 
+// AllFiles is Files with the files one directory down, as "<dir>/<name>".
+// A task server that predates it lists the top level only.
+func (c *Client) AllFiles(ctx context.Context, id string) ([]string, error) {
+	var names []string
+	err := c.do(ctx, http.MethodGet, "/v1/tasks/"+url.PathEscape(id)+"/files?subdirs=1", nil, &names)
+	return names, err
+}
+
 // ReadFile is a file in the task's directory, os.ErrNotExist when it has
 // none of that name.
 func (c *Client) ReadFile(ctx context.Context, id, name string) ([]byte, error) {
@@ -106,12 +114,12 @@ func (c *Client) Log(ctx context.Context, id string, offset int64, follow bool) 
 }
 
 // SessionDir is the task directory's session subdirectory. ReadFile reads
-// a file in it by its relative name, "session/stream.ndjson".
+// a file one directory down by its relative name, "session/stream.ndjson".
 const SessionDir = "session"
 
 func filePath(id, name string) string {
-	if rest, ok := strings.CutPrefix(name, SessionDir+"/"); ok {
-		return "/v1/tasks/" + url.PathEscape(id) + "/files/" + SessionDir + "/" + url.PathEscape(rest)
+	if dir, rest, ok := strings.Cut(name, "/"); ok {
+		return "/v1/tasks/" + url.PathEscape(id) + "/files/" + url.PathEscape(dir) + "/" + url.PathEscape(rest)
 	}
 	return "/v1/tasks/" + url.PathEscape(id) + "/files/" + url.PathEscape(name)
 }
