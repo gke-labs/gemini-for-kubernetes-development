@@ -2,7 +2,6 @@ package issues
 
 import (
 	"context"
-	"fmt"
 	"slices"
 	"time"
 
@@ -39,7 +38,12 @@ func (s *Scanner) startRecording(issue *githubv39.Issue) *rules.Recording {
 	if s.recorder == nil {
 		return nil
 	}
-	it := rules.Item{
+	return s.recorder.Start("issues", s.rulesEnv(), s.issueItemOf(issue))
+}
+
+// issueItemOf is the facts the listing gives of an issue.
+func (s *Scanner) issueItemOf(issue *githubv39.Issue) rules.Item {
+	return rules.Item{
 		Kind:         rules.OnIssue,
 		Number:       issue.GetNumber(),
 		Labels:       labelNames(issue.Labels),
@@ -49,7 +53,6 @@ func (s *Scanner) startRecording(issue *githubv39.Issue) *rules.Recording {
 		Closed:       issue.GetState() == "closed",
 		FanoutParent: conventions.HasFanoutLabel(issue.Labels, s.cfg.TriggerLabel),
 	}
-	return s.recorder.Start("issues", s.rulesEnv(), it)
 }
 
 // recordRuns adds the rule's history of the issue, from the queue, to the
@@ -58,6 +61,12 @@ func (s *Scanner) recordRuns(rule, filename string) {
 	if s.rec == nil {
 		return
 	}
+	s.rec.Fill(func(it *rules.Item) { s.fillRuns(it, rule, filename) })
+}
+
+// fillRuns adds the rule's history of the issue from the queue: the runs
+// of its task that ended.
+func (s *Scanner) fillRuns(it *rules.Item, rule, filename string) {
 	var ended []rules.PastRun
 	if h, ok := s.queue.(runHistory); ok {
 		ended = pastRuns(h.EndedRuns(filename))
@@ -67,8 +76,7 @@ func (s *Scanner) recordRuns(rule, filename string) {
 	if last := s.queue.GetProcessedTask(filename); last != nil {
 		lastStart, lastEnd, failed = last.StartedAt, last.CompletedAt, last.Status == api.StatusFailed
 	}
-	runs := rules.PastRuns(rule, ended, lastStart, lastEnd, failed, "")
-	s.rec.Fill(func(it *rules.Item) { it.Runs = append(it.Runs, runs...) })
+	it.Runs = append(it.Runs, rules.PastRuns(rule, ended, lastStart, lastEnd, failed, "")...)
 }
 
 // recordSpoken adds when a trusted human last spoke on the issue and when
@@ -76,17 +84,27 @@ func (s *Scanner) recordRuns(rule, filename string) {
 // with a failed run has a count to start; the others are spared reading
 // its comments.
 func (s *Scanner) recordSpoken(ctx context.Context, num int) {
-	if s.rec == nil || !slices.ContainsFunc(s.rec.Item.Runs, func(r rules.PastRun) bool { return r.Failed }) {
+	if s.rec == nil {
 		return
+	}
+	if err := s.fillSpoken(ctx, s.rec.Item, num); err != nil {
+		klog.Warningf("Reading the comments of issue #%d for its give-up: %v", num, err)
+	}
+}
+
+// fillSpoken adds when a trusted human last spoke on the issue and when
+// the watcher last paused it (recordSpoken), when it has a failed run.
+func (s *Scanner) fillSpoken(ctx context.Context, it *rules.Item, num int) error {
+	if !slices.ContainsFunc(it.Runs, func(r rules.PastRun) bool { return r.Failed }) {
+		return nil
 	}
 	comments, err := s.gh.ListIssueComments(ctx, num)
 	if err != nil {
-		klog.Warningf("Reading the comments of issue #%d for its give-up: %v", num, err)
-		return
+		return err
 	}
-	human := conventions.HumanSpokeAt(comments, s.cfg.BotUsers, s.cfg.GitHubLogin, s.cfg.AllowlistedBots, s.cfg.TrustedLogins, s.cfg.TriggerLabel)
-	paused := conventions.PausedAt(comments, s.cfg.BotUsers, s.cfg.GitHubLogin, s.cfg.TriggerLabel)
-	s.rec.Fill(func(it *rules.Item) { it.HumanSpokeAt, it.PausedAt = human, paused })
+	it.HumanSpokeAt = conventions.HumanSpokeAt(comments, s.cfg.BotUsers, s.cfg.GitHubLogin, s.cfg.AllowlistedBots, s.cfg.TrustedLogins, s.cfg.TriggerLabel)
+	it.PausedAt = conventions.PausedAt(comments, s.cfg.BotUsers, s.cfg.GitHubLogin, s.cfg.TriggerLabel)
+	return nil
 }
 
 // decisionOf is the decision on rule among ds, if there is one.
@@ -122,32 +140,4 @@ func logins(users []*githubv39.User) []string {
 		out = append(out, u.GetLogin())
 	}
 	return out
-}
-
-// Record evaluates one issue, as a scan would, and returns the facts its
-// evaluation recorded: what the rules decide on (factory watch rules
-// explain). It lists the open pull requests itself, as the issue scan reads
-// them from the cache, to tell whether one closes the issue. The scanner
-// should be dry-run: what it would write or queue is no part of the record,
-// and it takes the scanner's recorder for the evaluation.
-func (s *Scanner) Record(ctx context.Context, num int) (*rules.Record, error) {
-	issue, err := s.gh.GetIssue(ctx, num)
-	if err != nil {
-		return nil, err
-	}
-	if issue.PullRequestLinks != nil {
-		return nil, fmt.Errorf("#%d is a pull request, not an issue", num)
-	}
-	prs, err := s.gh.ListOpenPRs(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("listing open pull requests: %w", err)
-	}
-	s.entities.UpdateOpenPRs(prs)
-	var got *rules.Record
-	s.recorder = rules.NewSinkRecorder(func(rec rules.Record) { got = &rec })
-	s.queueTask(ctx, issue, s.entities.GetReferencedIssuesMap())
-	if got == nil {
-		return nil, fmt.Errorf("#%d left no record (below the scanner's number floor?)", num)
-	}
-	return got, nil
 }

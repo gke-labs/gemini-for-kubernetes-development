@@ -383,7 +383,12 @@ scanners set them (`prs/task.go` expectFor, the issue scanner):
   to one) refreshes the task's recorded facts, so it is not dropped for
   a change it already reflects.
 
-**Phase 4, in steps:** (1) the gates in code (`rules.Gates`, with
+**Phase 4, in steps** (step 1b, done: `Scanner.Facts(ctx, number)` in
+`prs/` and `issues/` reads one item's facts with the functions the scan
+records them with - read-only, every fact, not stopping at an active task -
+and `explain` reads live through it; "pointed at", the issue listings'
+filter, is the issue rules' `any-of` so a decision outside a scan holds it
+too): (1) the gates in code (`rules.Gates`, with
 `closed` and `below-min-number`) and the facts built outside the scanners
 (`facts.Build(kind, number) → rules.Item`: the reads in `prs/` and
 `issues/` moved to one package both scanners and the dispatcher call,

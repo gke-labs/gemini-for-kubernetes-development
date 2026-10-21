@@ -67,16 +67,49 @@ func TestEvaluate_RecordsDecisionsTheRulesReplay(t *testing.T) {
 	}
 }
 
-// Record evaluates one pull request and returns the facts it recorded,
-// the decisions left to the rules (factory watch rules explain).
-func TestRecordOnePR(t *testing.T) {
-	f := &prFixture{num: 21, headSHA: "sha-21", updated: time.Now(), pending: true}
-	s, _ := newTestScanner(t, t.TempDir(), testOpts{GitHub: f.start(t), BotUsers: []string{"bot1"}, GitHubLogin: "bot1", TriggerLabel: "factory"})
-	rec, err := s.Record(context.Background(), 21)
-	if err != nil {
-		t.Fatal(err)
+// Facts reads one pull request's facts without a scan, and they are the
+// facts the scan records for it: each from the same function. Not a
+// scan's stopping early, every one is read.
+func TestFactsAreTheScansFacts(t *testing.T) {
+	no := false
+	for _, f := range []*prFixture{
+		{num: 21, headSHA: "sha-21", updated: time.Now(), pending: true},
+		{num: 22, headSHA: "sha-22", updated: time.Now()},
+		{num: 23, headSHA: "sha-23", updated: time.Now(), mergeable: &no},
+	} {
+		t.Run(f.headSHA, func(t *testing.T) {
+			var rec rules.Record
+			s, _ := newTestScanner(t, t.TempDir(), testOpts{
+				GitHub: f.start(t), BotUsers: []string{"bot1"}, GitHubLogin: "bot1", TriggerLabel: "factory",
+				Recorder: rules.NewSinkRecorder(func(r rules.Record) { rec = r }),
+			})
+			it, env, err := s.Facts(context.Background(), f.num)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if it.Kind != rules.OnPR || it.Number != f.num || it.Head != f.headSHA || it.Author != "bot1" || env.Trigger != "factory" {
+				t.Errorf("item = %+v", it)
+			}
+			f.mu.Lock()
+			listed := f.listingIssueLocked()
+			f.mu.Unlock()
+			s.evaluate(context.Background(), listed)
+			// The fixture stamps the head's commit, and so the last
+			// activity, at each read: set, but not equal.
+			if it.HeadChangedAt.IsZero() || it.LastTrustedActivity.IsZero() {
+				t.Errorf("facts lack the history: %+v", it)
+			}
+			it.HeadChangedAt, it.LastTrustedActivity = rec.Item.HeadChangedAt, rec.Item.LastTrustedActivity
+			want, _ := json.Marshal(rec.Item)
+			got, _ := json.Marshal(it)
+			if !bytes.Equal(want, got) {
+				t.Errorf("facts differ from the scan's:\nscan  %s\nfacts %s", want, got)
+			}
+		})
 	}
-	if it := rec.Item; it.Kind != rules.OnPR || it.Number != 21 || it.Checks != "pending" || it.Head != "sha-21" || it.Author != "bot1" {
-		t.Errorf("item = %+v", it)
+	f := &prFixture{num: 24, headSHA: "sha-24", updated: time.Now()}
+	s, _ := newTestScanner(t, t.TempDir(), testOpts{GitHub: f.start(t), BotUsers: []string{"bot1"}, TriggerLabel: "factory"})
+	if _, _, err := s.Facts(context.Background(), 999); err == nil {
+		t.Error("an unknown number read")
 	}
 }

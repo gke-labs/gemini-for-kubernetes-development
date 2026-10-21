@@ -26,6 +26,13 @@ description: Fix an issue the overseer is pointed at and open the PR
 on: issue
 order: 20
 when:
+  # pointed at: the trigger label, a pool assignee, or opened by the
+  # watcher (the issue listings'; the engine's own, so a decision outside
+  # a scan - the dispatcher's at start - holds the same)
+  any-of:
+    - labels: {any: ["{{trigger}}"]}
+    - assignee: pool
+    - opened-by: watcher
   fanout: false
   linked-pr: none
   workflow: none

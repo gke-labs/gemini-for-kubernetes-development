@@ -12,6 +12,13 @@ description: Stop an issue whose workflow definition cannot be loaded
 on: issue
 order: 5
 when:
+  # pointed at: the trigger label, a pool assignee, or opened by the
+  # watcher (the issue listings'; the engine's own, so a decision outside
+  # a scan - the dispatcher's at start - holds the same)
+  any-of:
+    - labels: {any: ["{{trigger}}"]}
+    - assignee: pool
+    - opened-by: watcher
   fanout: false
   workflow: missing
 run:
