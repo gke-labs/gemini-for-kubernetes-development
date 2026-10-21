@@ -55,9 +55,11 @@ context: |
 
 start:
   steps:
+    - uses: setup-git
+    # run: steps run in the checkout, which setup-git makes on a
+    # sandbox that has none yet: the input check comes after it.
     - run: |
         case "${INPUT_SKIP_PR}" in true|false) ;; *) echo "skip_pr ${INPUT_SKIP_PR} is neither true nor false" >&2; exit 1 ;; esac
-    - uses: setup-git
     - uses: setup-fork
     - run: sleep 5 # lib.sh's HACK: avoid git lock issues
     - uses: configure-engine
