@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { DRAFT_VERBS } from './Research';
 import agentSandboxIcon from './agent-sandbox-icon.svg';
+import SandboxSize from './SandboxSize';
 import Chip from './Chip';
 import { ENGINE_ICON, EngineIcon, SessionMark, RUN_STYLE, READY_STYLE, ageOf } from './WorkBits';
 import SessionSlideOver from './SessionSlideOver';
@@ -1683,6 +1684,7 @@ function Work({ onBack, namespace, active = true }) {
                   </select>
                 </label>
               </div>
+              <SandboxSize spec={spec} onChange={setSpec} />
               <label style={{ cursor: 'pointer', fontSize: 'small' }} title="Turn auto on for each PR a fix opens: factory pr watch runs care on its new review comments and failed checks. Any PR of yours turns on from its auto chip.">
                 <input type="checkbox" checked={!!spec.autoIterate} onChange={e => setSpec({ ...spec, autoIterate: e.target.checked })} style={{ marginRight: '6px' }} />
                 Auto on PRs a fix opens
