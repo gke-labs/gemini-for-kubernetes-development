@@ -3,15 +3,12 @@ package prs
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	githubv39 "github.com/google/go-github/v39/github"
-	"k8s.io/klog/v2"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/conventions"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
-	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/watch/rules"
 )
 
 // prHistory is everything said and done on a pull request, fetched once per
@@ -105,51 +102,6 @@ func historyFromDetails(d *github.PRDetails) *prHistory {
 	return h
 }
 
-// pauseIfInactive stops the watcher working a pull request that no human has
-// engaged with for the configured timeout, and reports whether it did.
-//
-// A pull request nobody has looked at is usually one that has been abandoned or
-// superseded, and continuing to rebase and re-investigate it burns agent time
-// on a change that will never merge. The stop label is applied rather than the
-// pull request being silently dropped, so that the pause is visible and a human
-// can undo it by removing the label.
-func (s *Scanner) pauseIfInactive(ctx context.Context, pr *githubv39.PullRequest, prIssue *githubv39.Issue, history *prHistory, headSHA string) bool {
-	if s.cfg.InactivityTimeout <= 0 {
-		return false
-	}
-	num := prIssue.GetNumber()
-	lastActivity, inactive := s.inactiveSince(pr, history)
-	if !inactive {
-		return false
-	}
-
-	stopLabel := conventions.StopLabel(s.cfg.TriggerLabel)
-	s.rec.Decided("inactive", rules.OutcomeRun)
-	if s.cfg.DryRun {
-		fmt.Printf("[DRYRUN] Would pause automated processing on PR #%d and apply label '%s' due to inactivity since %v\n", num, stopLabel, lastActivity)
-		return true
-	}
-
-	klog.Infof("Pausing automated processing on PR #%d and applying label '%s' due to inactivity since %v", num, stopLabel, lastActivity)
-	// The explanatory comment is only posted once: it is itself bot activity,
-	// so re-posting it every cycle would spam a thread nobody is reading.
-	if !hasInactivityComment(history.comments, lastActivity) {
-		s.comment(ctx, num, fmt.Sprintf("🤖 AI Factory has paused automated processing on this pull request due to a period of inactivity with no human comments (inactive for %s). I have applied the `%s` label.\n\nTo resume automated processing, please remove the `%s` label from this pull request and add a new comment/review.", s.cfg.InactivityTimeout, stopLabel, stopLabel))
-	}
-	if err := s.gh.AddLabels(ctx, num, []string{stopLabel}); err != nil {
-		klog.Errorf("Failed to add stop label '%s' to PR #%d: %v", stopLabel, num, err)
-	}
-	_ = s.queue.RemovePendingTasksForNumber(num)
-	return true
-}
-
-// inactiveSince is when a human last engaged with the pull request, and
-// whether that is longer ago than the inactivity timeout (none: never).
-func (s *Scanner) inactiveSince(pr *githubv39.PullRequest, history *prHistory) (time.Time, bool) {
-	lastActivity := getLastPRActivityTime(pr, history.comments, history.reviews, history.revCommentsMap, s.cfg.GitHubLogin, s.cfg.AllowlistedBots, s.cfg.TrustedLogins, s.cfg.TriggerLabel)
-	return lastActivity, s.cfg.InactivityTimeout > 0 && time.Since(lastActivity) > s.cfg.InactivityTimeout
-}
-
 // getLastPRActivityTime returns when a human last engaged with the pull
 // request, falling back to when it was opened.
 //
@@ -200,17 +152,4 @@ func getLastPRActivityTime(pr *githubv39.PullRequest, comments []*githubv39.Issu
 	}
 
 	return lastActivity
-}
-
-// hasInactivityComment reports whether the inactivity notice has already been
-// posted since the last activity.
-func hasInactivityComment(comments []*githubv39.IssueComment, lastActivity time.Time) bool {
-	for _, c := range comments {
-		if strings.Contains(c.GetBody(), "paused automated processing on this pull request due to a period of inactivity") {
-			if c.GetCreatedAt().After(lastActivity) {
-				return true
-			}
-		}
-	}
-	return false
 }

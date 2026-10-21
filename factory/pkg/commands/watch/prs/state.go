@@ -17,18 +17,8 @@ import (
 // commit is exactly what makes a previous investigation, review or rebase worth
 // repeating.
 type prState struct {
-	// lastInvestigatedTime is when a CI failure investigation was last queued or completed.
-	lastInvestigatedTime time.Time
-	// lastInvestigatedSHA is the head commit SHA when CI failures were last investigated.
-	lastInvestigatedSHA string
 	// lastCommentAddressedTime is when review feedback was last addressed by the bot.
 	lastCommentAddressedTime time.Time
-	// lastReviewedSHA is the commit SHA for which an automated review was last queued or completed.
-	lastReviewedSHA string
-	// lastIteratedSHA is the commit SHA for which a rebase was last queued or completed.
-	lastIteratedSHA string
-	// lastIteratedTime is when a rebase was last queued or completed.
-	lastIteratedTime time.Time
 
 	// The three fields below record what the last *complete* evaluation saw,
 	// and exist for the fast pass's skip gate (see Scanner.needsEvaluation).
@@ -36,7 +26,7 @@ type prState struct {
 	// pull request abandoned half way - a failed history fetch, a merge queue
 	// bail-out - is never mistaken for one that has been fully accounted for.
 	//
-	// Unlike the fields above they are not recovered from the queue on
+	// Unlike the field above they are not recovered from the queue on
 	// startup, and that is deliberate: a fresh process has no idea what has
 	// happened while it was down, so every pull request earns one full
 	// evaluation before it can be skipped.
@@ -172,14 +162,12 @@ func processedPRStates(tasks map[string]*api.QueueTask) map[int]prState {
 // For address-comments tasks, the enqueue timestamp is recorded even when the
 // task failed so that a restart does not mistake pre-existing comments for new
 // ones while still picking up comments posted while the task was running;
-// retries of a failed address-comments task are driven explicitly by inspecting
-// the processed task status. For other phases, a failed task is folded in as
-// nothing at all so that recording it does not suppress a retry.
+// retries of a failed address-comments task are the comments rule's
+// (last-run: failed). The other tasks record nothing here: the rules read
+// their runs from the queue.
 func foldProcessedPRTask(t *api.QueueTask, name string, state prState) prState {
 	// The queue dates every finished task, falling back to the task file's own
-	// timestamp for one that recorded no completion time. A zero survivor is
-	// not special-cased: it simply loses every comparison below, which leaves
-	// the SHA - all a review has to record - intact.
+	// timestamp for one that recorded no completion time.
 	tTime := t.CompletedAt
 
 	if strings.HasSuffix(name, "-comments") {
@@ -196,30 +184,6 @@ func foldProcessedPRTask(t *api.QueueTask, name string, state prState) prState {
 		return state
 	}
 
-	if strings.EqualFold(string(t.Status), string(api.StatusFailed)) {
-		return state
-	}
-
-	switch {
-	case strings.HasSuffix(name, "-investigate"):
-		if tTime.After(state.lastInvestigatedTime) {
-			state.lastInvestigatedTime = tTime
-		}
-		if t.CommitSHA != "" {
-			state.lastInvestigatedSHA = t.CommitSHA
-		}
-	case strings.HasSuffix(name, "-review"):
-		if t.CommitSHA != "" {
-			state.lastReviewedSHA = t.CommitSHA
-		}
-	case strings.HasSuffix(name, "-iterate"):
-		if tTime.After(state.lastIteratedTime) {
-			state.lastIteratedTime = tTime
-		}
-		if t.CommitSHA != "" {
-			state.lastIteratedSHA = t.CommitSHA
-		}
-	}
 	return state
 }
 

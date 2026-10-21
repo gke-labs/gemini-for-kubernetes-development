@@ -197,7 +197,7 @@ func TestEvaluate_EngineGivesCIUp(t *testing.T) {
 	if f.count("POST /repos/test-owner/test-repo/issues/14/comments") == 0 {
 		t.Error("no give-up comment")
 	}
-	assertRecorded(t, record, `"ci give-up"`, `{"rule":"ci","legacy":true}`)
+	assertRecorded(t, record, `"ci give-up"`)
 }
 
 // The handler's own count says give up (three "started investigating"
@@ -237,7 +237,7 @@ func TestEvaluate_EngineRunsCIPastTheHandlersCount(t *testing.T) {
 	if f.count("POST /repos/test-owner/test-repo/issues/15/labels") != 0 {
 		t.Error("the handler gave up on its own count")
 	}
-	assertRecorded(t, record, `"ci run"`, `{"rule":"ci","legacy":true}`)
+	assertRecorded(t, record, `"ci run"`)
 	// The task carries the engine's decision: the runner runs the rule's
 	// recipe and apply.
 	data, err := os.ReadFile(filepath.Join(dir, "incoming", "task-pr-15-investigate.yaml"))
@@ -365,12 +365,9 @@ func TestEvaluate_EngineRetriesCommentsPastTheHandlersCount(t *testing.T) {
 	}
 }
 
-// Batch C: on a pull request the engine decides ready, ready-unreview,
-// inherit-labels and inactive for, the record keeps what the scanner's
-// own conditions said, so the shadow still compares them: here a green,
-// unreviewed PR that wants no review is ready, has nothing to inherit, and
-// is not idle.
-func TestEvaluate_RecordsBatchCHanded(t *testing.T) {
+// A green, unreviewed PR that wants no review: the engine decides ready,
+// and its writes go on the PR (the ready label, the pool's bot off).
+func TestEvaluate_EngineReady(t *testing.T) {
 	base, _ := rules.Builtin()
 	c, err := rules.NewControl(nil, base)
 	if err != nil {
@@ -387,12 +384,7 @@ func TestEvaluate_RecordsBatchCHanded(t *testing.T) {
 	listed := f.listingIssueLocked()
 	f.mu.Unlock()
 	s.evaluate(context.Background(), listed)
-	assertRecorded(t, record,
-		`{"rule":"inherit-labels","legacy":false}`,
-		`{"rule":"inactive","legacy":false}`,
-		`{"rule":"ready","legacy":true}`,
-		`{"rule":"ready-unreview","legacy":false}`,
-		`"ready run"`)
+	assertRecorded(t, record, `"ready run"`)
 	// The engine's ready is its writes: the ready label on, the pool's bot
 	// off the PR.
 	f.mu.Lock()

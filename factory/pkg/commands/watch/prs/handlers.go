@@ -11,30 +11,8 @@ import (
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/common"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/api"
-	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/conventions"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/watch/rules"
 )
-
-// maxInvestigations is how many times CI failures on the same revision are
-// investigated before the watcher gives up and hands the pull request back.
-//
-// Three attempts is the point past which the agent is demonstrably not making
-// progress on its own, and continuing would burn agent runs in a loop. The
-// counter resets on a new commit or a human comment, so this is a limit on
-// futile repetition rather than on the pull request as a whole.
-const maxInvestigations = 3
-
-// maxCommentRetries is how many times a failed address-comments task for the
-// same commit SHA is retried before the watcher stops requeueing it.
-const maxCommentRetries = 3
-
-// investigationRetryAfter is how long after an investigation the same revision
-// becomes worth investigating again.
-//
-// Re-running against an unchanged commit is normally pointless, but flaky
-// infrastructure and transient failures do resolve themselves, and after a
-// couple of hours a retry is cheaper than a stuck pull request.
-const investigationRetryAfter = 2 * time.Hour
 
 // prContext is the per-pull-request facts each handler needs, assembled once so
 // that the handlers do not each re-derive them.
@@ -54,21 +32,10 @@ type prContext struct {
 	refIssues *refIssues
 }
 
-// handlePRIterate queues a rebase for a pull request that conflicts with its
-// base branch.
-//
-// It is gated on the head SHA rather than on time: if the last rebase produced
-// no new commit then it did not resolve anything, and running it again against
-// the identical tree would produce the identical result.
+// handlePRIterate queues the rebase the engine decided for a pull request
+// that conflicts with its base branch (once per head: the rule's dedupe).
 func (s *Scanner) handlePRIterate(ctx context.Context, pc *prContext) {
 	num := pc.prIssue.GetNumber()
-	state := s.state.get(num)
-
-	if state.lastIteratedSHA != "" && state.lastIteratedSHA == pc.headSHA {
-		klog.Infof("Skipping PR #%d rebase/conflict resolution because an iterate task was already processed for head SHA %s.", num, pc.headSHA)
-		return
-	}
-
 	filename := fmt.Sprintf("task-pr-%d-iterate.yaml", num)
 	if s.queue.TaskExists(filename) {
 		return
@@ -108,126 +75,22 @@ func (s *Scanner) handlePRIterate(ctx context.Context, pc *prContext) {
 		return
 	}
 	fmt.Printf("Queueing rebase task for PR #%d...\n", num)
-	// The state is recorded before the enqueue rather than after, so that a
-	// failure to write the task file does not leave the next cycle thinking the
-	// work is still outstanding while the file is in fact being retried.
-	state.lastIteratedSHA = pc.headSHA
-	state.lastIteratedTime = time.Now()
-	s.state.set(num, state)
 	s.rec.Decided("conflict", rules.OutcomeRun)
-	s.stampDecision(task, "conflict", pc.prIssue)
+	s.stampDecision(task, "conflict")
 	if err := s.queue.Enqueue(filename, task); err != nil {
 		klog.Errorf("Failed to queue rebase task for PR #%d: %v", num, err)
 	}
 }
 
-// canInvestigatePR reports whether CI failures on this pull request are worth
-// another look.
-//
-// Hitting the retry limit counts as "yes" so that handlePRInvestigate is
-// reached and can apply the stop label: the decision to give up has to be
-// announced on the pull request, not made silently here.
-func (s *Scanner) canInvestigatePR(
-	num int,
-	headSHA string,
-	isExplicitlyAssigned bool,
-	state prState,
-	comments []*githubv39.IssueComment,
-	lastCommitTime time.Time,
-) bool {
-	filename := fmt.Sprintf("task-pr-%d-investigate.yaml", num)
-	if s.queue.TaskExists(filename) {
-		return false
-	}
-	if s.investigationAttempts(num, comments, lastCommitTime) >= maxInvestigations {
-		return true
-	}
-	return state.lastInvestigatedSHA != headSHA ||
-		s.lastInvestigationFailed(filename) ||
-		isExplicitlyAssigned ||
-		time.Since(s.lastInvestigated(filename, state)) > investigationRetryAfter
-}
-
-// lastInvestigated is when the last investigation of the pull request
-// ended: what investigationRetryAfter counts from. The state's time is
-// when this process queued it (a restart rebuilds it from the processed
-// task's end); the processed task's end, when it is later, is the one to
-// count from - two hours since the failure was last looked at, not since
-// the look was queued. On KCC PR 13982 an investigation queued at 23:16
-// that ended at 23:43 was queued again at 01:17, 1h34m after it ended.
-func (s *Scanner) lastInvestigated(filename string, state prState) time.Time {
-	t := state.lastInvestigatedTime
-	if last := s.queue.GetProcessedTask(filename); last != nil && last.CommitSHA == state.lastInvestigatedSHA && last.CompletedAt.After(t) {
-		t = last.CompletedAt
-	}
-	return t
-}
-
-// investigationAttempts is how many times the watcher has investigated the
-// pull request's CI failures since its patience last reset
-// (investigationResetTime), which decides when it gives up.
-//
-// Without the attempts setting it is the count of its "started investigating"
-// comments, as it has always been. With it, it is the runs of the task that
-// ended since then, from the queue's journal (RunsSince), which survives the
-// watcher's restarts and counts neither a task dropped before it started nor
-// a comment that failed to post. For the move, the higher of the two counts:
-// a pull request part way through today's count is not given three more
-// tries. Once every pull request's count has reset since the setting was
-// turned on, the comment count can go.
-func (s *Scanner) investigationAttempts(num int, comments []*githubv39.IssueComment, lastCommitTime time.Time) int {
-	byComments := getInvestigationCount(comments, lastCommitTime, s.cfg.BotUsers, s.cfg.GitHubLogin, s.cfg.AllowlistedBots, s.cfg.TrustedLogins, s.cfg.TriggerLabel)
-	if !s.cfg.Attempts {
-		return byComments
-	}
-	since := investigationResetTime(comments, lastCommitTime, s.cfg.BotUsers, s.cfg.GitHubLogin, s.cfg.AllowlistedBots, s.cfg.TrustedLogins, s.cfg.TriggerLabel)
-	return max(byComments, s.queue.RunsSince(fmt.Sprintf("task-pr-%d-investigate.yaml", num), since))
-}
-
-// lastInvestigationFailed reports whether the previous investigation task ended
-// in failure, which makes the same revision worth retrying: the agent never got
-// to finish, so its verdict says nothing about the CI failure.
-func (s *Scanner) lastInvestigationFailed(filename string) bool {
-	last := s.queue.GetProcessedTask(filename)
-	return last != nil && last.Status == api.StatusFailed
-}
-
-// handlePRInvestigate queues an investigation of the pull request's CI
-// failures, or gives up and pauses the pull request once the retry limit has
-// been reached. It reports whether the phase completed cleanly; a false return
-// means a sandbox probe or enqueue failed and the pull request must be looked
-// at again next cycle.
-//
-// engine is the rules engine's decision on ci when it decides the rule for
-// the scanner (rules.Control.Takes), "" when the scanner decides: on
-// OutcomeGiveUp the watch gives up as it always has, and on OutcomeRun the
-// engine's give-up and cooldown stand in for the handler's own, so the two
-// counts cannot disagree; the queued task and the busy sandbox are still
-// checked here.
-func (s *Scanner) handlePRInvestigate(
-	ctx context.Context,
-	pc *prContext,
-	checkAnalysis prCheckAnalysis,
-	comments []*githubv39.IssueComment,
-	engine string,
-) bool {
+// handlePRInvestigate queues the investigation of the pull request's CI
+// failures the engine decided (its give-up and cooldown are the rule's). It
+// reports whether the phase completed cleanly; a false return means a
+// sandbox probe or enqueue failed and the pull request must be looked at
+// again next cycle.
+func (s *Scanner) handlePRInvestigate(ctx context.Context, pc *prContext, checkAnalysis prCheckAnalysis) bool {
 	num := pc.prIssue.GetNumber()
-	state := s.state.get(num)
 	filename := fmt.Sprintf("task-pr-%d-investigate.yaml", num)
-
 	if s.queue.TaskExists(filename) {
-		return true
-	}
-
-	if engine == rules.OutcomeGiveUp || (engine == "" && s.investigationAttempts(num, comments, pc.lastCommitTime) >= maxInvestigations) {
-		s.giveUpInvestigating(ctx, num)
-		return true
-	}
-
-	if engine == "" && state.lastInvestigatedSHA == pc.headSHA &&
-		!s.lastInvestigationFailed(filename) &&
-		!pc.isExplicitlyAssigned &&
-		time.Since(s.lastInvestigated(filename, state)) <= investigationRetryAfter {
 		return true
 	}
 
@@ -273,11 +136,8 @@ func (s *Scanner) handlePRInvestigate(
 		return true
 	}
 	fmt.Printf("Queueing investigate task for PR #%d...\n", num)
-	state.lastInvestigatedSHA = pc.headSHA
-	state.lastInvestigatedTime = time.Now()
-	s.state.set(num, state)
 	s.rec.Decided("ci", rules.OutcomeRun)
-	s.stampDecision(task, "ci", pc.prIssue)
+	s.stampDecision(task, "ci")
 	if err := s.queue.Enqueue(filename, task); err != nil {
 		klog.Errorf("Failed to queue investigate task for PR #%d: %v", num, err)
 		return false
@@ -285,69 +145,24 @@ func (s *Scanner) handlePRInvestigate(
 	return true
 }
 
-// giveUpInvestigating puts a pull request whose CI the watch has tried to
-// fix too often on hold: the stop label, and a comment saying so (its
-// wording is what investigationResetTime reads as a pause).
-func (s *Scanner) giveUpInvestigating(ctx context.Context, num int) {
-	stopLabel := conventions.StopLabel(s.cfg.TriggerLabel)
-	if !s.cfg.DryRun {
-		s.comment(ctx, num, fmt.Sprintf("🤖 AI Factory has attempted to investigate/fix CI check failures for this pull request %d times since the last commit or update without success. To prevent infinite loops, I am pausing automated investigation and attaching the `%s` label.\n\nTo request another attempt or resume automated processing, please remove the `%s` label from this pull request (and/or push a new commit or leave a comment).", maxInvestigations, stopLabel, stopLabel))
-		if err := s.gh.AddLabels(ctx, num, []string{stopLabel}); err != nil {
-			klog.Errorf("Failed to add stop label '%s' to PR #%d: %v", stopLabel, num, err)
-		}
-	}
-	s.rec.Decided("ci", rules.OutcomeGiveUp)
-	klog.Infof("Skipping PR #%d investigate because it has reached the maximum retry limit (%d attempts since last update) and applying stop label '%s'.", num, maxInvestigations, stopLabel)
-}
-
-// shouldRetryComments reports whether the previous address-comments task
-// failed against the current head commit and needs retry handling (either
-// queueing a retry, or applying the stop label once maxCommentRetries is
-// reached).
-func (s *Scanner) shouldRetryComments(num int, headSHA string) bool {
-	filename := fmt.Sprintf("task-pr-%d-comments.yaml", num)
-	if s.queue.TaskExists(filename) {
-		return false
-	}
-	return s.hasFailedCommentsOnHead(num, headSHA)
-}
-
-// hasFailedCommentsOnHead reports whether the last processed address-comments
-// task for this pull request failed against the current head commit.
-func (s *Scanner) hasFailedCommentsOnHead(num int, headSHA string) bool {
-	filename := fmt.Sprintf("task-pr-%d-comments.yaml", num)
-	last := s.queue.GetProcessedTask(filename)
-	return last != nil && last.Status == api.StatusFailed && last.CommitSHA == headSHA
-}
-
-// handlePRComments queues a task to address the outstanding review feedback,
-// or retries a previous address-comments task that failed on the same commit.
-// It reports whether the phase completed cleanly; a false return means a
-// sandbox probe or enqueue failed and the pull request must be looked at again
-// next cycle.
-//
-// engine is the rules engine's decision on comments when it decides the
-// rule for the scanner, "" when the scanner decides: on OutcomeGiveUp the
-// watch gives up as it always has, and on OutcomeRun the engine's give-up
-// stands in for the handler's retry limit.
-func (s *Scanner) handlePRComments(ctx context.Context, pc *prContext, commentAnalysis prCommentAnalysis, comments []*githubv39.IssueComment, engine string) bool {
+// handlePRComments queues the address-comments task the engine decided:
+// for new trusted feedback, or again after a run that failed on this head
+// (its give-up is the rule's). It reports whether the phase completed
+// cleanly; a false return means a sandbox probe or enqueue failed and the
+// pull request must be looked at again next cycle.
+func (s *Scanner) handlePRComments(ctx context.Context, pc *prContext, commentAnalysis prCommentAnalysis) bool {
 	if os.Getenv("DRY_RUN") == "true" {
 		return true
 	}
 	num := pc.prIssue.GetNumber()
 	filename := fmt.Sprintf("task-pr-%d-comments.yaml", num)
-
 	if s.queue.TaskExists(filename) {
 		return true
-	}
-	if engine == rules.OutcomeGiveUp {
-		return s.giveUpAddressing(ctx, num, pc.headSHA)
 	}
 
 	var eventTime time.Time
 	var notes string
 	retryCount := 0
-
 	if commentAnalysis.hasNewComments {
 		commitInfo := ""
 		if !pc.lastCommitTime.IsZero() {
@@ -364,33 +179,15 @@ func (s *Scanner) handlePRComments(ctx context.Context, pc *prContext, commentAn
 		eventTime = commentAnalysis.oldestCommentTime
 		notes = fmt.Sprintf("Oldest unaddressed %s%s added at %s (ID %d)%s", cType, authorStr, commentAnalysis.oldestCommentTime.Format(time.RFC3339), commentAnalysis.oldestCommentID, commitInfo)
 	} else {
-		last := s.queue.GetProcessedTask(filename)
-		if last != nil && last.RetryCount >= maxCommentRetries {
-			stopLabel := conventions.StopLabel(s.cfg.TriggerLabel)
-			if engine == "" && !hasCommentPauseAfter(comments, last.CompletedAt) {
-				return s.giveUpAddressing(ctx, num, pc.headSHA)
-			}
-			// A pause comment was already posted after the last failure, and the
-			// stop label is no longer present on the PR: a human removed the label
-			// to request another attempt. Reset retryCount to 0.
-			retryCount = 0
+		// Again after a run that failed on this head (last-run: failed).
+		if last := s.queue.GetProcessedTask(filename); last != nil {
+			retryCount = last.RetryCount + 1
 			eventTime = last.TriggerEventTime
-			if eventTime.IsZero() {
-				eventTime = pc.lastCommitTime
-			}
-			notes = fmt.Sprintf("Retrying failed address-comments task after '%s' label removal on commit %s", stopLabel, pc.shortSHA)
-		} else {
-			if last != nil {
-				retryCount = last.RetryCount + 1
-				eventTime = last.TriggerEventTime
-			} else {
-				retryCount = 1
-			}
-			if eventTime.IsZero() {
-				eventTime = pc.lastCommitTime
-			}
-			notes = fmt.Sprintf("Retrying failed address-comments task (retry %d/%d) on commit %s", retryCount, maxCommentRetries, pc.shortSHA)
 		}
+		if eventTime.IsZero() {
+			eventTime = pc.lastCommitTime
+		}
+		notes = fmt.Sprintf("Retrying the failed address-comments task (retry %d) on commit %s", max(retryCount, 1), pc.shortSHA)
 	}
 
 	sandboxName := s.sandboxes.ResolveName(ctx, api.TypePRComments, num)
@@ -423,7 +220,7 @@ func (s *Scanner) handlePRComments(ctx context.Context, pc *prContext, commentAn
 	}
 	fmt.Printf("Queueing address-comments task for PR #%d...\n", num)
 	s.rec.Decided("comments", rules.OutcomeRun)
-	s.stampDecision(task, "comments", pc.prIssue)
+	s.stampDecision(task, "comments")
 	if err := s.queue.Enqueue(filename, task); err != nil {
 		klog.Errorf("Failed to queue address-comments task for PR #%d: %v", num, err)
 		return false
@@ -432,24 +229,6 @@ func (s *Scanner) handlePRComments(ctx context.Context, pc *prContext, commentAn
 	// when the task starts, not here (NotifyTaskStarted): a task dropped
 	// before it starts leaves it for the next scan. Queued, the task is
 	// what keeps the next cycle from queueing it again.
-	return true
-}
-
-// giveUpAddressing puts a pull request whose feedback the watch has failed
-// to address too often on hold: the stop label, and a comment saying so
-// (its wording is what hasCommentPauseAfter reads). It reports whether it
-// completed.
-func (s *Scanner) giveUpAddressing(ctx context.Context, num int, headSHA string) bool {
-	stopLabel := conventions.StopLabel(s.cfg.TriggerLabel)
-	if !s.cfg.DryRun {
-		if err := s.gh.AddLabels(ctx, num, []string{stopLabel}); err != nil {
-			klog.Errorf("Failed to add stop label '%s' to PR #%d: %v", stopLabel, num, err)
-			return false
-		}
-		s.comment(ctx, num, fmt.Sprintf("🤖 AI Factory has attempted to address review feedback for this pull request %d times since the last commit or update without success. To prevent infinite loops, I am pausing automated feedback addressing and attaching the `%s` label.\n\nTo request another attempt or resume automated processing, please remove the `%s` label from this pull request (and/or push a new commit or leave a comment).", maxCommentRetries, stopLabel, stopLabel))
-	}
-	s.rec.Decided("comments", rules.OutcomeGiveUp)
-	klog.Infof("Skipping PR #%d address-comments retry because it has reached the maximum retry limit (%d retries) for SHA %s and applying stop label '%s'.", num, maxCommentRetries, headSHA, stopLabel)
 	return true
 }
 
@@ -465,7 +244,6 @@ func (s *Scanner) handlePRReview(ctx context.Context, pc *prContext, checkRuns [
 		return true
 	}
 	num := pc.prIssue.GetNumber()
-	state := s.state.get(num)
 	filename := fmt.Sprintf("task-pr-%d-review.yaml", num)
 
 	if s.queue.TaskExists(filename) {
@@ -529,10 +307,8 @@ func (s *Scanner) handlePRReview(ctx context.Context, pc *prContext, checkRuns [
 		return true
 	}
 	fmt.Printf("Queueing review task for PR #%d (Instructions: %d)...\n", num, len(instructions))
-	state.lastReviewedSHA = pc.headSHA
-	s.state.set(num, state)
 	s.rec.Decided("review", rules.OutcomeRun)
-	s.stampDecision(task, "review", pc.prIssue)
+	s.stampDecision(task, "review")
 	if err := s.queue.Enqueue(filename, task); err != nil {
 		klog.Errorf("Failed to queue review task for PR #%d: %v", num, err)
 		return false
