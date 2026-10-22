@@ -1,6 +1,7 @@
 package api
 
 import (
+	"fmt"
 	"slices"
 	"time"
 )
@@ -15,7 +16,22 @@ const (
 	TypePRIterate     TaskType = "pr-iterate"
 	TypePRReview      TaskType = "pr-review"
 	TypeAgentChore    TaskType = "agent-chore"
+	// TypePRRule and TypeIssueRule are the task of a rule of any other name
+	// (a repository's, .agents/watch): its recipe, on a pull request or an
+	// issue, in RuleTaskFile.
+	TypePRRule    TaskType = "pr-rule"
+	TypeIssueRule TaskType = "issue-rule"
 )
+
+// RuleTaskFile is the task file of rule's task on a pull request (pr) or
+// an issue: task-pr-<n>-rule-<rule>.yaml, task-issue-<n>-rule-<rule>.yaml.
+func RuleTaskFile(pr bool, num int, rule string) string {
+	kind := "issue"
+	if pr {
+		kind = "pr"
+	}
+	return fmt.Sprintf("task-%s-%d-rule-%s.yaml", kind, num, rule)
+}
 
 // TaskPriority represents the priority or urgency of a queue task.
 type TaskPriority string
@@ -83,6 +99,10 @@ const (
 	// TriggerReasonLinkedIssueClosed indicates a workflow task was queued because an issue linked
 	// to the workflow's issue was closed, which is often what the workflow is waiting on.
 	TriggerReasonLinkedIssueClosed TriggerReason = "LinkedIssueClosed"
+
+	// TriggerReasonRuleDecided indicates a rule of a name factory does not
+	// handle itself (a repository's) decided to run on the item.
+	TriggerReasonRuleDecided TriggerReason = "RuleDecided"
 )
 
 // QueueTask represents an actionable unit of work to be scheduled and executed in a sandbox.
@@ -189,7 +209,7 @@ type EndedRun struct {
 // IsPRTask reports whether a given task type corresponds to an automated PR task.
 func IsPRTask(taskType TaskType) bool {
 	switch taskType {
-	case TypePRInvestigate, TypePRComments, TypePRIterate:
+	case TypePRInvestigate, TypePRComments, TypePRIterate, TypePRRule:
 		return true
 	default:
 		return false

@@ -448,6 +448,10 @@ func (w When) validate(on string, nested bool) error {
 // placeholderRe finds a {{name}} in a rule's strings.
 var placeholderRe = regexp.MustCompile(`\{\{[^}]*\}\}`)
 
+// recipeNameRE is a recipe's name, as a repository's .agents/recipes file
+// is named, and a rule's.
+var recipeNameRE = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
+
 // Placeholders are the names the engine fills in, by where a rule may use
 // them: labels (in when and in the label writes), assignees (assign and
 // unassign) and recipe inputs.
@@ -519,6 +523,10 @@ func (r *Rule) Validate() error {
 	fail := func(format string, a ...any) error {
 		return fmt.Errorf("rule %s: %s", r.Name, fmt.Sprintf(format, a...))
 	}
+	if !recipeNameRE.MatchString(r.Name) {
+		// A rule's name names its file, and its task's (a rule task's).
+		return fail("the name is not lowercase letters, digits and dashes, starting with a letter")
+	}
 	if _, ok := predicates[r.On]; !ok || r.On == "*" {
 		return fail("on: %q is not one of %s, %s", r.On, OnIssue, OnPR)
 	}
@@ -537,6 +545,13 @@ func (r *Rule) Validate() error {
 		return fail("run is a recipe or GitHub writes, not both")
 	case r.Run.Recipe == "" && !r.Run.writes():
 		return fail("run needs a recipe or a GitHub write (label, unlabel, comment, assign, unassign, stop)")
+	case r.Run.Recipe != "" && r.Source == SourceRepo:
+		// A repository's rule may name the repository's own recipe
+		// (.agents/recipes), which factory resolves when the task runs;
+		// the watch checks it is there when it loads the rules.
+		if !recipeNameRE.MatchString(r.Run.Recipe) {
+			return fail("run.recipe %q is not a recipe name", r.Run.Recipe)
+		}
 	case r.Run.Recipe != "":
 		if !slices.Contains(recipe.BuiltinNames(), r.Run.Recipe) {
 			return fail("run.recipe %q is not one of factory's recipes", r.Run.Recipe)

@@ -6,12 +6,14 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 
 	githubv39 "github.com/google/go-github/v39/github"
 	"k8s.io/klog/v2"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/recipe"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/watch/rules"
 )
 
@@ -109,7 +111,17 @@ func repoWatchRules(owner, repo string) func(ctx context.Context, base rules.Set
 		if err != nil {
 			return nil, "", err
 		}
-		set, skipped, n, err := composeRepoWatchRules(base, files, mode)
+		recipeFiles, _, err := repoDirFiles(ctx, gh, owner, repo, repoRecipesDir)
+		if err != nil {
+			return nil, "", err
+		}
+		var repoRecipes []string
+		for file := range recipeFiles {
+			if name, ok := strings.CutSuffix(file, ".yaml"); ok {
+				repoRecipes = append(repoRecipes, name)
+			}
+		}
+		set, skipped, n, err := composeRepoWatchRules(base, files, repoRecipes, mode)
 		if err != nil {
 			return nil, "", fmt.Errorf("%s at %s: %w", repoWatchDir, rev, err)
 		}
@@ -122,20 +134,19 @@ func repoWatchRules(owner, repo string) func(ctx context.Context, base rules.Set
 
 // composeRepoWatchRules lays a repository's rule files over base as mode
 // says (rules.Compose), and says which it left out and why, and how many
-// files were rules.
-func composeRepoWatchRules(base rules.Set, files map[string][]byte, mode string) (rules.Set, []string, int, error) {
+// files were rules. A rule whose recipe is neither factory's nor one of
+// repoRecipes (the repository's .agents/recipes, by name) is left out: its
+// tasks would only fail.
+func composeRepoWatchRules(base rules.Set, files map[string][]byte, repoRecipes []string, mode string) (rules.Set, []string, int, error) {
 	repoRules, err := rules.LoadFiles(files)
 	if err != nil {
 		return nil, nil, 0, err
 	}
-	// The scanners carry out factory's rules, by name: a rule of a new
-	// name would be decided and never acted on, so it is left out until
-	// they carry out any rule.
 	var known []*rules.Rule
 	var skipped []string
 	for _, r := range repoRules {
-		if base.Named(r.Name) == nil {
-			skipped = append(skipped, fmt.Sprintf("%s: a rule of a new name, which the watch does not carry out yet (only factory's rules, replaced or toggled)", r.Name))
+		if name := r.Run.Recipe; name != "" && !slices.Contains(recipe.BuiltinNames(), name) && !slices.Contains(repoRecipes, name) {
+			skipped = append(skipped, fmt.Sprintf("%s: runs recipe %s, which is neither factory's nor in the repository's %s", r.Name, name, repoRecipesDir))
 			continue
 		}
 		known = append(known, r)

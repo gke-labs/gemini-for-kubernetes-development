@@ -47,10 +47,11 @@ is; ENABLED says "(repo)" when the repository's toggle set it).
 
 The watch reads a repository's rules when it starts, if its overseer lets
 the repository's .agents/ in (spec.repoRecipe.mode, read at its
-gitCommit): replace lays them over factory's as above; augment and off
-leave factory's rules as they are. A rule of a new name is left out, with
-a warning: the watch carries out factory's rules only, replaced or
-toggled. --url is accepted; it lists factory's rules.
+gitCommit): replace lays them over factory's as above; augment adds rules
+of new names only; off leaves factory's. A rule of a new name runs as a
+rule task, task-pr-<n>-rule-<name> or task-issue-<n>-rule-<name>: its
+recipe (factory's, or the repository's own .agents/recipes), or its
+writes. --url is accepted; it lists factory's rules.
 
 Policy floors: give-up and attempts at most 10, a cooldown at least 1m.`,
 		Example: `  factory watch rules

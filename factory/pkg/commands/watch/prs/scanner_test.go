@@ -650,6 +650,144 @@ func TestEvaluate_Review_GatedByPendingCheckRuns(t *testing.T) {
 	}
 }
 
+// A rule factory does not handle by name (a repository's) is carried out
+// as a rule task: green checks on a PR that wants a review, and the
+// repository's preview rule, ordered before review, takes the PR and
+// queues its recipe in task-pr-10-rule-preview.yaml, stamped with the
+// rule's decision, instead of the review.
+func TestEvaluate_RepositoryRuleQueuesARuleTask(t *testing.T) {
+	base, err := rules.Builtin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo, err := rules.LoadFiles(map[string][]byte{"preview.yaml": []byte("name: preview\non: pr\norder: 35\nwhen: {checks: green}\nrun: {recipe: summarize, apply: comment}\n")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	set, err := rules.Overlay(base, repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	control, err := rules.NewControl(nil, set)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tempDir := t.TempDir()
+	incomingDir := filepath.Join(tempDir, "incoming")
+	processingDir := filepath.Join(tempDir, "processing")
+	processedDir := filepath.Join(tempDir, "processed")
+	_ = os.MkdirAll(incomingDir, 0755)
+	_ = os.MkdirAll(processingDir, 0755)
+	_ = os.MkdirAll(processedDir, 0755)
+
+	prNum := 10
+	mergeable := true
+	headSHA := "sha-1234"
+	now := time.Now()
+
+	checkRunStatus := "in_progress"
+	checkRunConclusion := ""
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == "GET" && r.URL.Path == "/repos/test-owner/test-repo/pulls/10":
+			pr := &githubv39.PullRequest{
+				Number:    &prNum,
+				Mergeable: &mergeable,
+				State:     stringPtr("open"),
+				User:      &githubv39.User{Login: stringPtr("bot1")},
+				Head:      &githubv39.PullRequestBranch{SHA: stringPtr(headSHA)},
+				CreatedAt: &now,
+			}
+			_ = json.NewEncoder(w).Encode(pr)
+		case r.Method == "GET" && r.URL.Path == "/repos/test-owner/test-repo/pulls/10/commits":
+			commits := []*githubv39.RepositoryCommit{
+				{
+					SHA: stringPtr(headSHA),
+					Commit: &githubv39.Commit{
+						Committer: &githubv39.CommitAuthor{Date: &now},
+					},
+				},
+			}
+			_ = json.NewEncoder(w).Encode(commits)
+		case r.Method == "GET" && r.URL.Path == "/repos/test-owner/test-repo/issues/10/comments":
+			_ = json.NewEncoder(w).Encode([]*githubv39.IssueComment{})
+		case r.Method == "GET" && r.URL.Path == "/repos/test-owner/test-repo/pulls/10/comments":
+			_ = json.NewEncoder(w).Encode([]*githubv39.PullRequestComment{})
+		case r.Method == "GET" && r.URL.Path == "/repos/test-owner/test-repo/pulls/10/reviews":
+			_ = json.NewEncoder(w).Encode([]*githubv39.PullRequestReview{})
+		case r.Method == "GET" && r.URL.Path == "/repos/test-owner/test-repo/commits/"+headSHA+"/check-runs":
+			runs := []*githubv39.CheckRun{
+				{
+					ID:         githubv39.Int64(1),
+					Name:       stringPtr("tests"),
+					Status:     stringPtr(checkRunStatus),
+					Conclusion: stringPtr(checkRunConclusion),
+				},
+			}
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{"check_runs": runs})
+		case r.Method == "GET" && r.URL.Path == "/repos/test-owner/test-repo/commits/"+headSHA+"/statuses":
+			_ = json.NewEncoder(w).Encode([]interface{}{})
+		case r.Method == "DELETE" && r.URL.Path == "/repos/test-owner/test-repo/issues/10/assignees":
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{})
+		default:
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("{}"))
+		}
+	}))
+	defer server.Close()
+
+	ghClient := githubv39.NewClient(nil)
+	ghClient.BaseURL, _ = url.Parse(server.URL + "/")
+
+	scheme := runtime.NewScheme()
+	fakeDynamic := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(scheme, map[schema.GroupVersionResource]string{
+		k8s.SandboxGVR: "SandboxList",
+	})
+	kubeClient := &clients.KubernetesClient{
+		DynamicClient: fakeDynamic,
+	}
+
+	s, _ := newTestScanner(t, tempDir, testOpts{
+		GitHub:         ghClient,
+		Kube:           kubeClient,
+		BotUsers:       []string{"bot1"},
+		GitHubLogin:    "bot1",
+		TriggerLabel:   "factory",
+		ReviewerLogins: []string{"reviewbot"},
+		Rules:          control,
+	})
+
+	prIssue := &githubv39.Issue{
+		Number: &prNum,
+		Assignees: []*githubv39.User{
+			{Login: stringPtr("bot1")},
+		},
+		Labels: []*githubv39.Label{
+			{Name: stringPtr("factory")},
+			{Name: stringPtr("factory/review")},
+		},
+	}
+
+	checkRunStatus = "completed"
+	checkRunConclusion = "success"
+	s.evaluateAll(context.Background(), []*githubv39.Issue{prIssue})
+	if _, err := os.Stat(filepath.Join(incomingDir, "task-pr-10-review.yaml")); !os.IsNotExist(err) {
+		t.Error("the review was queued, though the preview rule takes the PR first")
+	}
+	data, err := os.ReadFile(filepath.Join(incomingDir, "task-pr-10-rule-preview.yaml"))
+	if err != nil {
+		t.Fatalf("the preview rule's task was not queued: %v", err)
+	}
+	for _, want := range []string{"type: pr-rule", "rule: preview", "recipe: summarize", "apply: comment"} {
+		if !strings.Contains(string(data), want) {
+			t.Errorf("the task lacks %q:\n%s", want, data)
+		}
+	}
+}
+
 func TestEvaluate_CommentsPrioritizedOverCIFailures(t *testing.T) {
 	tempDir := t.TempDir()
 	incomingDir := filepath.Join(tempDir, "incoming")

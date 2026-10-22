@@ -20,14 +20,26 @@ import (
 // workflow (task-workflow-<name>-issue-<n>).
 var taskFileRE = regexp.MustCompile(`^task-(?:pr-(\d+)-([a-z]+)|issue-(\d+)|workflow-.+-issue-(\d+))\.yaml$`)
 
+// ruleTaskFileRE is a rule task's file (api.RuleTaskFile), of a rule
+// factory does not handle by name: task-(pr|issue)-<n>-rule-<rule>.
+var ruleTaskFileRE = regexp.MustCompile(`^task-(pr|issue)-(\d+)-rule-([a-z0-9][a-z0-9-]*)\.yaml$`)
+
 // prTaskSuffixRules are the rules a PR's task files run, by their suffix
 // (prs.prTaskRules).
 var prTaskSuffixRules = map[string]string{"comments": "comments", "iterate": "conflict", "investigate": "ci", "review": "review"}
 
 // taskRule is the rule a task file runs, the kind of item it is on and
 // its number; "" for a task no rule decides (a chore, an agent, a
-// fan-out's).
+// fan-out's). A rule task's file names its rule.
 func taskRule(filename string) (rule, kind string, num int) {
+	if m := ruleTaskFileRE.FindStringSubmatch(filename); m != nil {
+		num, _ = strconv.Atoi(m[2])
+		kind = rules.OnIssue
+		if m[1] == "pr" {
+			kind = rules.OnPR
+		}
+		return m[3], kind, num
+	}
 	m := taskFileRE.FindStringSubmatch(filename)
 	switch {
 	case m == nil:

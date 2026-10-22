@@ -422,6 +422,9 @@ func (s *Scanner) queueTask(ctx context.Context, issue *githubv39.Issue, refIssu
 	}
 	s.rec.Fill(func(it *rules.Item) { it.Workflow = workflowName })
 	s.recordRuns(rule, filename)
+	if s.carryOutRuleTasks(ctx, issue) {
+		return
+	}
 	if s.rules.Off(rule) {
 		klog.V(2).Infof("Skipping issue #%d: the %s rule is disabled", num, rule)
 		return

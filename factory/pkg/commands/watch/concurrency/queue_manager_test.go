@@ -1092,7 +1092,14 @@ func TestTaskQueueManager_HasActiveIssueTask(t *testing.T) {
 	if err := mgr.Enqueue("task-pr-11-investigate.yaml", &api.QueueTask{Type: api.TypePRInvestigate, Number: 11}); err != nil {
 		t.Fatal(err)
 	}
-	for n, want := range map[int]bool{7: true, 9: true, 11: false, 17: false, 70: false, 0: false} {
+	// A repository rule's task on an issue is the issue's; on a PR, not.
+	if err := mgr.Enqueue("task-issue-13-rule-triage-2.yaml", &api.QueueTask{Type: api.TypeIssueRule, Number: 13}); err != nil {
+		t.Fatal(err)
+	}
+	if err := mgr.Enqueue("task-pr-15-rule-preview.yaml", &api.QueueTask{Type: api.TypePRRule, Number: 15}); err != nil {
+		t.Fatal(err)
+	}
+	for n, want := range map[int]bool{7: true, 9: true, 11: false, 13: true, 15: false, 17: false, 70: false, 0: false} {
 		if got := mgr.HasActiveIssueTask(n); got != want {
 			t.Errorf("HasActiveIssueTask(%d) = %v, want %v", n, got, want)
 		}
@@ -1105,7 +1112,7 @@ func TestTaskQueueManager_HasActiveIssueTask(t *testing.T) {
 	if err := mgr.StartTask(fn, task); err != nil {
 		t.Fatal(err)
 	}
-	if task.Number != 11 && !mgr.HasActiveIssueTask(task.Number) {
+	if task.Number != 11 && task.Number != 15 && !mgr.HasActiveIssueTask(task.Number) {
 		t.Errorf("the running task for #%d is not active", task.Number)
 	}
 }

@@ -11,9 +11,10 @@ import (
 )
 
 // A repository's watch rules are laid over factory's as the repository
-// recipe mode says: replace turns a factory rule off or replaces it;
-// augment and off leave factory's rules; a rule of a new name is left out
-// in every mode, since the watch carries out factory's rules only.
+// recipe mode says: replace turns a factory rule off, replaces it, or adds
+// one of a new name; augment adds new names only; off leaves factory's. A
+// rule may run the repository's own recipe; one whose recipe is neither
+// factory's nor the repository's is left out.
 func TestComposeRepoWatchRules(t *testing.T) {
 	base, err := rules.Builtin()
 	if err != nil {
@@ -23,15 +24,17 @@ func TestComposeRepoWatchRules(t *testing.T) {
 	files := map[string][]byte{
 		"review.yaml":  []byte("name: review\nenabled: false\n"),
 		"ci.yaml":      []byte(strings.Replace(string(ci), "recipe: care-ci", "recipe: care", 1)),
-		"new-one.yaml": []byte("name: new-one\non: pr\nwhen: {checks: green}\nrun: {recipe: summarize}\n"),
+		"new-one.yaml": []byte("name: new-one\non: pr\norder: 90\nwhen: {checks: green}\nrun: {recipe: deploy-preview}\n"),
+		"typo.yaml":    []byte("name: typo\non: pr\norder: 91\nwhen: {checks: green}\nrun: {recipe: deploy-previw}\n"),
 		"README.md":    []byte("not a rule"),
 	}
-	set, skipped, n, err := composeRepoWatchRules(base, files, "replace")
+	recipes := []string{"deploy-preview"}
+	set, skipped, n, err := composeRepoWatchRules(base, files, recipes, "replace")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n != 3 || set.Named("new-one") != nil || len(skipped) != 1 || !strings.Contains(skipped[0], "new-one: a rule of a new name") {
-		t.Errorf("replace: %d rules, new-one %v, skipped %v", n, set.Named("new-one"), skipped)
+	if n != 4 || set.Named("new-one") == nil || set.Named("typo") != nil || len(skipped) != 1 || !strings.Contains(skipped[0], "typo: runs recipe deploy-previw") {
+		t.Errorf("replace: %d rules, new-one %v, typo %v, skipped %v", n, set.Named("new-one"), set.Named("typo"), skipped)
 	}
 	if r := set.Named("review"); r == nil || r.IsEnabled() || r.EnabledBy != rules.SourceRepo {
 		t.Errorf("replace: review = %+v, want off by the repository", r)
@@ -40,16 +43,19 @@ func TestComposeRepoWatchRules(t *testing.T) {
 		t.Errorf("replace: ci = %+v, want the repository's", r)
 	}
 
-	for _, mode := range []string{"augment", "off"} {
-		set, _, _, err := composeRepoWatchRules(base, files, mode)
+	for mode, added := range map[string]bool{"augment": true, "off": false} {
+		set, _, _, err := composeRepoWatchRules(base, files, recipes, mode)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if r := set.Named("review"); r == nil || !r.IsEnabled() || set.Named("ci").Run.Recipe != "care-ci" {
 			t.Errorf("%s changed factory's rules", mode)
 		}
+		if (set.Named("new-one") != nil) != added {
+			t.Errorf("%s: new-one added %v, want %v", mode, set.Named("new-one") != nil, added)
+		}
 	}
-	if _, _, _, err := composeRepoWatchRules(base, map[string][]byte{"ci.yaml": []byte("name: other\n")}, "replace"); err == nil || !strings.Contains(err.Error(), "named after it") {
+	if _, _, _, err := composeRepoWatchRules(base, map[string][]byte{"ci.yaml": []byte("name: other\n")}, nil, "replace"); err == nil || !strings.Contains(err.Error(), "named after it") {
 		t.Errorf("a misnamed file: %v", err)
 	}
 }

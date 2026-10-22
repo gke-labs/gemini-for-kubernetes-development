@@ -22,6 +22,8 @@ func TestTaskRule(t *testing.T) {
 		"task-chore-dependency-update-scheduler.yaml":         "  0",
 		"task-pr-7-unknown.yaml":                              " pr 7",
 		"task-workflow-kcc-greenfield-oneparent-issue-9.yaml": "workflow issue 9",
+		"task-pr-7-rule-deploy-preview.yaml":                  "deploy-preview pr 7",
+		"task-issue-12-rule-triage-2.yaml":                    "triage-2 issue 12",
 	} {
 		rule, kind, num := taskRule(file)
 		if got := strings.Join([]string{rule, kind, strconv.Itoa(num)}, " "); got != want {

@@ -14,6 +14,17 @@ import (
 //go:embed *.yaml
 var builtinFS embed.FS
 
+// IsBuiltinName reports whether name is one of the prebaked rules' names:
+// the rules the scanners carry out by name. Any other rule (a
+// repository's) runs as a rule task (api.TypePRRule, api.TypeIssueRule).
+func IsBuiltinName(name string) bool {
+	if name == "" || strings.ContainsAny(name, "/.") {
+		return false
+	}
+	_, err := builtinFS.ReadFile(name + ".yaml")
+	return err == nil
+}
+
 // Builtin is the prebaked rule set, validated, in name order.
 func Builtin() (Set, error) {
 	entries, err := builtinFS.ReadDir(".")

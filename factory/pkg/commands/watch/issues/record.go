@@ -2,12 +2,14 @@ package issues
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"time"
 
 	githubv39 "github.com/google/go-github/v39/github"
 	"k8s.io/klog/v2"
 
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/act"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/api"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/conventions"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/watch/rules"
@@ -140,4 +142,97 @@ func logins(users []*githubv39.User) []string {
 		out = append(out, u.GetLogin())
 	}
 	return out
+}
+
+// ruleTaskRules are the rules on issues that run a recipe and that factory
+// does not handle by name (a repository's): each runs as a rule task,
+// task-issue-<n>-rule-<name>.yaml.
+func (s *Scanner) ruleTaskRules() []string {
+	var names []string
+	for _, r := range s.rules.Set() {
+		if r.On == rules.OnIssue && r.Run.Recipe != "" && !rules.IsBuiltinName(r.Name) {
+			names = append(names, r.Name)
+		}
+	}
+	return names
+}
+
+// fillRuleTaskRuns adds the history of the issue's rule tasks, and the
+// rules whose task is queued or running.
+func (s *Scanner) fillRuleTaskRuns(it *rules.Item, num int) {
+	for _, rule := range s.ruleTaskRules() {
+		filename := api.RuleTaskFile(false, num, rule)
+		s.fillRuns(it, rule, filename)
+		if s.queue.TaskExists(filename) {
+			it.Queued = append(it.Queued, rule)
+		}
+	}
+}
+
+// carryOutRuleTasks carries out what the engine decides on the issue of
+// the rules factory does not handle by name (a repository's,
+// .agents/watch), and reports whether one took the issue, leaving nothing
+// for the fix or workflow rule: a give-up stops the issue; a run queues the
+// rule's task (its recipe, apply and inputs, act.Task) in
+// api.RuleTaskFile; GitHub writes are made, and take the issue when the
+// rule is exclusive. With a task of the issue queued or running, nothing:
+// the fix's path holds the issue back (Item.TaskActive).
+func (s *Scanner) carryOutRuleTasks(ctx context.Context, issue *githubv39.Issue) bool {
+	if s.rec == nil || !s.hasOtherIssueRules() {
+		return false
+	}
+	num := issue.GetNumber()
+	s.rec.Fill(func(it *rules.Item) { s.fillRuleTaskRuns(it, num) })
+	if s.queue.HasActiveIssueTask(num) {
+		return false
+	}
+	s.recordSpoken(ctx, num)
+	for _, d := range s.rules.Decide(*s.rec.Item, s.rulesEnv()) {
+		r := s.rules.Set().Named(d.Rule)
+		if r == nil || rules.IsBuiltinName(d.Rule) {
+			continue
+		}
+		s.rec.Decided(d.Rule, d.Outcome)
+		if d.Outcome == rules.OutcomeGiveUp || r.Run.Recipe == "" {
+			klog.Infof("Issue #%d: the rules engine decides %s %s: %+v", num, d.Rule, d.Outcome, d.Writes)
+			act.ApplyWrites(ctx, s.gh, num, d.Writes, s.cfg.TriggerLabel, s.cfg.DryRun)
+			if (d.Writes.Stop || d.Writes.Drop) && !s.cfg.DryRun {
+				_ = s.queue.RemovePendingTasksForNumber(num)
+			}
+			if d.Outcome == rules.OutcomeGiveUp || r.IsExclusive() {
+				return true
+			}
+			continue
+		}
+		task := s.newTask(taskOptions{
+			Type:             api.TypeIssueRule,
+			Issue:            issue,
+			Phase:            api.PhaseInvestigate,
+			TriggerEventTime: issue.GetUpdatedAt(),
+			TriggerReason:    api.TriggerReasonRuleDecided,
+			TriggerNotes:     fmt.Sprintf("The %s rule decided to run", d.Rule),
+		})
+		act.Task(task, d, r)
+		if s.cfg.DryRun {
+			fmt.Printf("[DRYRUN] Would queue the %s rule's task for issue #%d: %s\n", d.Rule, num, task.URL)
+			return true
+		}
+		fmt.Printf("Queueing the %s rule's task for issue #%d...\n", d.Rule, num)
+		if err := s.queue.Enqueue(api.RuleTaskFile(false, num, d.Rule), task); err != nil {
+			klog.Errorf("Failed to queue the %s rule's task for issue #%d: %v", d.Rule, num, err)
+		}
+		return true
+	}
+	return false
+}
+
+// hasOtherIssueRules reports whether the set has a rule on issues that
+// factory does not handle by name.
+func (s *Scanner) hasOtherIssueRules() bool {
+	for _, r := range s.rules.Set() {
+		if r.On == rules.OnIssue && !rules.IsBuiltinName(r.Name) {
+			return true
+		}
+	}
+	return false
 }

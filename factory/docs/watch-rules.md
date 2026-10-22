@@ -22,7 +22,7 @@ getting there without changing what it does, is in
 | source | where | what it can do |
 |---|---|---|
 | factory | `factory/pkg/watch/rules/<name>.yaml`, embedded in the binary | the prebaked rules: today's watch, out of the box |
-| a repository | `.agents/watch/<name>.yaml`, read once when the watch starts, at the Overseer's `spec.repoRecipe.gitCommit`, when its `spec.repoRecipe.mode` is replace (`factory watch rules --dir` lays a checkout's over factory's for listing, explain and replay) | replace a factory rule of the same name, or turn one on or off; a rule of a new name is left out with a warning, since the watch carries out factory's rules only |
+| a repository | `.agents/watch/<name>.yaml`, read once when the watch starts, at the Overseer's `spec.repoRecipe.gitCommit`, when its `spec.repoRecipe.mode` is replace or augment (`factory watch rules --dir` lays a checkout's over factory's for listing, explain and replay) | replace a factory rule of the same name, turn one on or off, or add a rule of a new name (augment: new names only), whose recipe may be the repository's own |
 | the overseer | the Overseer's `spec.rules.disabled` | the operator's emergency switch: turn rules off |
 
 A rule's file is named after it: `fix.yaml` holds the rule named `fix`.
@@ -409,8 +409,10 @@ before it:
    ```
 
    A repository's file that is a whole rule replaces factory's rule of that
-   name, or adds a rule of a new name. (Phase 5: the watch does not read a
-   repository's rules yet; `--dir` shows what they would do.)
+   name, or adds a rule of a new name, which runs as a rule task
+   (`task-pr-<n>-rule-<name>.yaml`, `task-issue-<n>-rule-<name>.yaml`): its
+   recipe, factory's or one in the repository's `.agents/recipes`, or its
+   writes. `--dir` shows what a checkout's files do.
 3. **the overseer** (`spec.rules.disabled: [review]`): the operator's
    emergency switch, which only turns rules off: nothing decides a disabled
    rule, and its queued tasks are dropped before they start.
