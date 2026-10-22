@@ -215,6 +215,8 @@ spec:
 - **`replace`**: the repository's recipe of a name runs in place of factory's, built-ins included. The watch rules name recipes by name, so `.agents/recipes/fix.yaml` becomes what the overseer runs to fix an issue.
 - **`gitCommit`** pins what runs: with a SHA, a change merged to the default branch is not used until you move the pin. With `latest`, every merge to the default branch takes effect on the next task.
 
+The recipes are read from the overseer pod's own clone of the repository, from its git objects (never its working tree): `latest` is the default branch as the pod last fetched it (every watch cycle, `pollInterval`); a pinned SHA is read from the clone when it has it. A commit the clone lacks is read through GitHub's API.
+
 `replace` hands the repository's maintainers what the overseer runs with bot credentials; pin `gitCommit` to a reviewed commit for an unattended overseer.
 
 ---

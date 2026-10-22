@@ -118,6 +118,7 @@ When queueing tasks, the daemon resolves which bot identity should run the task:
 
 ---
 
-## 8. Crash Recovery
+## 8. Crash Recovery & Git Sync
 
 * **Crash Recovery**: On watch daemon startup, any tasks found in the `processing/` directory are moved back to `incoming/`. Each task's command names its run (`--run-name`), so run again it follows the run if it is still going, applies the result of one that finished, or finds it already applied.
+* **Git State Sync**: every watch cycle the Overseer image's `run.sh` fetches the repository, resets its default branch to upstream's, checks out the state branch (named after the trigger label, e.g. `overseer`) rebased onto it, runs `factory watch`, and then commits and pushes the queue (`overseer/queues`) to that branch on the fork. The pod's clone is therefore the default branch as of the cycle's start, plus the queue's commits; `spec.repoRecipe` reads the repository's recipes from its git objects (`FACTORY_REPO_RECIPE_DIR`).

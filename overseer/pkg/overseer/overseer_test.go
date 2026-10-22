@@ -317,7 +317,7 @@ func TestBuildSandboxManifest_RepoRecipe(t *testing.T) {
 		t.Errorf("augment: %v %v", env["FACTORY_REPO_RECIPE_MODE"], env["FACTORY_REPO_RECIPE_COMMIT"])
 	}
 	o.Spec.RepoRecipe = &overseerv1alpha1.OverseerRepoRecipe{Mode: "replace", GitCommit: "0123abcd"}
-	if env := overseerEnv(t, o); env["FACTORY_REPO_RECIPE_MODE"] != "replace" || env["FACTORY_REPO_RECIPE_COMMIT"] != "0123abcd" {
+	if env := overseerEnv(t, o); env["FACTORY_REPO_RECIPE_MODE"] != "replace" || env["FACTORY_REPO_RECIPE_COMMIT"] != "0123abcd" || env["FACTORY_REPO_RECIPE_DIR"] != "/workspaces/repo" {
 		t.Errorf("replace: %v %v", env["FACTORY_REPO_RECIPE_MODE"], env["FACTORY_REPO_RECIPE_COMMIT"])
 	}
 }
