@@ -38,30 +38,39 @@ import (
 // Every recipe runs this one way, a click's and automation's alike
 // (auto.go files automation's Requests).
 
-// catalogTTL is how long a board's catalog is kept: the built-ins do not
-// change under the process, a repository's recipes change when its
-// default branch does.
-const catalogTTL = 10 * time.Minute
+// catalogPeek is how often a board's catalog is checked: a peek at the
+// tree SHA of its repository's .agents/recipes (factory peek), one GitHub
+// call, and a reload only when that changed. The built-ins do not change
+// under the process.
+const catalogPeek = 2 * time.Minute
 
-// boardCatalog is a board repository's catalog, and when it was read.
+// recipesTree is the folder under .agents/ the repository keeps its
+// recipes in.
+const recipesTree = "recipes"
+
+// boardCatalog is a board repository's catalog, the tree SHA of its
+// .agents/recipes it was read at ("" when it has none, or for the
+// built-ins alone), and when it was last checked.
 type boardCatalog struct {
 	recipes []boardv1alpha1.BoardRecipe
+	tree    string
 	at      time.Time
 }
 
 // recipeCatalog is the recipes the controller's factory runs for work's
 // board: the built-ins and its repository's own (.agents/recipes at the
-// default branch, read with the board owner's token), kept catalogTTL.
-// A failed read keeps the last catalog, else falls back to the
-// built-ins alone; nil when even those cannot be read, retried next
-// reconcile.
+// default branch, read with the board owner's token). Every catalogPeek
+// it peeks at the folder's tree SHA, and reads the catalog again only
+// when that changed (or the peek failed). A failed read keeps the last
+// catalog, else falls back to the built-ins alone; nil when even those
+// cannot be read, retried next reconcile.
 func (r *Reconciler) recipeCatalog(ctx context.Context, work *workState) []boardv1alpha1.BoardRecipe {
 	logger := log.FromContext(ctx)
 	key := work.owner + "/" + work.repo
 	r.catalogMu.Lock()
 	defer r.catalogMu.Unlock()
 	last, ok := r.catalogs[key]
-	if ok && time.Since(last.at) < catalogTTL {
+	if ok && time.Since(last.at) < catalogPeek {
 		return last.recipes
 	}
 	repoURL := fmt.Sprintf("https://github.com/%s/%s", work.owner, work.repo)
@@ -69,6 +78,20 @@ func (r *Reconciler) recipeCatalog(ctx context.Context, work *workState) []board
 	if err != nil {
 		logger.Info("listing the built-in recipes only: the board owner has no GitHub token", "board", work.board.Name, "error", err.Error())
 		repoURL = ""
+	}
+	tree := ""
+	if repoURL != "" {
+		trees, perr := r.Factory.AgentsTrees(ctx, repoURL, token)
+		switch {
+		case perr != nil:
+			logger.Info("peeking at the repository's .agents/ failed; reading the catalog", "repo", key, "error", perr.Error())
+		case ok && trees[recipesTree] == last.tree:
+			last.at = time.Now()
+			r.catalogs[key] = last
+			return last.recipes
+		default:
+			tree = trees[recipesTree]
+		}
 	}
 	recipes, skipped, err := r.Factory.Recipes(ctx, repoURL, token)
 	if err != nil && repoURL != "" {
@@ -88,7 +111,7 @@ func (r *Reconciler) recipeCatalog(ctx context.Context, work *workState) []board
 	if r.catalogs == nil {
 		r.catalogs = map[string]boardCatalog{}
 	}
-	r.catalogs[key] = boardCatalog{recipes: recipes, at: time.Now()}
+	r.catalogs[key] = boardCatalog{recipes: recipes, tree: tree, at: time.Now()}
 	return recipes
 }
 

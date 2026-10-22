@@ -289,6 +289,9 @@ type Launcher interface {
 	// Recipes is the catalog of recipes factory runs, in the board's
 	// order: the built-ins, and with repoURL that repository's own.
 	Recipes(ctx context.Context, repoURL, token string) ([]boardv1alpha1.BoardRecipe, []string, error)
+	// AgentsTrees is the tree SHA of each folder under repoURL's .agents/
+	// (factory peek): whether its recipes changed, in one call.
+	AgentsTrees(ctx context.Context, repoURL, token string) (map[string]string, error)
 	IsRunning(key string) bool
 	// Running is the keys in flight that start with prefix.
 	Running(prefix string) []string
