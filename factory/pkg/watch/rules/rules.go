@@ -29,14 +29,12 @@ import (
 // What a rule looks at.
 const (
 	// OnIssue and OnPR are an issue's and a pull request's rules.
+	// Scheduled chores (the chore scheduler, switched by chores.mode) and
+	// the linked-issue nudge (a workflow stepped when an issue it links
+	// closes, decided again at start as the workflow rule) are code, not
+	// rules.
 	OnIssue = "issue"
 	OnPR    = "pr"
-	// OnSchedule is a scheduled chore's: an agent definition under
-	// .agents/ whose schedule is due.
-	OnSchedule = "schedule"
-	// OnEvent is a rule that fires on an event the engine derives rather
-	// than lists: today, an issue's closure confirmed by the sandbox GC.
-	OnEvent = "event"
 )
 
 // Floors a rule's policy cannot go past: a repository's rule that drops its
@@ -53,7 +51,7 @@ type Rule struct {
 	Name string `yaml:"name" json:"name"`
 	// Description says what the rule is for, in a line.
 	Description string `yaml:"description,omitempty" json:"description,omitempty"`
-	// On is what the rule looks at: OnIssue, OnPR, OnSchedule or OnEvent.
+	// On is what the rule looks at: OnIssue or OnPR.
 	On string `yaml:"on" json:"on"`
 	// Enabled turns the rule off when false; unset is on. A rule's own
 	// file sets it, and a repository's file of the same name with only a
@@ -87,12 +85,8 @@ type Rule struct {
 func (r *Rule) IsEnabled() bool { return r.Enabled == nil || *r.Enabled }
 
 // IsExclusive reports whether the rule takes the item: as its file says,
-// else a recipe rule does and a rule of GitHub writes does not. Only a
-// rule on issues or PRs has an item to take.
+// else a recipe rule does and a rule of GitHub writes does not.
 func (r *Rule) IsExclusive() bool {
-	if r.On != OnIssue && r.On != OnPR {
-		return false
-	}
 	if r.Exclusive != nil {
 		return *r.Exclusive
 	}
@@ -190,12 +184,6 @@ type When struct {
 	Approved         *bool    `yaml:"approved,omitempty" json:"approved,omitempty"`
 	Draft            *bool    `yaml:"draft,omitempty" json:"draft,omitempty"`
 	InactiveFor      Duration `yaml:"inactive-for,omitempty" json:"inactive-for,omitzero"`
-
-	// Schedules: the agent definition's schedule is due.
-	Due *bool `yaml:"due,omitempty" json:"due,omitempty"`
-
-	// Events: which one.
-	Event string `yaml:"event,omitempty" json:"event,omitempty"` // linked-issue-closed
 }
 
 // Run is the action: a recipe run, or GitHub writes.
@@ -351,11 +339,9 @@ func Parse(data []byte) (*Rule, error) {
 
 // predicates are the When fields each kind of rule may set, by YAML name.
 var predicates = map[string][]string{
-	"*":        {"any-of", "labels", "assignee", "author", "last-run"},
-	OnIssue:    {"linked-pr", "workflow", "opened-by", "fanout"},
-	OnPR:       {"checks", "mergeable", "feedback", "closes", "reviewed-at-head", "changes-requested", "approved", "draft", "inactive-for"},
-	OnSchedule: {"due"},
-	OnEvent:    {"event"},
+	"*":     {"any-of", "labels", "assignee", "author", "last-run"},
+	OnIssue: {"linked-pr", "workflow", "opened-by", "fanout"},
+	OnPR:    {"checks", "mergeable", "feedback", "closes", "reviewed-at-head", "changes-requested", "approved", "draft", "inactive-for"},
 }
 
 // set lists the When fields that are set, by YAML name.
@@ -384,8 +370,6 @@ func (w When) set() []string {
 	add("approved", w.Approved != nil)
 	add("draft", w.Draft != nil)
 	add("inactive-for", w.InactiveFor.IsSet())
-	add("due", w.Due != nil)
-	add("event", w.Event != "")
 	return out
 }
 
@@ -400,7 +384,6 @@ var enums = map[string][]string{
 	"feedback":  {"new-trusted", "none"},
 	"last-run":  {"failed"},
 	"reset-on":  {"head"},
-	"event":     {"linked-issue-closed"},
 	"dedupe":    {"head", "update"},
 	"since":     {"head", "human", "pause"},
 }
@@ -434,7 +417,7 @@ func (w When) validate(on string, nested bool) error {
 	for field, value := range map[string]string{
 		"assignee": w.Assignee, "author": w.Author, "linked-pr": w.LinkedPR,
 		"workflow": w.Workflow, "opened-by": w.OpenedBy,
-		"checks": w.Checks, "feedback": w.Feedback, "event": w.Event, "last-run": w.LastRun,
+		"checks": w.Checks, "feedback": w.Feedback, "last-run": w.LastRun,
 	} {
 		if err := checkEnum(field, value); err != nil {
 			return fmt.Errorf(".%v", err)
@@ -537,16 +520,13 @@ func (r *Rule) Validate() error {
 		return fmt.Errorf("rule %s: %s", r.Name, fmt.Sprintf(format, a...))
 	}
 	if _, ok := predicates[r.On]; !ok || r.On == "*" {
-		return fail("on: %q is not one of %s, %s, %s, %s", r.On, OnIssue, OnPR, OnSchedule, OnEvent)
+		return fail("on: %q is not one of %s, %s", r.On, OnIssue, OnPR)
 	}
 	if err := r.When.validate(r.On, false); err != nil {
 		return fail("when%v", err)
 	}
 	if err := checkEnum("dedupe", r.Policy.Dedupe); err != nil {
 		return fail("%v", err)
-	}
-	if r.On == OnEvent && r.When.Event == "" {
-		return fail("a rule on events needs when.event")
 	}
 	if err := r.checkPlaceholders(); err != nil {
 		return fail("%v", err)
@@ -594,13 +574,10 @@ func (r *Rule) Validate() error {
 			return fail("policy.give-up: %v", err)
 		}
 	}
-	listed := r.On == OnIssue || r.On == OnPR
 	switch {
 	case r.Order < 0:
 		return fail("order %d: want above 0", r.Order)
-	case !listed && (r.Order != 0 || r.Exclusive != nil):
-		return fail("order and exclusive are for rules on %s or %s", OnIssue, OnPR)
-	case listed && r.IsExclusive() && r.Order == 0:
+	case r.IsExclusive() && r.Order == 0:
 		return fail("a rule that takes the item needs an order")
 	}
 	return nil

@@ -26,7 +26,7 @@ func newWatchRulesCommand() *cobra.Command {
 	var repoURL, dir, output string
 	var flow bool
 	cmd := &cobra.Command{
-		Use:   "rules [--dir <checkout>] [--url <repo>] [--flow [pr|issue|schedule|event]]",
+		Use:   "rules [--dir <checkout>] [--url <repo>] [--flow [pr|issue]]",
 		Short: "List the watch's rules: what each looks at, runs, and as whom",
 		Long: `List the watch's rules: factory's prebaked rules, one per file, each a
 condition on an issue, a PR, a schedule or an event, and the action taken
@@ -88,7 +88,7 @@ Policy floors: give-up and attempts at most 10, a cooldown at least 1m.`,
 	cmd.Flags().StringVarP(&output, "output", "o", "", "Output format: yaml or json (the whole rules)")
 	cmd.Flags().StringVar(&dir, "dir", "", "A local checkout whose .agents/rules/ to lay over factory's rules")
 	cmd.Flags().StringVar(&repoURL, "url", "", "A repository URL (its own rules come later; factory's are listed)")
-	cmd.Flags().BoolVar(&flow, "flow", false, "Draw how the rules on a kind of item are applied: pr (the default), or the kind given (issue, schedule, event)")
+	cmd.Flags().BoolVar(&flow, "flow", false, "Draw how the rules on a kind of item are applied: pr (the default), or issue")
 	return cmd
 }
 
@@ -255,7 +255,7 @@ func printWatchRules(out io.Writer, set rules.Set, output string) error {
 	return w.Flush()
 }
 
-var ruleOnOrder = map[string]int{rules.OnIssue: 0, rules.OnPR: 1, rules.OnSchedule: 2, rules.OnEvent: 3}
+var ruleOnOrder = map[string]int{rules.OnIssue: 0, rules.OnPR: 1}
 
 // orderWatchRules orders the rules by what they look at; within that, in
 // the order the engine walks them.

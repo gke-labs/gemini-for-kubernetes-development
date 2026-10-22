@@ -20,7 +20,6 @@ func TestGateOf(t *testing.T) {
 		{"below the floor", Item{Kind: OnPR, Number: 50}, "below-min-number", true},
 		{"merge queue", Item{Kind: OnPR, Number: 200, MergeQueue: true}, "merge-queue", false},
 		{"an issue is never in the merge queue", Item{Kind: OnIssue, Number: 200, MergeQueue: true}, "", false},
-		{"a schedule has no gates", Item{Kind: OnSchedule, Closed: true}, "", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			g, ok := GateOf(tc.it, env)

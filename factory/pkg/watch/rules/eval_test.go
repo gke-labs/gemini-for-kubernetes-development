@@ -222,20 +222,6 @@ func TestDecideGiveUpWrites(t *testing.T) {
 	}
 }
 
-func TestDecideScheduleAndEvent(t *testing.T) {
-	if got := decisions(t, Item{Kind: OnSchedule, Name: "weekly", Due: true}, testEnv); strings.Join(got, ",") != "chore run" {
-		t.Errorf("due schedule = %v", got)
-	}
-	if got := decisions(t, Item{Kind: OnSchedule, Name: "weekly"}, testEnv); len(got) != 0 {
-		t.Errorf("schedule not due = %v", got)
-	}
-	set, _ := Builtin()
-	ds := set.Decide(Item{Kind: OnEvent, Number: 13244, Event: "linked-issue-closed"}, testEnv)
-	if len(ds) != 1 || ds[0].Rule != "nudge" {
-		t.Errorf("event = %v", ds)
-	}
-}
-
 // inactive is on but needs the overseer's timeout: without one it decides
 // nothing; with one, it pauses a PR nobody touched for that long. Turned
 // off by a repository, it decides nothing either way.

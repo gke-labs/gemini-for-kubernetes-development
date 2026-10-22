@@ -78,7 +78,7 @@
   - `--max-actions` and `--max-pending` bound each cycle; `--scan-limit` bounds each scan.
 - **Restart-safe.** Every task's command names its run (`--run-name`), so after a restart the watch requeues what was in flight. Run again under the same name, a task follows its run if it's still going, applies the result of one that finished, or finds it already applied. `--task-timeout` fails a stuck task and deletes its sandbox.
 - **Garbage collection.** It deletes sandboxes whose issue or PR has closed, and evicts old ones (`--sandbox-eviction-age`). It suspends idle ones by scaling them to zero (`--sandbox-idle-timeout`) and never touches a sandbox with a task in flight.
-- **Workflow nudging.** When an issue or PR a workflow is waiting on closes, the workflow's issue is nudged so it advances without a human.
+- **Workflow nudging.** When an issue or PR a workflow is waiting on closes, the workflow's issue is nudged so it advances without a human. Like chores, this is code rather than a rule; the step is a workflow task, decided again at start as the `workflow` rule.
 - **Status API on `:13338`.**
   - `GET /api/v1/queue` returns the queue.
   - `DELETE /api/v1/queue/<file>` drops a task, and `POST /api/v1/queue/<file>/priority` re-prioritizes one.

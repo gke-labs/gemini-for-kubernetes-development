@@ -238,10 +238,6 @@ func factOf(predicate string, it Item, env Env, runs []PastRun) string {
 			return "no trusted activity read"
 		}
 		return "inactive " + human(env.Now.Sub(it.LastTrustedActivity))
-	case "due":
-		return fmt.Sprintf("due %t", it.Due)
-	case "event":
-		return "event " + orNone(it.Event)
 	}
 	return ""
 }

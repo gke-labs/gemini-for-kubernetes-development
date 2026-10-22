@@ -14,11 +14,11 @@ import (
 // condition, what holds it back and what it does.
 func printRulesFlow(out io.Writer, set rules.Set, kind string) error {
 	switch kind {
-	case rules.OnPR, rules.OnIssue, rules.OnSchedule, rules.OnEvent:
+	case rules.OnPR, rules.OnIssue:
 	default:
-		return fmt.Errorf("--flow %q: want pr, issue, schedule or event", kind)
+		return fmt.Errorf("--flow %q: want pr or issue", kind)
 	}
-	item := map[string]string{rules.OnPR: "PR", rules.OnIssue: "issue", rules.OnSchedule: "schedule", rules.OnEvent: "event"}[kind]
+	item := map[string]string{rules.OnPR: "PR", rules.OnIssue: "issue"}[kind]
 	fmt.Fprintf(out, "%s rules, walked top to bottom on every scan\n\n", strings.ToUpper(item[:1])+item[1:])
 	if kind == rules.OnPR || kind == rules.OnIssue {
 		first := true
