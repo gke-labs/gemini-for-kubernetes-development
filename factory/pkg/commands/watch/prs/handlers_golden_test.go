@@ -21,7 +21,7 @@ var updateGolden = flag.Bool("update", false, "rewrite the handlers' golden task
 
 // queueFor queues the task the engine decided for rule on the pull request,
 // as the evaluation does, and reports whether it completed.
-func queueFor(s *Scanner, ctx context.Context, pc *prContext, rule string, checks prCheckAnalysis, comments prCommentAnalysis) bool {
+func queueFor(ctx context.Context, s *Scanner, pc *prContext, rule string, checks prCheckAnalysis, comments prCommentAnalysis) bool {
 	pc.checks, pc.comments = checks, comments
 	return s.queueRuleTask(ctx, pc, rule)
 }
@@ -94,7 +94,7 @@ func TestHandlersQueueTheSameTasks(t *testing.T) {
 			pc := &prContext{pr: pr, prIssue: prIssue, headSHA: "0123456789abcdef", shortSHA: "0123456", lastCommitTime: commit,
 				taskAssignee: "bot1", prURL: "https://github.com/test-owner/test-repo/pull/10",
 				refIssues: &refIssues{loaded: true, resolved: []*githubv39.Issue{{Body: githubv39.String("Review: and the tests.\n")}}}}
-			if !queueFor(s, context.Background(), pc, rule, checks, comments) {
+			if !queueFor(context.Background(), s, pc, rule, checks, comments) {
 				t.Fatal("not completed")
 			}
 			var file string

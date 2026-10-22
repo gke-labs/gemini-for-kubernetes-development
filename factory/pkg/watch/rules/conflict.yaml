@@ -15,3 +15,6 @@ run:
 policy:
   dedupe: head
   phase: 2
+  # Resolving a conflict upstream need not change the PR's updated_at:
+  # look at it again every scan.
+  revisit: every-scan

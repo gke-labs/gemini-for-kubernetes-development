@@ -24,6 +24,10 @@ func Task(task *api.QueueTask, d rules.Decision, r *rules.Rule) {
 			task.PRLabels = true
 			continue
 		}
+		if r != nil && strings.TrimSpace(r.Run.Inputs[name]) == rules.ReviewInstructions {
+			// The scanner's to give, as --instruction flags.
+			continue
+		}
 		if task.Inputs == nil {
 			task.Inputs = map[string]string{}
 		}

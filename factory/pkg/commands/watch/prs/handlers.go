@@ -126,6 +126,9 @@ func (s *Scanner) queueRuleTask(ctx context.Context, pc *prContext, rule string)
 
 	opts := t.trigger(ctx, s, pc, filename)
 	opts.Type, opts.PR, opts.PRIssue, opts.CommitSHA = t.typ, pc.pr, pc.prIssue, pc.headSHA
+	if r := s.rules.Set().Named(rule); r != nil && r.Run.Asks(rules.ReviewInstructions) {
+		opts.Instructions = reviewInstructions(ctx, pc)
+	}
 	task := s.newTask(opts)
 	if s.cfg.DryRun {
 		fmt.Printf("[DRYRUN] Would queue %s task for PR #%d: %s\n", t.what, num, pc.prURL)
@@ -225,11 +228,10 @@ func commentsTrigger(_ context.Context, s *Scanner, pc *prContext, filename stri
 	}
 }
 
-// reviewTrigger is an automated review's: timed from when the checks went
-// green, with the review instructions the pull request and the issues it
-// closes carry, so a repository can steer the review from wherever the
-// requirement was written down.
-func reviewTrigger(ctx context.Context, _ *Scanner, pc *prContext, _ string) taskOptions {
+// reviewInstructions are the review instructions the pull request and the
+// issues it closes carry ({{review-instructions}}), so a repository can
+// steer a review from wherever the requirement was written down.
+func reviewInstructions(ctx context.Context, pc *prContext) []string {
 	var bodies []string
 	if pc.pr.GetBody() != "" {
 		bodies = append(bodies, pc.pr.GetBody())
@@ -240,6 +242,12 @@ func reviewTrigger(ctx context.Context, _ *Scanner, pc *prContext, _ string) tas
 			bodies = append(bodies, refIssue.GetBody())
 		}
 	}
+	return common.ExtractReviewInstructions(bodies...)
+}
+
+// reviewTrigger is an automated review's: timed from when the checks went
+// green.
+func reviewTrigger(_ context.Context, _ *Scanner, pc *prContext, _ string) taskOptions {
 	var latestCheckCompletedTime time.Time
 	for _, run := range pc.checks.checkRuns {
 		if t := run.GetCompletedAt().Time; t.After(latestCheckCompletedTime) {
@@ -258,6 +266,5 @@ func reviewTrigger(ctx context.Context, _ *Scanner, pc *prContext, _ string) tas
 		TriggerEventTime: eventTime,
 		TriggerReason:    api.TriggerReasonPRReadyForReview,
 		TriggerNotes:     notes,
-		Instructions:     common.ExtractReviewInstructions(bodies...),
 	}
 }

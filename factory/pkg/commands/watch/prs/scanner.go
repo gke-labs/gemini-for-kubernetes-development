@@ -629,15 +629,15 @@ func (s *Scanner) evaluate(ctx context.Context, prIssue *githubv39.Issue) {
 	case rule == "":
 	case s.engineOutcome(rule) == rules.OutcomeGiveUp:
 		s.actOn(ctx, prIssue, rule)
-	case rule == "conflict":
-		// Returns without recording the evaluation, so a conflicted pull
-		// request is evaluated again every cycle: whether the conflict is
-		// gone is answered by GetPullRequest, and nothing about resolving
-		// it upstream necessarily moves this pull request's updated_at.
-		s.queueRuleTask(ctx, pc, rule)
-		return
 	default:
 		completed = s.queueRuleTask(ctx, pc, rule)
+		if r := s.rules.Set().Named(rule); r != nil && r.Policy.Revisit == "every-scan" {
+			// Returns without recording the evaluation, so the pull request
+			// is evaluated again every cycle (conflict: whether it is gone
+			// is answered by GetPullRequest, and resolving it upstream need
+			// not move this pull request's updated_at).
+			return
+		}
 	}
 
 	// The engine's ready or ready-unreview: its writes.

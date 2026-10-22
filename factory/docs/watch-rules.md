@@ -205,7 +205,7 @@ A rule runs a recipe or makes GitHub writes, not both.
 |---|---|
 | `recipe` | a built-in recipe (`fix`, `workflow`, `agent`, `care-comments`, `care-rebase`, `care-ci`, `review`, ...) |
 | `apply` | the action its task output is applied with when the run ends (`open-pr`, `post-replies`, `submit-review`); none leaves the output for a person |
-| `inputs` | the recipe's inputs, by name; values may use `{{trigger}}`, and on issues `{{pr-labels}}` |
+| `inputs` | the recipe's inputs, by name; values may use `{{trigger}}`, on issues `{{pr-labels}}`, and on PRs `{{review-instructions}}` |
 
 The task is queued and runs in the item's sandbox. A rule does not say
 which bot runs it: that is the recipe's and the overseer's (see [Who runs
@@ -249,6 +249,7 @@ engine does not fill in there is an error when the rule loads.
 | `{{pool}}` | assign, unassign | the pool's bots assigned to the item |
 | `{{watcher}}` | assign, unassign | the watcher's own login |
 | `{{pr-labels}}` | issue recipe inputs | the trigger, the configuration's additional labels and the issue's labels (what `--pr-labels` resolves) |
+| `{{review-instructions}}` | PR recipe inputs, whole | the review instructions in the PR's body, else in the issues it closes (a `Review instructions` heading), given to the recipe as its `--instruction` flags; the prebaked review asks for them |
 | `{{pr-inactivity-timeout}}` | a duration | the overseer's `prInactivityTimeout` |
 | `{{workflow-cooldown}}` | a duration | the cooldown the workflow definition declares (10m when it sets none) |
 
@@ -262,6 +263,7 @@ engine does not fill in there is an error when the rule loads.
 | `cooldown` | see below | how long after its last run the rule waits before it runs on the item again |
 | `give-up` | see below | when the rule stops trying and stops the item |
 | `phase` | a number | its tasks' order in the queue, after the priority label: lower first |
+| `revisit` | `every-scan` | look at the item again every scan once the rule is decided, rather than skipping it until it changes: what the rule waits on need not change the item (the prebaked conflict: resolving it upstream does not touch the PR) |
 
 ### `cooldown`
 
