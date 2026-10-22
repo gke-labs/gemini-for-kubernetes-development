@@ -281,6 +281,21 @@ func (r *Runner) Recipes(ctx context.Context, repoURL, token string) (recipes []
 	return recipes, skipped, nil
 }
 
+// AgentsTrees is the git tree SHA of each folder under repoURL's .agents/
+// at its default branch (factory peek), read with token: one GitHub call
+// that says whether a folder (recipes) changed since a SHA was seen.
+func (r *Runner) AgentsTrees(ctx context.Context, repoURL, token string) (map[string]string, error) {
+	out, err := r.execStdout(ctx, []string{"peek", "--url", repoURL, "-o", "json"}, token)
+	if err != nil {
+		return nil, fmt.Errorf("factory peek: %w: %s", err, tail(out, 2000))
+	}
+	trees := map[string]string{}
+	if err := json.Unmarshal([]byte(out), &trees); err != nil {
+		return nil, fmt.Errorf("reading factory peek: %w", err)
+	}
+	return trees, nil
+}
+
 // boardOrder is where the built-ins go on a row, in the order the work on
 // an issue goes; any other recipe follows them, by name.
 var boardOrder = []string{"triage", "plan", "fix", "review", "research"}

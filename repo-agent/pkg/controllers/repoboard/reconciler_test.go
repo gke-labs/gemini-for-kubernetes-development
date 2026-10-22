@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"regexp"
 	"slices"
@@ -82,6 +83,9 @@ type fakeLauncher struct {
 	catalog     []boardv1alpha1.BoardRecipe
 	repoRecipes []boardv1alpha1.BoardRecipe
 	listed      []string
+	// trees is what AgentsTrees answers (peeks counts the calls).
+	trees map[string]string
+	peeks int
 }
 
 func newFakeLauncher() *fakeLauncher {
@@ -174,6 +178,13 @@ func (f *fakeLauncher) Recipes(_ context.Context, repoURL, _ string) ([]boardv1a
 		{Name: "research", Label: "Research", On: []string{"repo"}, Kind: "Notes", TaskType: "research"},
 		{Name: "summarize", Label: "Summarize", On: []string{"issue", "pr"}, Kind: "Summary", TaskType: "recipe-summarize"},
 	}, repo...), nil, nil
+}
+
+func (f *fakeLauncher) AgentsTrees(context.Context, string, string) (map[string]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.peeks++
+	return maps.Clone(f.trees), nil
 }
 
 func (f *fakeLauncher) IsRunning(key string) bool {

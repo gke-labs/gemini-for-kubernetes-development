@@ -247,6 +247,7 @@ factory sandbox chat factory-issue-917 -r latest  # resume the Gemini session
 | `watch rules explain <PR or issue URL>` | Walk one item through the rules, read live or from a record (`--record`), and say what each rule decides and why |
 | `watch rules decide -f <scenario.yaml>` | Decide items written by hand and check what was expected |
 | `apply` | Apply a task output (`factory sandbox task output`) to GitHub |
+| `peek --url <repo>` | Print the git tree SHA of each folder under the repository's `.agents/` at its default branch, in one call: whether its recipes (and the like) changed since a SHA was seen |
 | `recipe care-ci` | Fix the CI failures of a PR of yours; `--apply --action post-replies` posts the report and reruns flakes |
 | `recipe care-comments` | Answer the review feedback on a PR of yours (trusted authors' only); `--apply --action post-replies` posts the replies |
 | `recipe care-rebase` | Rebase a PR of yours onto the default branch, resolving conflicts; `--apply --action post-replies` posts the report |
