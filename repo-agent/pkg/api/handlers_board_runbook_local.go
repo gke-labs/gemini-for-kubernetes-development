@@ -157,14 +157,14 @@ func (s *Server) readLocalRun(ctx context.Context, namespace, board, sandboxName
 // runSandboxFor finds the sandbox a run lives in.
 func (s *Server) runSandboxFor(ctx context.Context, namespace, repo, run string) (string, error) {
 	list, err := s.K8sManager.Client.Resource(k8s.SandboxGVR).Namespace(namespace).List(ctx, v1.ListOptions{
-		LabelSelector: "sandbox.gemini.google.com/type=" + factorycli.RunSandboxType,
+		LabelSelector: factorycli.LabelSandboxType + "=" + factorycli.RunPrefix,
 	})
 	if err != nil {
 		return "", err
 	}
 	for _, sb := range list.Items {
 		a := sb.GetAnnotations()
-		if a["repo"] == repo && a[factorycli.RunNameAnnotation] == run {
+		if a["repo"] == repo && a[factorycli.AnnotationKeyID] == run {
 			return sb.GetName(), nil
 		}
 	}

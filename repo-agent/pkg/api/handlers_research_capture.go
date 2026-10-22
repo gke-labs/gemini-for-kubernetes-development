@@ -28,6 +28,7 @@ import (
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/klog/v2"
 
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/factorycli"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/k8s"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/research"
 )
@@ -68,7 +69,7 @@ func (s *Server) researchNoteName(ctx context.Context, view researchSandboxView,
 func (s *Server) takenNotes(ctx context.Context, view researchSandboxView, member string) map[string]bool {
 	taken := map[string]bool{}
 	list, err := s.K8sManager.Client.Resource(k8s.SandboxGVR).Namespace(view.Namespace).List(ctx, v1.ListOptions{
-		LabelSelector: researchTypeLabel + "=" + researchType,
+		LabelSelector: factorycli.LabelSandboxType + "=" + factorycli.ResearchPrefix,
 	})
 	if err != nil {
 		klog.V(2).Infof("research: cannot list sessions in %s to pick a note name: %v", view.Namespace, err)

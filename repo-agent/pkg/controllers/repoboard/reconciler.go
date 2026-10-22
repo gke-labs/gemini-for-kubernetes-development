@@ -663,7 +663,7 @@ func (r *Reconciler) pauseFinished(ctx context.Context, work *workState, after t
 		// Run sandboxes (type=run) may be SERVING something — idle
 		// pause would kill the deployment. Excluded for now; lifecycle
 		// is the Tear down button.
-		if sb.GetLabels()["sandbox.gemini.google.com/type"] == factorycli.RunSandboxType {
+		if sb.GetLabels()[factorycli.LabelSandboxType] == factorycli.RunPrefix {
 			continue
 		}
 		annotations := sb.GetAnnotations()
@@ -708,7 +708,7 @@ func (r *Reconciler) activeCount(work *workState) int {
 	for _, sb := range work.sandboxes {
 		// Run sandboxes (type=run) host living deployments — they
 		// are not task slots and never count against maxActive.
-		if sb.GetLabels()["sandbox.gemini.google.com/type"] == factorycli.RunSandboxType {
+		if sb.GetLabels()[factorycli.LabelSandboxType] == factorycli.RunPrefix {
 			continue
 		}
 		replicas, found, err := unstructured.NestedInt64(sb.Object, "spec", "replicas")

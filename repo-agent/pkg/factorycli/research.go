@@ -22,38 +22,77 @@ import (
 	"strings"
 )
 
-// researchShortIDLen mirrors factory's: eight hex characters of the
-// session digest go in the sandbox name.
-const researchShortIDLen = 8
+// The labels and annotations factory stamps on every scoped sandbox - a
+// recipe on a repository's own, named by its prefix and scope (factory's
+// sandbox.EnsureScopedSandbox): research's, a run's, a repository
+// recipe's alike.
+const (
+	// LabelSandboxType is the sandbox's prefix: ResearchPrefix, RunPrefix,
+	// or a repository recipe's.
+	LabelSandboxType = "sandbox.gemini.google.com/type"
+	// LabelSandboxScope is its scope, key or repo.
+	LabelSandboxScope = "sandbox.gemini.google.com/scope"
+	// LabelSandboxKey is the key's short hash (ShortID): a filter, not
+	// proof - AnnotationKeyID is the key itself.
+	LabelSandboxKey = "sandbox.gemini.google.com/key"
+	// AnnotationKeyID is the key in full: a research session's id, a
+	// run's instance.
+	AnnotationKeyID = "sandbox.gemini.google.com/key-id"
+	// AnnotationReady is the receipt for a finished setup, written by the
+	// launch once its task is accepted: absent means the setup did not
+	// finish.
+	AnnotationReady = "sandbox.gemini.google.com/ready"
+	// AnnotationEngine is the engine the sandbox was set up for, written
+	// with the ready receipt.
+	AnnotationEngine = "sandbox.gemini.google.com/engine"
+)
 
-// ResearchShortID mirrors factory's ResearchShortID — the first eight
-// hex characters of sha256(sessionID).
+// The built-in recipes' sandbox prefixes: research.yaml's, and the run
+// recipes' (run-plan, run-deploy, run-teardown).
+const (
+	ResearchPrefix = "rsch"
+	RunPrefix      = "run"
+)
+
+// shortIDLen mirrors factory's: eight hex characters of the key's digest
+// go in the sandbox name.
+const shortIDLen = 8
+
+// ShortID mirrors factory's sandbox.ShortID — the first eight hex
+// characters of sha256(key).
 //
 // Mirrored rather than imported, like every other name in this package:
 // factory is reached by process invocation, never by Go import. The
 // cost is that a change to factory's derivation has to be made here
 // too, which the tests are written to catch as a value mismatch rather
 // than a compile error.
-func ResearchShortID(sessionID string) string {
-	sum := sha256.Sum256([]byte(sessionID))
-	return hex.EncodeToString(sum[:])[:researchShortIDLen]
+func ShortID(key string) string {
+	sum := sha256.Sum256([]byte(key))
+	return hex.EncodeToString(sum[:])[:shortIDLen]
 }
 
-// ResearchSandboxName mirrors factory's ResearchSandboxName: the
-// per-session conversation sandbox (rsch-<slug>-<short id>),
-// slug-budgeted for the -lb Service's DNS cap.
+// ResearchSandboxName is a research session's conversation sandbox
+// (ScopedSandboxName with research.yaml's prefix).
 //
 // Knowing the name without asking factory is what lets a caller find,
 // watch or delete the sandbox for a session it has only the id of.
 func ResearchSandboxName(repo, sessionID string) string {
-	return KeyedSandboxName("rsch", repo, sessionID)
+	return ScopedSandboxName(ResearchPrefix, repo, sessionID)
 }
 
-// KeyedSandboxName mirrors factory's sandbox.KeyedSandboxName: a keyed
-// kind's sandbox for one key (factory --sandbox-key),
-// <prefix>-<repo slug>-<short hash of the key>.
-func KeyedSandboxName(prefix, repo, key string) string {
-	short := ResearchShortID(key)
+// IsResearchSandbox reports whether labels are a research sandbox's.
+func IsResearchSandbox(labels map[string]string) bool {
+	return labels[LabelSandboxType] == ResearchPrefix
+}
+
+// ScopedSandboxName mirrors factory's sandbox.ScopedSandboxName:
+// <prefix>-<repo slug>-<short hash of the key>, or <prefix>-<repo slug>
+// without a key.
+func ScopedSandboxName(prefix, repo, key string) string {
+	suffix := ""
+	if key != "" {
+		suffix = "-" + ShortID(key)
+	}
 	slug := strings.ToLower(repo)
 	var b strings.Builder
 	for _, r := range slug {
@@ -64,10 +103,10 @@ func KeyedSandboxName(prefix, repo, key string) string {
 		}
 	}
 	slug = strings.Trim(b.String(), "-")
-	if budget := 60 - len(prefix) - 1 - len(short) - 1; len(slug) > budget {
+	if budget := 60 - len(prefix) - 1 - len(suffix); len(slug) > budget {
 		slug = strings.Trim(slug[:budget], "-")
 	}
-	return prefix + "-" + slug + "-" + short
+	return prefix + "-" + slug + suffix
 }
 
 // ResearchRunAnnotation is where factory records a research conversation's

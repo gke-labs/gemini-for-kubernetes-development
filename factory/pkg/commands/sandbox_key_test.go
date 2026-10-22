@@ -10,14 +10,19 @@ import (
 	factorysandbox "github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/sandbox"
 )
 
-// --sandbox-key goes with a recipe on a repository of a keyed kind, and
-// only with one; an agent's recipe runs through factory agent create.
+// --sandbox-key goes with a recipe on a repository whose sandbox is of
+// scope key, and only with one; an agent's recipe runs through factory
+// agent create.
 func TestCheckSandboxKey(t *testing.T) {
 	repo := githubItem{Owner: "o", Repo: "r"}
 	issue := githubItem{Owner: "o", Repo: "r", Number: 7}
-	kind := func(k string) *recipe.Recipe {
-		return &recipe.Recipe{Name: "x", On: []string{recipe.OnRepo}, Sandbox: &recipe.SandboxDecl{Kind: k}}
+	with := func(d recipe.SandboxDecl) *recipe.Recipe {
+		return &recipe.Recipe{Name: "x", On: []string{recipe.OnRepo}, Sandbox: &d}
 	}
+	keyed := with(recipe.SandboxDecl{Prefix: "rsch", Scope: recipe.ScopeKey})
+	perRepo := with(recipe.SandboxDecl{Prefix: "tools", Scope: recipe.ScopeRepo})
+	warm := with(recipe.SandboxDecl{Kind: recipe.SandboxWarm})
+	agent := with(recipe.SandboxDecl{Kind: recipe.SandboxAgent})
 	for name, tc := range map[string]struct {
 		rec  *recipe.Recipe
 		it   githubItem
@@ -25,13 +30,14 @@ func TestCheckSandboxKey(t *testing.T) {
 		key  string
 		want string
 	}{
-		"research with a key":   {kind(recipe.SandboxResearch), repo, recipeRunOpts{}, "s1", ""},
-		"research without":      {kind(recipe.SandboxResearch), repo, recipeRunOpts{}, "", "give it one with --sandbox-key"},
-		"run without":           {kind(recipe.SandboxRun), repo, recipeRunOpts{}, "", "give it one with --sandbox-key"},
-		"warm with a key":       {kind(recipe.SandboxWarm), repo, recipeRunOpts{}, "k", "drop --sandbox-key"},
-		"warm without":          {kind(recipe.SandboxWarm), repo, recipeRunOpts{}, "", ""},
-		"agent by recipe":       {kind(recipe.SandboxAgent), repo, recipeRunOpts{}, "", "factory agent create"},
-		"agent by agent create": {kind(recipe.SandboxAgent), repo, recipeRunOpts{ensure: noEnsure}, "", ""},
+		"keyed with a key":      {keyed, repo, recipeRunOpts{}, "s1", ""},
+		"keyed without":         {keyed, repo, recipeRunOpts{}, "", "give it one with --sandbox-key"},
+		"repo scope with a key": {perRepo, repo, recipeRunOpts{}, "k", "drop --sandbox-key"},
+		"repo scope without":    {perRepo, repo, recipeRunOpts{}, "", ""},
+		"warm with a key":       {warm, repo, recipeRunOpts{}, "k", "drop --sandbox-key"},
+		"warm without":          {warm, repo, recipeRunOpts{}, "", ""},
+		"agent by recipe":       {agent, repo, recipeRunOpts{}, "", "factory agent create"},
+		"agent by agent create": {agent, repo, recipeRunOpts{ensure: noEnsure}, "", ""},
 		"issue with a key":      {&recipe.Recipe{Name: "fix", On: []string{recipe.OnIssue}}, issue, recipeRunOpts{}, "k", "for a recipe on a repository"},
 		"issue without":         {&recipe.Recipe{Name: "fix", On: []string{recipe.OnIssue}}, issue, recipeRunOpts{}, "", ""},
 	} {
@@ -42,22 +48,18 @@ func TestCheckSandboxKey(t *testing.T) {
 	}
 }
 
-// One name for every keyed kind: research's is what it always was, and a
-// run's is hashed like it; a recipe's prefix replaces the kind's.
-func TestKeyedSandboxName(t *testing.T) {
-	if got, want := factorysandbox.KeyedSandboxName("rsch", "k8s-config-connector", "s1"), factorysandbox.ResearchSandboxName("k8s-config-connector", "s1"); got != want {
-		t.Errorf("research = %s, want %s", got, want)
-	}
-	run := factorysandbox.RunSandboxName("k8s-config-connector", "deploy-gke-k8s1")
-	if !strings.HasPrefix(run, "run-k8s-config-connector-") || strings.Contains(run, "deploy") {
-		t.Errorf("run = %s, want run-<repo>-<hash>", run)
-	}
-	if got := factorysandbox.KeyedSandboxName("kcc", "repo", "s1"); !strings.HasPrefix(got, "kcc-repo-") || len(got) > 60 {
-		t.Errorf("prefixed = %s", got)
-	}
-	long := factorysandbox.KeyedSandboxName("rsch", strings.Repeat("very-long-repository-name-", 5), "s1")
-	if len(long) > 60 {
-		t.Errorf("long repo = %s (%d), want at most 60", long, len(long))
+// The built-ins' sandboxes are named by their prefixes: research's
+// rsch-<repo>-<hash>, a run's run-<repo>-<hash>, the key never in the name.
+func TestBuiltinSandboxNames(t *testing.T) {
+	for name, want := range map[string]string{"research": "rsch-k8s-config-connector-", "run-deploy": "run-k8s-config-connector-"} {
+		_, rec, err := recipe.Builtin(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := factorysandbox.ScopedSandboxName(rec.Sandbox.Prefix, "k8s-config-connector", "deploy-gke-k8s1")
+		if !strings.HasPrefix(got, want) || strings.Contains(got, "deploy-gke") {
+			t.Errorf("%s = %s, want %s<hash>", name, got, want)
+		}
 	}
 }
 

@@ -179,8 +179,8 @@ func TestStartRunInvokesTheRunRecipe(t *testing.T) {
 			t.Errorf("%s: factory %s\nwant %s", tc.mode, got, tc.want)
 		}
 	}
-	// factory's sandbox.KeyedSandboxName: run-<repo>-<short hash of the key>.
-	if got := RunSandboxName("k8s-config-connector", "gke-std"); got != KeyedSandboxName("run", "k8s-config-connector", "gke-std") || !strings.HasPrefix(got, "run-k8s-config-connector-") || strings.Contains(got, "gke-std") {
+	// factory's sandbox.ScopedSandboxName: run-<repo>-<short hash of the key>.
+	if got := RunSandboxName("k8s-config-connector", "gke-std"); got != ScopedSandboxName(RunPrefix, "k8s-config-connector", "gke-std") || !strings.HasPrefix(got, "run-k8s-config-connector-") || strings.Contains(got, "gke-std") {
 		t.Errorf("RunSandboxName = %s", got)
 	}
 }

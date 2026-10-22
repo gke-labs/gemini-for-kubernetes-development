@@ -42,17 +42,6 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/research"
 )
 
-// What factory stamps on a research sandbox, mirrored here as it is in
-// the API: the two programs meet over the CLI, never as one.
-const (
-	// researchReadyAnnotation is written last by `factory recipe
-	// research`, once the checkout is on the disk. It is the only thing that
-	// says a sandbox finished being built: factory creates the object in
-	// the first second of a launch that runs for minutes, so existence
-	// says no more than that something began.
-	researchReadyAnnotation = "sandbox.gemini.google.com/research-ready"
-)
-
 // researchClaimTTL bounds how long an unserved claim stands.
 //
 // Every other claim kind is either one-shot or retried forever against
@@ -116,7 +105,7 @@ func researchKey(member, repo, sessionID string) string {
 // standing for the relaunch to adopt or replace.
 func researchSandboxDone(work *workState, member, sessionID string) *unstructured.Unstructured {
 	sb := work.findSandbox(member, factorycli.ResearchSandboxName(work.repo, sessionID))
-	if sb == nil || sb.GetAnnotations()[researchReadyAnnotation] == "" {
+	if sb == nil || sb.GetAnnotations()[factorycli.AnnotationReady] == "" {
 		return nil
 	}
 	return sb

@@ -70,13 +70,6 @@ func LaunchedElsewhere(labels map[string]string) bool {
 	return l != "" && l != LauncherName
 }
 
-// RunSandboxType is a run sandbox's sandbox.gemini.google.com/type, and
-// RunNameAnnotation the run it is (factory's sandbox package).
-const (
-	RunSandboxType    = "run"
-	RunNameAnnotation = "sandbox.gemini.google.com/run-name"
-)
-
 // RunTaskPrefix is the task type a run records on its sandbox
 // (sandbox.gemini.google.com/last-task-*): the run recipes' task-type.
 const RunTaskPrefix = "run"
@@ -105,10 +98,10 @@ func RunbookInstance(runbook, instance string) string {
 	return runbook
 }
 
-// RunSandboxName mirrors factory's: a run's own sandbox, keyed by its
-// instance (factory --sandbox-key), run-<repo slug>-<short hash>.
+// RunSandboxName is a run's own sandbox, keyed by its instance (factory
+// --sandbox-key): ScopedSandboxName with the run recipes' prefix.
 func RunSandboxName(repo, instance string) string {
-	return KeyedSandboxName("run", repo, instance)
+	return ScopedSandboxName(RunPrefix, repo, instance)
 }
 
 // RunOptions parameterize `factory run <mode>` — planning, deploying

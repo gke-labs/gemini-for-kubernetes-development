@@ -57,24 +57,15 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/research"
 )
 
-// Labels and annotations factory stamps on a research sandbox. Mirrored
-// rather than imported, like every other factory name in repo-agent:
-// the two meet over HTTP and the CLI, never as one Go program.
-const (
-	// researchTypeLabel marks the sandbox kind. Research sandboxes are
-	// deliberately their own type so the board's task-slot accounting
-	// ignores them.
-	researchTypeLabel = "sandbox.gemini.google.com/type"
-	researchType      = "research"
-	// researchSessionLabel holds the session's SHORT id — a label value
-	// cannot hold a UUID's full charset budget alongside the rest, and
-	// the short form is what the sandbox name is built from anyway.
-	researchSessionLabel = "sandbox.gemini.google.com/research-session"
-	// researchSessionIDAnnotation holds the full session id. It is the
-	// authoritative match: the label is a digest prefix, so it narrows
-	// the search but does not prove identity.
-	researchSessionIDAnnotation = "sandbox.gemini.google.com/research-session-id"
-)
+// researchSessionOf is the research session a sandbox hosts: its key
+// (factorycli.AnnotationKeyID) when it is a research sandbox, "" for any
+// other - a run's sandbox is keyed too.
+func researchSessionOf(sb *unstructured.Unstructured) string {
+	if !factorycli.IsResearchSandbox(sb.GetLabels()) {
+		return ""
+	}
+	return sb.GetAnnotations()[factorycli.AnnotationKeyID]
+}
 
 // engineAPIKeySecretKey is the field of the member's factory-user Secret
 // that holds the engine credential.
@@ -176,7 +167,7 @@ func (s *Server) researchClient(ctx context.Context, pod *corev1.Pod) (*acpd.Cli
 // it is not a research sandbox with a session id on it.
 func researchViewFromSandbox(sb *unstructured.Unstructured) (researchSandboxView, bool) {
 	annotations := sb.GetAnnotations()
-	sessionID := annotations[researchSessionIDAnnotation]
+	sessionID := researchSessionOf(sb)
 	if sessionID == "" {
 		// A research sandbox with no session id cannot be addressed:
 		// every route here starts from the id. Skipping it keeps a
@@ -282,12 +273,12 @@ func (s *Server) requestedResearchSessions(ctx context.Context, namespace string
 
 // findResearchSandbox locates the sandbox hosting one session.
 //
-// The label narrows the list server-side; the annotation then confirms
-// it. Both are needed: the label holds only eight hex characters of a
+// The labels narrow the list server-side; the annotation then confirms
+// it. Both are needed: the key label holds only eight hex characters of a
 // digest, so it is a filter, not proof.
 func (s *Server) findResearchSandbox(ctx context.Context, namespace, sessionID string) (researchSandboxView, bool, error) {
 	list, err := s.K8sManager.Client.Resource(k8s.SandboxGVR).Namespace(namespace).List(ctx, v1.ListOptions{
-		LabelSelector: researchSessionLabel + "=" + factorycli.ResearchShortID(sessionID),
+		LabelSelector: factorycli.LabelSandboxType + "=" + factorycli.ResearchPrefix + "," + factorycli.LabelSandboxKey + "=" + factorycli.ShortID(sessionID),
 	})
 	if err != nil {
 		return researchSandboxView{}, false, err

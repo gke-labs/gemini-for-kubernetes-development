@@ -46,20 +46,20 @@ func researchSandboxObj(namespace, name string) *unstructured.Unstructured {
 			"namespace": namespace,
 			"labels": map[string]interface{}{
 				"factory.gemini.google.com/managed": "true",
-				"sandbox.gemini.google.com/type":    "research",
+				"sandbox.gemini.google.com/type":    "rsch",
 			},
 			"annotations": map[string]interface{}{
 				"repo": "repo",
 				// The bare repo URL, as `factory recipe research` writes
 				// it. Leaving it out of this fixture hid a filter that
 				// dropped every real research sandbox on the floor.
-				"htmlURL": "https://github.com/test/repo",
-				"sandbox.gemini.google.com/research-session-id": testSession,
+				"htmlURL":                  "https://github.com/test/repo",
+				factorycli.AnnotationKeyID: testSession,
 				// A finished sandbox, which is what nearly every test in
 				// this package means by one: the receipt factory writes
 				// after the checkout lands. researchSandboxUnfinished
 				// takes it back off for the tests about the gap.
-				researchReadyAnnotation: "2026-01-01T00:00:00Z",
+				factorycli.AnnotationReady: "2026-01-01T00:00:00Z",
 			},
 		},
 		"spec": map[string]interface{}{"replicas": int64(1)},
@@ -70,7 +70,7 @@ func researchSandboxObj(namespace, name string) *unstructured.Unstructured {
 // back to finish: the object is there, the receipt is not.
 func researchSandboxUnfinished(sb *unstructured.Unstructured) *unstructured.Unstructured {
 	ann := sb.GetAnnotations()
-	delete(ann, researchReadyAnnotation)
+	delete(ann, factorycli.AnnotationReady)
 	sb.SetAnnotations(ann)
 	return sb
 }

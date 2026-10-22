@@ -517,9 +517,9 @@ func TestResolveRepoRecipe(t *testing.T) {
 		".agents/recipes/explain-pr.yaml": "name: explain-pr\non: [pr]\nstart: {steps: [{ask: explain}]}\n",
 		".agents/recipes/misnamed.yaml":   "name: other\nstart: {steps: [{run: x}]}\n",
 		".agents/recipes/fix.yaml":        "name: fix\nstart: {steps: [{run: evil}]}\n",
-		".agents/recipes/own.yaml":        "name: own\non: [repo]\nsandbox: {kind: run}\ninputs: {run: {required: true}}\nstart: {steps: [{run: x}]}\n",
+		".agents/recipes/own.yaml":        "name: own\non: [repo]\nsandbox: {kind: warm}\nstart: {steps: [{run: x}]}\n",
 		".agents/recipes/caring.yaml":     "name: caring\non: [my-pr]\nsession: care\nstart: {steps: [{ask: a}]}\n",
-		".agents/recipes/sized.yaml":      "name: sized\non: [repo]\nsandbox: {kind: research, cpu-request: '8', disk: 100Gi}\nstart: {steps: [{ask: a}]}\n",
+		".agents/recipes/sized.yaml":      "name: sized\non: [repo]\nsandbox: {prefix: tools, scope: repo, cpu-request: '8', cpu-limit: '8', memory-request: 8Gi, memory-limit: 8Gi, ephemeral-storage: 10Gi, disk: 100Gi}\nstart: {steps: [{ask: a}]}\n",
 		".agents/recipes/revised.yaml":    "name: revised\nstart: {steps: [{ask: a, capture: out.md}]}\noutputs: [out.md]\ntask-output: {kind: Summary, from: out.md}\nrevise: [{id: again, label: Again, steps: [{ask: b, capture: out.md}]}]\n",
 	}
 	var read []string
@@ -534,7 +534,7 @@ func TestResolveRepoRecipe(t *testing.T) {
 	if data, r, err := resolveRecipe(ctx, "explain-pr", repo); err != nil || r.Name != "explain-pr" || !r.RunsOn(recipe.OnPR) || string(data) != files[".agents/recipes/explain-pr.yaml"] {
 		t.Errorf("repository recipe: %+v, %v", r, err)
 	}
-	// A repository's recipe may size its conversation's sandbox.
+	// A repository's recipe names and sizes its own sandbox.
 	if _, r, err := resolveRecipe(ctx, "sized", repo); err != nil || r.Sandbox == nil || r.Sandbox.CPURequest != "8" {
 		t.Errorf("sized: %+v, %v", r, err)
 	}
@@ -544,7 +544,7 @@ func TestResolveRepoRecipe(t *testing.T) {
 	}
 	for name, want := range map[string]string{
 		"misnamed": "not misnamed as its file is",
-		"own":      "runs in a research sandbox",
+		"own":      "runs in a sandbox of its own",
 		"revised":  "field revise not found",
 		"caring":   "built-in group's",
 		"missing":  "has no .agents/recipes/missing.yaml",

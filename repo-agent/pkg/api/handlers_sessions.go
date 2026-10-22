@@ -107,7 +107,7 @@ func (s *Server) getSessions(c *gin.Context) {
 	pods := podsIn(namespace)
 	for i := range list.Items {
 		sb := &list.Items[i]
-		if id := sb.GetAnnotations()[researchSessionIDAnnotation]; id != "" {
+		if id := researchSessionOf(sb); id != "" {
 			exists[id] = true
 		}
 		rows = append(rows, sandboxSessionRows(sb, boards, podState(sb, pods))...)
@@ -250,7 +250,7 @@ func sandboxRepo(annotations map[string]string) (string, string, bool) {
 func sandboxSessionRows(sb *unstructured.Unstructured, boards sessionBoards, pod string) []SessionRow {
 	annotations := sb.GetAnnotations()
 	base := SessionRow{Sandbox: sb.GetName(), Pod: pod, Engine: sandboxEngine(annotations, "gemini"),
-		Research: annotations[researchSessionIDAnnotation],
+		Research: researchSessionOf(sb),
 		Title:    cmp.Or(annotations[research.TitleAnnotation], annotations["title"])}
 	if owner, repo, ok := sandboxRepo(annotations); ok {
 		base.Repo = owner + "/" + repo
