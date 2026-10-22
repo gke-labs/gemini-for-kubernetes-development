@@ -189,9 +189,12 @@ type RunSession struct {
 	// a session tag's), for #/task-session/<sandbox>/<task>.
 	Task string `json:"task"`
 	// Run is the annotation the run is recorded under.
-	Run   string `json:"run"`
-	Kind  string `json:"kind,omitempty"`
-	State string `json:"state,omitempty"`
+	Run  string `json:"run"`
+	Kind string `json:"kind,omitempty"`
+	// Source is where the run's recipe came from: builtin, or the
+	// repository's .agents/recipes/<name>.yaml@<commit>.
+	Source string `json:"source,omitempty"`
+	State  string `json:"state,omitempty"`
 	// Status is what the row makes of the run, the same for every recipe:
 	// running; ready (ended with a draft nothing but edit was applied to:
 	// the member's move); done (ended, its draft applied, or none); or

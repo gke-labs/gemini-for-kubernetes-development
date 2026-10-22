@@ -887,7 +887,7 @@ func recipeEnv(secret *corev1.Secret, it githubItem, credentials string) (envMap
 
 // recordedRun is the run recorded on the sandbox for task.
 func recordedRun(task spool.Task, rec *recipe.Recipe, started time.Time) factorysandbox.RecordedRun {
-	run := factorysandbox.RecordedRun{Name: task.RunName, Task: task.ID, Session: task.Session, StartedAt: started, Recipe: rec.Name, State: "Running"}
+	run := factorysandbox.RecordedRun{Name: task.RunName, Task: task.ID, Session: task.Session, StartedAt: started, Recipe: rec.Name, Source: rec.Source, State: "Running"}
 	if rec.TaskOutput != nil {
 		run.Kind = rec.TaskOutput.Kind
 	}

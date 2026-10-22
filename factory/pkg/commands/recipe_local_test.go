@@ -58,14 +58,18 @@ func TestLocalRepoFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	apiCalls := 0
-	api := func(context.Context, string) ([]byte, error) { apiCalls++; return []byte("api"), nil }
+	api := func(context.Context, string) ([]byte, string, error) { apiCalls++; return []byte("api"), "", nil }
 	read := func(commit, path string) (string, error) {
-		b, err := localRepoFile(clone, commit, api)(ctx, path)
+		b, _, err := localRepoFile(clone, commit, api)(ctx, path)
 		return string(b), err
 	}
 
 	if got, err := read("latest", ".agents/recipes/fix.yaml"); err != nil || got != "v1" {
 		t.Errorf("latest = %q, %v; want v1, not the working tree", got, err)
+	}
+	// It says which commit latest was: the run records it.
+	if _, rev, _ := localRepoFile(clone, "latest", api)(ctx, ".agents/recipes/fix.yaml"); rev != first {
+		t.Errorf("latest read at %q, want %s", rev, first)
 	}
 	if _, err := read("latest", ".agents/recipes/none.yaml"); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("missing file: %v", err)
@@ -102,7 +106,7 @@ func TestLocalRepoFile(t *testing.T) {
 	if gitIn(t, clone, "for-each-ref") != before {
 		t.Error("reading changed the clone's refs")
 	}
-	if got, _ := localRepoFile(t.TempDir(), "latest", api)(ctx, ".agents/recipes/fix.yaml"); string(got) != "api" || apiCalls != 2 {
+	if got, _, _ := localRepoFile(t.TempDir(), "latest", api)(ctx, ".agents/recipes/fix.yaml"); string(got) != "api" || apiCalls != 2 {
 		t.Errorf("not a clone: %q, %d API calls; want the API's", got, apiCalls)
 	}
 }

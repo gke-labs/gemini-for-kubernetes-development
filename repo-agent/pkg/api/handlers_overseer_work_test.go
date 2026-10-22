@@ -14,6 +14,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/factorycli"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/models"
 )
 
 // workSandbox is a sandbox in overseer-kcc as the staging overseer's are.
@@ -320,5 +321,20 @@ func TestOverseerWorkRequiresHuman(t *testing.T) {
 	}
 	if row.Section != "attention" || row.Reason != "requires human: "+why || row.Sandboxes[0].RequiresHuman != why {
 		t.Errorf("row = %+v", row)
+	}
+}
+
+// A run's recipe source - built-in, or the repository's file at a commit -
+// reaches its session, on the overseer's page and the board's alike.
+func TestRunSessionsCarryTheRecipeSource(t *testing.T) {
+	sb := &unstructured.Unstructured{}
+	sb.SetName("fix-r-7")
+	sb.SetAnnotations(map[string]string{
+		factorycli.RunAnnotation("fix"): `{"name":"r1","task":"t1","startedAt":"2026-10-22T10:00:00Z","recipe":"fix","source":".agents/recipes/fix.yaml@abc1234","state":"Running"}`,
+	})
+	for name, sessions := range map[string][]models.RunSession{"overseer": runSessions(sb), "board": recordedRunSessions(sb, nil)} {
+		if len(sessions) != 1 || sessions[0].Source != ".agents/recipes/fix.yaml@abc1234" {
+			t.Errorf("%s: sessions = %+v", name, sessions)
+		}
 	}
 }

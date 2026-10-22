@@ -524,15 +524,15 @@ func TestResolveRepoRecipe(t *testing.T) {
 		".agents/recipes/revised.yaml":    "name: revised\nstart: {steps: [{ask: a, capture: out.md}]}\noutputs: [out.md]\ntask-output: {kind: Summary, from: out.md}\nrevise: [{id: again, label: Again, steps: [{ask: b, capture: out.md}]}]\n",
 	}
 	var read []string
-	repo := func(_ context.Context, path string) ([]byte, error) {
+	repo := func(_ context.Context, path string) ([]byte, string, error) {
 		read = append(read, path)
 		if s, ok := files[path]; ok {
-			return []byte(s), nil
+			return []byte(s), "abc1234", nil
 		}
-		return nil, os.ErrNotExist
+		return nil, "", os.ErrNotExist
 	}
 	ctx := context.Background()
-	if data, r, err := resolveRecipe(ctx, "explain-pr", repo); err != nil || r.Name != "explain-pr" || !r.RunsOn(recipe.OnPR) || string(data) != files[".agents/recipes/explain-pr.yaml"] {
+	if data, r, err := resolveRecipe(ctx, "explain-pr", repo); err != nil || r.Name != "explain-pr" || !r.RunsOn(recipe.OnPR) || string(data) != files[".agents/recipes/explain-pr.yaml"] || r.Source != ".agents/recipes/explain-pr.yaml@abc1234" {
 		t.Errorf("repository recipe: %+v, %v", r, err)
 	}
 	// A repository's recipe names and sizes its own sandbox.
@@ -571,12 +571,12 @@ func TestRepoRecipeModes(t *testing.T) {
 		".agents/recipes/misnamed.yaml":   "name: other\nstart: {steps: [{run: x}]}\n",
 	}
 	var read []string
-	repo := func(_ context.Context, path string) ([]byte, error) {
+	repo := func(_ context.Context, path string) ([]byte, string, error) {
 		read = append(read, path)
 		if s, ok := files[path]; ok {
-			return []byte(s), nil
+			return []byte(s), "abc1234", nil
 		}
-		return nil, os.ErrNotExist
+		return nil, "", os.ErrNotExist
 	}
 	ctx := context.Background()
 	builtinFix := func(r *recipe.Recipe) bool { return len(r.Start.Steps) > 1 }
@@ -601,8 +601,10 @@ func TestRepoRecipeModes(t *testing.T) {
 	t.Setenv(EnvRepoRecipeMode, "replace")
 	if _, r, err := resolveRecipe(ctx, "fix", repo); err != nil || builtinFix(r) || r.Start.Steps[0].Run != "kcc-fix" {
 		t.Errorf("replace: fix = %+v, %v; want the repository's", r, err)
+	} else if r.Source != ".agents/recipes/fix.yaml@abc1234" {
+		t.Errorf("replace: fix's source = %q, want the file at the commit read", r.Source)
 	}
-	if _, r, err := resolveRecipe(ctx, "review", repo); err != nil || r.Name != "review" {
+	if _, r, err := resolveRecipe(ctx, "review", repo); err != nil || r.Name != "review" || r.Source != recipe.SourceBuiltin {
 		t.Errorf("replace: review (no repository file) = %+v, %v; want the built-in", r, err)
 	}
 	if _, _, err := resolveRecipe(ctx, "misnamed", repo); err == nil || !strings.Contains(err.Error(), "not misnamed as its file is") {
@@ -611,24 +613,40 @@ func TestRepoRecipeModes(t *testing.T) {
 }
 
 // A repository's files are read at FACTORY_REPO_RECIPE_COMMIT's commit
-// when it names one, at the default branch for latest or unset.
+// when it names one; for latest or unset, at the default branch's head,
+// resolved once to its SHA, which the read reports.
 func TestRepoRecipeCommit(t *testing.T) {
 	var refs []string
+	heads := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/commits/") {
+			heads++
+			fmt.Fprint(w, "fedcba9876")
+			return
+		}
 		refs = append(refs, r.URL.Query().Get("ref"))
 		fmt.Fprint(w, `{"type":"file","encoding":"base64","content":"eDogMQ=="}`)
 	}))
 	defer srv.Close()
 	gh := githubv39.NewClient(nil)
 	gh.BaseURL, _ = url.Parse(srv.URL + "/")
+	var revs []string
 	for _, commit := range []string{"", "latest", "0123abc"} {
 		t.Setenv(EnvRepoRecipeCommit, commit)
-		if _, err := githubRepoFile(gh, "o", "r")(context.Background(), ".agents/recipes/x.yaml"); err != nil {
-			t.Fatal(err)
+		read := githubRepoFile(gh, "o", "r")
+		for range 2 {
+			_, rev, err := read(context.Background(), ".agents/recipes/x.yaml")
+			if err != nil {
+				t.Fatal(err)
+			}
+			revs = append(revs, rev)
 		}
 	}
-	if strings.Join(refs, ",") != ",,0123abc" {
-		t.Errorf("refs = %q, want the default branch twice, then 0123abc", refs)
+	if got := strings.Join(refs, ","); got != "fedcba9876,fedcba9876,fedcba9876,fedcba9876,0123abc,0123abc" {
+		t.Errorf("refs = %q, want the resolved head for unset and latest, then 0123abc", got)
+	}
+	if got := strings.Join(revs, ","); got != "fedcba9876,fedcba9876,fedcba9876,fedcba9876,0123abc,0123abc" || heads != 2 {
+		t.Errorf("revs = %q, %d head lookups; want one lookup per reader", got, heads)
 	}
 }
 

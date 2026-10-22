@@ -528,6 +528,9 @@ type RecordedRun struct {
 	// if it declares one.
 	Recipe string `json:"recipe,omitempty"`
 	Kind   string `json:"kind,omitempty"`
+	// Source is where the recipe came from (recipe.Recipe.Source):
+	// builtin, or a repository's .agents/recipes/<name>.yaml@<commit>.
+	Source string `json:"source,omitempty"`
 	// State is the run's own: Running, Completed or Failed, written with
 	// the task's state at last-task-state or its side annotation, so an
 	// issue's plan keeps its state once its fix starts. EndedAt is when it

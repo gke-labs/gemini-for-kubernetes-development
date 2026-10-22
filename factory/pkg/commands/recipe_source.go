@@ -79,9 +79,10 @@ func repoRecipeCommit() string {
 // repoRecipeNameRE is a repository recipe's name, and its file's.
 var repoRecipeNameRE = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 
-// repoFile reads a file of a repository at its default branch;
-// os.ErrNotExist when it has none of that path.
-type repoFile func(ctx context.Context, path string) ([]byte, error)
+// repoFile reads a file of a repository at its default branch, and says
+// the commit it read it at ("" when it cannot tell); os.ErrNotExist when
+// it has none of that path.
+type repoFile func(ctx context.Context, path string) (data []byte, rev string, err error)
 
 // githubRepoFile reads owner/repo's files through gh, at the default
 // branch: what has been reviewed and merged, never a pull request's head;
@@ -105,7 +106,7 @@ func githubRepoFile(gh *githubv39.Client, owner, repo string) repoFile {
 func localRepoFile(dir, commit string, api repoFile) repoFile {
 	var rev string
 	resolved := false
-	return func(ctx context.Context, path string) ([]byte, error) {
+	return func(ctx context.Context, path string) ([]byte, string, error) {
 		if !resolved {
 			rev, resolved = localRev(ctx, dir, commit), true
 		}
@@ -118,9 +119,9 @@ func localRepoFile(dir, commit string, api repoFile) repoFile {
 		out, err := cmd.Output()
 		switch {
 		case err == nil:
-			return out, nil
+			return out, rev, nil
 		case strings.Contains(stderr.String(), "does not exist in") || strings.Contains(stderr.String(), "exists on disk, but not in"):
-			return nil, os.ErrNotExist
+			return nil, "", os.ErrNotExist
 		}
 		klog.Warningf("reading %s from the clone in %s at %s: %v: %s; reading it from GitHub", path, dir, rev, err, strings.TrimSpace(stderr.String()))
 		return api(ctx, path)
@@ -149,27 +150,53 @@ func localRev(ctx context.Context, dir, commit string) string {
 	return resolve(commit)
 }
 
-// githubAPIRepoFile reads owner/repo's files through GitHub's API, at the
-// default branch, or at EnvRepoRecipeCommit's commit when it names one.
+// githubAPIRepoFile reads owner/repo's files through GitHub's API, at
+// EnvRepoRecipeCommit's commit when it names one, else at the default
+// branch's head, resolved once to its SHA so every file it reads is of one
+// commit, and the run can say which (unpinned when it cannot be resolved).
 func githubAPIRepoFile(gh *githubv39.Client, owner, repo string) repoFile {
-	var opts *githubv39.RepositoryContentGetOptions
-	if c := repoRecipeCommit(); c != "latest" {
-		opts = &githubv39.RepositoryContentGetOptions{Ref: c}
-	}
-	return func(ctx context.Context, path string) ([]byte, error) {
+	rev := repoRecipeCommit()
+	resolved := rev != "latest"
+	return func(ctx context.Context, path string) ([]byte, string, error) {
+		if !resolved {
+			resolved = true
+			if sha, _, err := gh.Repositories.GetCommitSHA1(ctx, owner, repo, "HEAD", ""); err == nil {
+				rev = sha
+			} else {
+				klog.Warningf("resolving %s/%s's default branch head: %v; reading it unpinned", owner, repo, err)
+				rev = ""
+			}
+		}
+		var opts *githubv39.RepositoryContentGetOptions
+		if rev != "" && rev != "latest" {
+			opts = &githubv39.RepositoryContentGetOptions{Ref: rev}
+		}
 		fc, _, resp, err := gh.Repositories.GetContents(ctx, owner, repo, path, opts)
 		if resp != nil && resp.StatusCode == http.StatusNotFound {
-			return nil, os.ErrNotExist
+			return nil, "", os.ErrNotExist
 		}
 		if err != nil {
-			return nil, fmt.Errorf("reading %s/%s %s: %w", owner, repo, path, err)
+			return nil, "", fmt.Errorf("reading %s/%s %s: %w", owner, repo, path, err)
 		}
 		if fc == nil {
-			return nil, fmt.Errorf("%s/%s %s is a directory", owner, repo, path)
+			return nil, "", fmt.Errorf("%s/%s %s is a directory", owner, repo, path)
 		}
 		content, err := fc.GetContent()
-		return []byte(content), err
+		if rev == "latest" {
+			rev = ""
+		}
+		return []byte(content), rev, err
 	}
+}
+
+// repoSource is a repository recipe's source as a run records it:
+// .agents/recipes/<name>.yaml@<commit>, the path alone when the commit is
+// not known.
+func repoSource(path, rev string) string {
+	if rev == "" {
+		return path
+	}
+	return path + "@" + rev
 }
 
 // resolveRecipe loads the recipe arg names: a file when it looks like one
@@ -191,6 +218,7 @@ func resolveRecipe(ctx context.Context, arg string, readRepo repoFile) ([]byte, 
 		if err != nil {
 			return nil, nil, fmt.Errorf("%s: %w", arg, err)
 		}
+		rec.Source = arg
 		return data, rec, nil
 	}
 	if repoRecipeMode() == "off" {
@@ -203,13 +231,16 @@ func resolveRecipe(ctx context.Context, arg string, readRepo repoFile) ([]byte, 
 		}
 	}
 	if data, rec, err := recipe.Builtin(arg); err == nil || readRepo == nil {
+		if rec != nil {
+			rec.Source = recipe.SourceBuiltin
+		}
 		return data, rec, err
 	}
 	if !repoRecipeNameRE.MatchString(arg) {
 		return nil, nil, fmt.Errorf("%q is not a recipe name (want %s)", arg, repoRecipeNameRE)
 	}
 	path := repoRecipesDir + "/" + arg + ".yaml"
-	data, err := readRepo(ctx, path)
+	data, rev, err := readRepo(ctx, path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil, fmt.Errorf("no recipe %s: not a built-in one, and the repository has no %s", arg, path)
 	}
@@ -220,6 +251,7 @@ func resolveRecipe(ctx context.Context, arg string, readRepo repoFile) ([]byte, 
 	if err != nil {
 		return nil, nil, fmt.Errorf("%s: %w", path, err)
 	}
+	rec.Source = repoSource(path, rev)
 	return data, rec, nil
 }
 
@@ -229,7 +261,7 @@ func resolveRecipe(ctx context.Context, arg string, readRepo repoFile) ([]byte, 
 // built-in's included, and is held only to being named as its file is.
 func overrideRecipe(ctx context.Context, name string, readRepo repoFile) (data []byte, rec *recipe.Recipe, ok bool, err error) {
 	path := repoRecipesDir + "/" + name + ".yaml"
-	data, err = readRepo(ctx, path)
+	data, rev, err := readRepo(ctx, path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil, false, nil
 	}
@@ -239,7 +271,8 @@ func overrideRecipe(ctx context.Context, name string, readRepo repoFile) (data [
 	if rec, err = parseReplacingRecipe(name, data); err != nil {
 		return nil, nil, false, fmt.Errorf("%s at %s: %w", path, repoRecipeCommit(), err)
 	}
-	fmt.Fprintf(os.Stderr, "Using the repository's recipe %s (%s at %s)\n", name, path, repoRecipeCommit())
+	rec.Source = repoSource(path, rev)
+	fmt.Fprintf(os.Stderr, "Using the repository's recipe %s (%s)\n", name, rec.Source)
 	return data, rec, true, nil
 }
 
@@ -326,7 +359,7 @@ func listRepoRecipes(ctx context.Context, gh *githubv39.Client, owner, repo stri
 			continue
 		}
 		r := repoRecipe{name: name, path: e.GetPath()}
-		if r.data, r.err = read(ctx, r.path); r.err == nil {
+		if r.data, _, r.err = read(ctx, r.path); r.err == nil {
 			if repoRecipeMode() == "replace" {
 				r.rec, r.err = parseReplacingRecipe(name, r.data)
 			} else {

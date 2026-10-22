@@ -3,7 +3,7 @@ import { DRAFT_VERBS } from './Research';
 import agentSandboxIcon from './agent-sandbox-icon.svg';
 import SandboxSize from './SandboxSize';
 import Chip from './Chip';
-import { ENGINE_ICON, EngineIcon, SessionMark, RUN_STYLE, READY_STYLE, ageOf } from './WorkBits';
+import { ENGINE_ICON, EngineIcon, SessionMark, RUN_STYLE, READY_STYLE, ageOf, recipeSource } from './WorkBits';
 import SessionSlideOver from './SessionSlideOver';
 import SandboxCard from './SandboxCard';
 import BoardPicker from './BoardPicker';
@@ -74,6 +74,7 @@ function runState(c, error) {
 function chipTitle(c, hint, error) {
   const state = c.run ? runState(c, error) : hint;
   const lines = [`${c.label}: ${c.status}${state ? ` — ${state}` : ''}`];
+  if (recipeSource(c.run)) lines.push(recipeSource(c.run));
   if (c.run && c.run.preview && c.status !== 'running') lines.push(c.run.preview);
   return lines.join('\n');
 }

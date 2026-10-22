@@ -3,7 +3,7 @@ import agentSandboxIcon from './agent-sandbox-icon.svg';
 import Chip from './Chip';
 import SessionSlideOver from './SessionSlideOver';
 import SandboxCard from './SandboxCard';
-import { SessionMark, RUN_STYLE, ageOf } from './WorkBits';
+import { SessionMark, RUN_STYLE, ageOf, recipeSource } from './WorkBits';
 
 // OverseerWork: the Overseer page's work view
 // (docs/design/overseer-work-view.md). One row per issue (with the PR its
@@ -71,6 +71,7 @@ export function rowChips(item) {
 function chipTitle(c, reason) {
   const lines = [`${c.label}: ${c.status}${c.recipe && c.recipe !== c.group ? ` — ${c.recipe}` : ''}`];
   if (c.status === 'failed' && reason) lines.push(reason);
+  if (recipeSource(c.run)) lines.push(recipeSource(c.run));
   if (c.queued) lines.push(`${c.queued.type}${c.queued.rank ? `, rank ${c.queued.rank}` : ''}${c.queued.priority ? `, ${c.queued.priority}` : ''}`);
   if (c.run && c.run.sandbox) lines.push(c.run.task ? `${c.run.sandbox} — open the session` : `${c.run.sandbox} — a classic task, no session: open the sandbox`);
   return lines.join('\n');
