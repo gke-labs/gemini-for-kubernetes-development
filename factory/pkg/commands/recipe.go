@@ -532,7 +532,16 @@ func runRecipeIn(ctx context.Context, opts recipeRunOpts, recipeArg, itemURL, ru
 			session = fmt.Sprintf("%s-%s-%04x", rec.Name, time.Now().Format("20060102-150405"), rand.Intn(1<<16))
 		}
 		fmt.Printf("Ensuring the sandbox for %s/%s, session %s...\n", it.Owner, it.Repo, session)
-		sandboxName, err = factorysandbox.EnsureResearchSandbox(ctx, kubeClient, rootFlags.Namespace, it.Repo, session, cloneURL, htmlURL, rootFlags.Image, rootFlags.DiskSize, rootFlags.StorageClass, rootFlags.EphemeralStorage, rootFlags.ResolvedSecrets, rootFlags.ResolvedEnvs, user)
+		// Sized for a conversation (factorysandbox.Research*) unless the
+		// caller chose.
+		disk, ephemeral := rootFlags.DiskSize, rootFlags.EphemeralStorage
+		if workspaceDiskDefaulted {
+			disk = ""
+		}
+		if ephemeralStorageDefaulted {
+			ephemeral = ""
+		}
+		sandboxName, err = factorysandbox.EnsureResearchSandbox(ctx, kubeClient, rootFlags.Namespace, it.Repo, session, cloneURL, htmlURL, rootFlags.Image, disk, rootFlags.StorageClass, ephemeral, rootFlags.ResolvedSecrets, rootFlags.ResolvedEnvs, user)
 	case it.IsPR:
 		fmt.Printf("Ensuring the sandbox for #%d...\n", it.Number)
 		if rec.Credentials == recipe.CredentialsClone {
