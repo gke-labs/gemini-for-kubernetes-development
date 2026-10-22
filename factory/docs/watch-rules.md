@@ -22,17 +22,17 @@ getting there without changing what it does, is in
 | source | where | what it can do |
 |---|---|---|
 | factory | `factory/pkg/watch/rules/<name>.yaml`, embedded in the binary | the prebaked rules: today's watch, out of the box |
-| a repository | `.agents/rules/<name>.yaml` on its default branch (Phase 5: the watch does not read these yet; `factory watch rules --dir` lays a checkout's over factory's for listing, explain and replay) | replace a factory rule of the same name, add a rule of a new name, or turn a factory rule on or off |
+| a repository | `.agents/watch/<name>.yaml`, read once when the watch starts, at the Overseer's `spec.repoRecipe.gitCommit`, when its `spec.repoRecipe.mode` is replace (`factory watch rules --dir` lays a checkout's over factory's for listing, explain and replay) | replace a factory rule of the same name, or turn one on or off; a rule of a new name is left out with a warning, since the watch carries out factory's rules only |
 | the overseer | the Overseer's `spec.rules.disabled` | the operator's emergency switch: turn rules off |
 
 A rule's file is named after it: `fix.yaml` holds the rule named `fix`.
 
-List the rules, with a checkout's `.agents/rules/` laid over factory's:
+List the rules, with a checkout's `.agents/watch/` laid over factory's:
 
 ```sh
 factory watch rules                 # table: NAME ON ORDER RUN AS POLICY SOURCE ENABLED
 factory watch rules -o yaml         # every rule, whole
-factory watch rules --dir .         # with this checkout's .agents/rules/ laid over
+factory watch rules --dir .         # with this checkout's .agents/watch/ laid over
 factory watch rules --flow          # how the PR rules are applied, top to bottom (or: --flow issue)
 factory watch rules explain <URL>   # one PR or issue through the rules, rule by rule
 factory watch rules decide -f <dir> # items written by hand (scenarios) through the rules
@@ -403,7 +403,7 @@ before it:
    `enabled` turns factory's rule off - or on - keeping the rest of it:
 
    ```yaml
-   # .agents/rules/review.yaml
+   # .agents/watch/review.yaml
    name: review
    enabled: false
    ```
@@ -426,7 +426,7 @@ A repository rule that asks for a review of every green bot PR labelled
 `needs-review`, once per head:
 
 ```yaml
-# .agents/rules/review-on-label.yaml
+# .agents/watch/review-on-label.yaml
 name: review-on-label
 description: Review a green bot PR labelled needs-review
 on: pr

@@ -107,6 +107,11 @@ type Watcher struct {
 	// step (pkg/commands' warmWorkspace), cloning as user. Nil, or no
 	// warmWorkspace in the config, the repository is not warmed.
 	WarmWorkspace func(ctx context.Context, repoURL, user string, cfg config.WarmWorkspaceConfig) error
+	// RepoRules lays the repository's own watch rules (.agents/watch) over
+	// factory's (base), as the repository recipe mode says, and says where
+	// they came from ("" for none) - pkg/commands' repoWatchRules. Nil,
+	// factory's rules alone. Read once, when the watch starts.
+	RepoRules func(ctx context.Context, base rules.Set) (rules.Set, string, error)
 
 	cfg          *config.FactoryConfig
 	triggerLabel string
@@ -223,6 +228,18 @@ func (w *Watcher) newRulesControl() *rules.Control {
 	if err != nil {
 		klog.Warningf("Loading the watch rules: %v; running without them", err)
 		return nil
+	}
+	if w.RepoRules != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		repoSet, from, err := w.RepoRules(ctx, set)
+		cancel()
+		switch {
+		case err != nil:
+			klog.Warningf("Loading the repository's watch rules: %v; running factory's", err)
+		case from != "":
+			set = repoSet
+			klog.Infof("Watch rules: the repository's %s", from)
+		}
 	}
 	c, err := rules.NewControl(rules.ParseList(w.RulesDisabled), set)
 	if err != nil {

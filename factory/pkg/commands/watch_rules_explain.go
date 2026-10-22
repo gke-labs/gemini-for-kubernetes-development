@@ -110,7 +110,7 @@ Overseer's spec.rulesRecord), history and settings included:
 	cmd.Flags().StringSliceVar(&o.trust, "trusted", nil, "Logins trusted whatever GitHub's association says")
 	cmd.Flags().DurationVar(&o.inactivity, "inactivity", 0, "The overseer's prInactivityTimeout (0: never)")
 	cmd.Flags().StringSliceVar(&o.records, "record", nil, "decisions.jsonl files, or the record's directory: explain the overseer's last record of the item instead of reading it live")
-	cmd.Flags().StringVar(&o.dir, "dir", "", "A local checkout whose .agents/rules/ to lay over factory's rules")
+	cmd.Flags().StringVar(&o.dir, "dir", "", "A local checkout whose .agents/watch/ to lay over factory's rules")
 	cmd.Flags().StringVarP(&o.output, "output", "o", "", "Output format: json (the record and the explanation)")
 	cmd.Flags().BoolVarP(&o.verbose, "verbose", "v", false, "Show the scanner's own log while it reads the facts")
 	return cmd

@@ -83,7 +83,7 @@ The item's fields are the record's (decisions.jsonl's "item"), in any
 case. With expect, a scenario that decides otherwise fails, and so does
 the command: a directory of scenarios is a test suite for the rules.
 
---dir lays a checkout's .agents/rules/ over factory's rules first, so a
+--dir lays a checkout's .agents/watch/ over factory's rules first, so a
 rule being changed is decided with.`,
 		Example: `  factory watch rules decide -f scenario.yaml
   factory watch rules decide -f ./scenarios/
@@ -118,7 +118,7 @@ rule being changed is decided with.`,
 		},
 	}
 	cmd.Flags().StringSliceVarP(&files, "file", "f", nil, "Scenario files or directories of them (*.yaml)")
-	cmd.Flags().StringVar(&dir, "dir", "", "A local checkout whose .agents/rules/ to lay over factory's rules")
+	cmd.Flags().StringVar(&dir, "dir", "", "A local checkout whose .agents/watch/ to lay over factory's rules")
 	cmd.Flags().StringVar(&pool, "pool", "", "The bot pool's logins, for scenarios that name none")
 	cmd.Flags().StringVar(&watcher, "watcher", "", "The watcher's login, for scenarios that name none")
 	cmd.Flags().StringVarP(&output, "output", "o", "", "Output format: json (each scenario's explanation)")

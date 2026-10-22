@@ -2,9 +2,15 @@
 
 Status: Phases 0 to 4 are built (October 2026): the rules engine decides
 every issue and PR rule on every overseer, and the scanners only carry
-out its decisions. Phase 5 (a repository's own `.agents/rules/`) is not:
-the watch reads only the prebaked rules; `factory watch rules --dir` lays
-a checkout's rules over them for listing, explain and replay. The rule
+out its decisions. Phase 5 (a repository's own rules) is partly built:
+the watch reads a repository's `.agents/watch/` when it starts, if its
+overseer lets the repository's `.agents/` in (`spec.repoRecipe.mode`
+replace, read at its `gitCommit` from the overseer's clone), and lays it
+over the prebaked rules (replace or toggle by name). A rule of a new name
+is left out with a warning, since the scanners carry out factory's rules
+by name; augment and off leave the prebaked rules alone. `factory watch
+rules --dir` lays a checkout's rules over them for listing, explain and
+replay. The rule
 files' reference - every field, and how a rule is evaluated - is the
 [watch rules guide](../docs/watch-rules.md). "Before the move" is the
 watch as it was; "As built" is the watch now.
@@ -160,7 +166,7 @@ The engine has four kinds of thing.
 per file (see Where rules live):
 
 ```yaml
-# .agents/rules/fix.yaml
+# .agents/watch/fix.yaml
 name: fix
 on: issue
 when:
@@ -184,7 +190,7 @@ second one only a way round it, so they are flattened into the list. PR
 care is the exclusive part of the PR list:
 
 ```yaml
-# .agents/rules/ci.yaml
+# .agents/watch/ci.yaml
 name: ci
 on: pr
 order: 30      # inherit-labels 5, inactive 7, comments 10, conflict 20, ci 30, review 40, ready 50
@@ -460,7 +466,7 @@ first task's push will obsolete.
 
 ### Where rules live
 
-**One rule per file, in `.agents/rules/<name>.yaml`,** beside the
+**One rule per file, in `.agents/watch/<name>.yaml`,** beside the
 repository's recipes:
 
 ```
@@ -481,7 +487,7 @@ repository's recipes:
   `spec.rules.disabled: [review]`, or `enabled: [fix, ci, comments]`;
   `issueMode: disabled` becomes turning off the rules on issues.
 - **A repository's rule replaces the built-in of its name**
-  (`.agents/rules/ci.yaml` with a different give-up), or adds a rule of
+  (`.agents/watch/ci.yaml` with a different give-up), or adds a rule of
   a new name. Rules are read from the default branch only, as repository
   recipes are.
 - **On or off at every source.** A rule is on unless something turns it
@@ -493,7 +499,7 @@ repository's recipes:
      keeping the rest of it; a repository's owner flips a rule in a
      reviewed change, without copying it:
      ```yaml
-     # .agents/rules/review.yaml
+     # .agents/watch/review.yaml
      name: review
      enabled: false
      ```
@@ -520,7 +526,7 @@ holding the settings, the sources, the order and every rule. The same
 five rules, both ways:
 
 ```
- single file: .agents/watch.yaml          │ one file per rule: .agents/rules/*.yaml
+ single file: .agents/watch.yaml          │ one file per rule: .agents/watch/*.yaml
 ──────────────────────────────────────────┼──────────────────────────────────────────
  sources:                                 │ # sources: derived from each rule's on/when
    prs-assigned:                          │
@@ -958,11 +964,13 @@ together once staging's shadow had agreed on every rule:
 | C | the recipe table keeps runner details only | #2059 |
 | | workflow-missing posts its rule's comment | #2061 |
 
-**Phase 5, the repository's rules** (not built; the overlay is read by
-`factory watch rules --dir` only): `.agents/rules/*.yaml` replacing,
-turning off or adding to the prebaked rules, within the global gates and
-floors, and `.agents/watch.yaml` for its settings; then the board's auto
-rules on the same predicates.
+**Phase 5, the repository's rules** (partly built): the watch reads
+`.agents/watch/*.yaml` once when it starts, under `spec.repoRecipe` (one
+switch for everything a repository's `.agents/` holds): replace mode
+replaces or turns off prebaked rules by name, within the global gates and
+floors. Not built: rules of new names (the scanners carry out factory's
+rules by name, so one is left out with a warning), settings beside the
+rules, and the board's auto rules on the same predicates.
 
 
 ## Open questions

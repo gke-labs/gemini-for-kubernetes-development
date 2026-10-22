@@ -34,7 +34,7 @@ on it (a recipe run, or GitHub writes). A group's rules are ordered and
 exclusive on an item: the first that holds is taken, the last holds when
 no other does. See factory/design/watch-rules.md.
 
-A repository's rules, .agents/rules/<name>.yaml, lie over factory's: a
+A repository's rules, .agents/watch/<name>.yaml, lie over factory's: a
 file of a factory rule's name replaces it, or, with nothing but its name
 and enabled, turns it on or off:
 
@@ -45,9 +45,12 @@ and enabled, turns it on or off:
 repository's owner sees what their files change (SOURCE: whose rule it
 is; ENABLED says "(repo)" when the repository's toggle set it).
 
-Nothing evaluates these rules yet: today's watch still runs its scanners.
---url is accepted for a repository's own rules, which the watch reads
-later; today it lists factory's.
+The watch reads a repository's rules when it starts, if its overseer lets
+the repository's .agents/ in (spec.repoRecipe.mode, read at its
+gitCommit): replace lays them over factory's as above; augment and off
+leave factory's rules as they are. A rule of a new name is left out, with
+a warning: the watch carries out factory's rules only, replaced or
+toggled. --url is accepted; it lists factory's rules.
 
 Policy floors: give-up and attempts at most 10, a cooldown at least 1m.`,
 		Example: `  factory watch rules
@@ -86,7 +89,7 @@ Policy floors: give-up and attempts at most 10, a cooldown at least 1m.`,
 	cmd.AddCommand(newWatchRulesExplainCommand())
 	cmd.AddCommand(newWatchRulesDecideCommand())
 	cmd.Flags().StringVarP(&output, "output", "o", "", "Output format: yaml or json (the whole rules)")
-	cmd.Flags().StringVar(&dir, "dir", "", "A local checkout whose .agents/rules/ to lay over factory's rules")
+	cmd.Flags().StringVar(&dir, "dir", "", "A local checkout whose .agents/watch/ to lay over factory's rules")
 	cmd.Flags().StringVar(&repoURL, "url", "", "A repository URL (its own rules come later; factory's are listed)")
 	cmd.Flags().BoolVar(&flow, "flow", false, "Draw how the rules on a kind of item are applied: pr (the default), or issue")
 	return cmd
@@ -113,7 +116,7 @@ The overseer keeps a file a day (decisions-<date>.jsonl, 30 days, at
 most 5 GiB) beside decisions.jsonl, the one being written; a directory
 replays all of them in order.
 
---dir lays a checkout's .agents/rules/ over factory's rules first, as
+--dir lays a checkout's .agents/watch/ over factory's rules first, as
 'factory watch rules --dir' does.`,
 		Example: `  kubectl exec -n overseer-kcc overseer-kcc -- cat /workspaces/.cache/factory-watch/decisions.jsonl > decisions.jsonl
   factory watch rules replay decisions.jsonl
@@ -160,7 +163,7 @@ replays all of them in order.
 			return printReplay(c.OutOrStdout(), total, output, show)
 		},
 	}
-	cmd.Flags().StringVar(&dir, "dir", "", "A local checkout whose .agents/rules/ to lay over factory's rules")
+	cmd.Flags().StringVar(&dir, "dir", "", "A local checkout whose .agents/watch/ to lay over factory's rules")
 	cmd.Flags().StringVarP(&output, "output", "o", "", "Output format: json (every difference, with its record)")
 	cmd.Flags().IntVar(&show, "show", 20, "How many differences to list")
 	return cmd
@@ -210,10 +213,10 @@ func printReplay(out io.Writer, res rules.ReplayResult, output string, show int)
 	return w.Flush()
 }
 
-// overlayRepoRules lays the rules in a checkout's .agents/rules/ over set.
+// overlayRepoRules lays the rules in a checkout's .agents/watch/ over set.
 // A checkout without the directory has no rules of its own.
 func overlayRepoRules(set rules.Set, checkout string) (rules.Set, error) {
-	dir := filepath.Join(checkout, ".agents", "rules")
+	dir := filepath.Join(checkout, ".agents", "watch")
 	if info, err := os.Stat(dir); errors.Is(err, fs.ErrNotExist) {
 		return set, nil
 	} else if err != nil {
