@@ -310,10 +310,6 @@ func (s *Scanner) sweep(ctx context.Context) {
 	} else {
 		klog.Infof("Fetched %d open PRs from GitHub API", len(prs))
 		s.entities.UpdateOpenPRs(prs)
-
-		// Repair the pull requests the listing below cannot see before it
-		// runs, so one adopted here is evaluated in this cycle, not the next.
-		s.adoptOrphanedBotPRs(ctx, prs)
 	}
 
 	candidates, err := s.scanCandidates(ctx)

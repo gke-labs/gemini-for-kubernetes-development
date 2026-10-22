@@ -36,9 +36,6 @@ func TestExplain(t *testing.T) {
 	if st := step(t, ex, "ci"); st.Skipped != "comments took the item" {
 		t.Errorf("ci = %+v, want skipped for comments", st)
 	}
-	if st := step(t, ex, "adopt-pr"); st.Skipped != "off" {
-		t.Errorf("adopt-pr = %+v, want off", st)
-	}
 
 	// ci just ran OK on this head, unassigned: held by its cooldown.
 	ciRun := func(start time.Duration, head string, failed bool) PastRun {

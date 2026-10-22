@@ -2,7 +2,7 @@
 
 This design note outlines the architecture and execution flow for adopting third-party Pull Requests under the onboarded factory-user identity.
 
-**Status:** Implemented. `factory pr adopt` landed in #1105/#1123 as `adopt.sh` + `adopt.txt` run over envd; it now runs the `adopt` recipe (`factory/pkg/recipe/recipes/adopt.yaml`: #1908, one recipe with a `strategy` input #1911, task output #1912, input check after `setup-fork` #2050/#2052) and applies its `open-pr` action. The `--adopt` flags are gone; `factory pr` has only `watch` and `adopt`. The watch adopts no third-party PRs (its `adopt-pr` rule, `factory/pkg/watch/rules/adopt-pr.yaml`, is a different thing: it relabels a pool bot's orphaned PR, and is off).
+**Status:** Implemented. `factory pr adopt` landed in #1105/#1123 as `adopt.sh` + `adopt.txt` run over envd; it now runs the `adopt` recipe (`factory/pkg/recipe/recipes/adopt.yaml`: #1908, one recipe with a `strategy` input #1911, task output #1912, input check after `setup-fork` #2050/#2052) and applies its `open-pr` action. The `--adopt` flags are gone; `factory pr` has only `watch` and `adopt`. The watch adopts no third-party PRs.
 
 ---
 

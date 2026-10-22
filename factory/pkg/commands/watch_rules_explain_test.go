@@ -23,7 +23,6 @@ func TestWatchRulesFlow(t *testing.T) {
 		"wait 2h after a success (a new head ends it; not when assignee: pool)",
 		"after 3 runs since head, human, pause → the stop label",
 		"run care-ci → post-replies",
-		"adopt-pr  (off)",
 	} {
 		if !strings.Contains(out, sub) {
 			t.Errorf("--flow lacks %q:\n%s", sub, out)

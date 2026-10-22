@@ -327,7 +327,6 @@ The prebaked PR rules, in order:
 | 40 | `review` | yes | reviews a green PR that wants one |
 | 50 | `ready` | yes (`exclusive: true`) | hands a ready PR to the humans |
 | 60 | `ready-unreview` | yes (`exclusive: true`) | takes `*/review` off a PR already handed over |
-| - | `adopt-pr` | no | (off) |
 
 On issues, `workflow-missing` (5) stops an issue whose workflow cannot be
 loaded, which ends the walk; `workflow` (10) and `fix` (20) both take the item; their
@@ -397,9 +396,9 @@ is followed by its run name, never dropped.
 A rule is on unless something turns it off. Each source overrides the one
 before it:
 
-1. **factory's file:** `enabled: false` ships a rule off (`adopt-pr`: a
-   safety net held in reserve). `inactive` ships on but holds only with a
-   timeout above 0 (`--pr-inactivity-timeout`).
+1. **factory's file:** `enabled: false` ships a rule off (no prebaked rule
+   does today). `inactive` ships on but holds only with a timeout above 0
+   (`--pr-inactivity-timeout`).
 2. **a repository's file** of the same name with nothing but its name and
    `enabled` turns factory's rule off - or on - keeping the rest of it:
 
@@ -558,10 +557,8 @@ the suite CI runs.
 | `fix` | issue | fixes an issue the overseer is pointed at and opens the PR |
 | `workflow-missing` | issue | stops an issue whose workflow definition cannot be loaded, with a comment saying so |
 | `workflow` | issue | takes the next step of the workflow an issue names (held while an open PR closes the issue) |
-| `stop` | issue | (off: the stop label is an engine gate) drops an item's queued tasks |
 | `inherit-labels` | pr | copies the closing issues' labels onto the PR, ahead of the rules that take it |
-| `adopt-pr` | pr | (off) labels a bot PR no listing finds whose closing issue is the overseer's |
-| `inactive` | pr | (off: no timeout by default) pauses a PR nobody looked at |
+| `inactive` | pr | (no timeout by default, so it never holds) pauses a PR nobody looked at |
 | `comments` ... `ready-unreview` | pr | PR care, in [order](#order) |
 | `chore` | schedule | runs a scheduled agent on the repository |
 | `nudge` | event | steps a workflow when an issue it links closes |

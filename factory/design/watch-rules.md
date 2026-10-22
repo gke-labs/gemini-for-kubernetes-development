@@ -48,12 +48,11 @@ watch as it was; "As built" is the watch now.
   a disabled rule decides nothing and its queued tasks are dropped at
   start. It does not stop chores, fan-outs or running tasks; `prMode`,
   `issueMode` and `chores.mode` do, per loop.
-- **Not yet on the rules.** Adopting an orphaned bot PR (one a pool bot
-  opened without its labels) still runs as PR-scanner code on every sweep
-  (`prs/adoption.go`); the `adopt-pr` rule that describes it ships
-  `enabled: false` and is not consulted. Moving it means the engine
-  deciding it (or folding it into inherit-labels) and deleting
-  `adoptOrphanedBotPRs`.
+- **No orphan adoption.** The PR scanner's adoption of a pool bot's PR
+  opened without its labels, and the `adopt-pr` rule that described it,
+  are gone: `open-pr` labels the PR it opens, tries the labels again when
+  GitHub fails on its side, and a task requeued after a restart applies
+  `open-pr` again, which labels the PR already open.
 
 `factory watch` (the overseer) decides what to run by code: an issue
 scanner, a PR scanner, a fan-out controller, a chores scheduler, a
@@ -723,7 +722,7 @@ itself. The scanners read their lists out of it on their own tickers:
  │ Issue scanner                 │        │ PR scanner                    │
  │  every tick: fast pass        │        │  sweep when due, else fast    │
  │    issues assigned to pool    │        │  sweep: ListOpenPRs → open-PR │
- │  when due: sweep              │◄───────┤    cache, adopt orphans, then │
+ │  when due: sweep              │◄───────┤    cache, then                │
  │    trigger-labelled issues    │ open-PR│    every labelled/assigned PR │
  │  no open-PR cache → no scan   │ cache  │  fast: assigned PRs that moved│
  └──────────────┬────────────────┘        │    (updated_at, CI active,    │
