@@ -244,7 +244,7 @@ factory sandbox chat factory-issue-917 -r latest  # resume the Gemini session
 | `recipe fanout` | Write a fan-out spec for an issue; `--apply` posts it and adds the fan-out and stop labels |
 | `recipe research` | Start a research conversation in a sandbox; its notes are written when asked |
 | `watch fanout` | One fan-out pass over a parent issue: create, rewrite and label children in a slow start |
-| `watch rules` | List the watch's prebaked rules (what each looks at, runs, and as whom; `-o yaml\|json` for the whole rules; `--dir` lays a checkout's `.agents/rules/` over them); see [design/watch-rules.md](design/watch-rules.md) |
+| `watch rules` | List the watch's prebaked rules (what each looks at, runs, and as whom; `-o yaml\|json` for the whole rules; `--dir` lays a checkout's `.agents/watch/` over them); see [design/watch-rules.md](design/watch-rules.md) |
 | `watch rules replay <decisions.jsonl>` | Replay the decisions the watch recorded (`watch --rules-record`, the Overseer's `spec.rulesRecord`) through the rules and list where they decide differently |
 | `watch rules explain <PR or issue URL>` | Walk one item through the rules, read live or from a record (`--record`), and say what each rule decides and why |
 | `watch rules decide -f <scenario.yaml>` | Decide items written by hand and check what was expected |

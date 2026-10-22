@@ -290,3 +290,34 @@ func TestOverlay(t *testing.T) {
 		t.Error("a file not named after its rule loaded")
 	}
 }
+
+// Compose: off is factory's alone, augment adds new names only, replace
+// lays the repository's rules over by name; an unknown mode is refused.
+func TestCompose(t *testing.T) {
+	base, err := Builtin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo, err := LoadFiles(map[string][]byte{
+		"review.yaml": []byte("name: review\nenabled: false\n"),
+		"extra.yaml":  []byte("name: extra\non: pr\norder: 99\nwhen: {checks: green}\nrun: {recipe: summarize}\n"),
+		"notes.txt":   []byte("ignored"),
+	})
+	if err != nil || len(repo) != 2 {
+		t.Fatalf("LoadFiles = %v, %v", repo, err)
+	}
+	if set, _, err := Compose(base, repo, "off"); err != nil || len(set) != len(base) {
+		t.Errorf("off = %d rules, %v", len(set), err)
+	}
+	set, skipped, err := Compose(base, repo, "augment")
+	if err != nil || set.Named("extra") == nil || !set.Named("review").IsEnabled() || len(skipped) != 1 {
+		t.Errorf("augment: extra %v, review on %v, skipped %v, %v", set.Named("extra"), set.Named("review").IsEnabled(), skipped, err)
+	}
+	set, _, err = Compose(base, repo, "replace")
+	if err != nil || set.Named("extra") == nil || set.Named("review").IsEnabled() {
+		t.Errorf("replace: %v", err)
+	}
+	if _, _, err := Compose(base, repo, "sometimes"); err == nil {
+		t.Error("an unknown mode was taken")
+	}
+}

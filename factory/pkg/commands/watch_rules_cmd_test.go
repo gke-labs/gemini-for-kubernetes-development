@@ -91,12 +91,12 @@ func TestWatchRulesUnknownOutput(t *testing.T) {
 	}
 }
 
-// --dir lays a checkout's .agents/rules/ over factory's: the repository
+// --dir lays a checkout's .agents/watch/ over factory's: the repository
 // turns review off and inactive on with a name and enabled each, and the
 // table says whose each rule and enabled is.
 func TestWatchRulesDirLaysTheRepositorysRulesOver(t *testing.T) {
 	checkout := t.TempDir()
-	dir := filepath.Join(checkout, ".agents", "rules")
+	dir := filepath.Join(checkout, ".agents", "watch")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -132,7 +132,7 @@ func TestWatchRulesDirLaysTheRepositorysRulesOver(t *testing.T) {
 
 	// A checkout with no rules of its own lists factory's.
 	if out := runWatchRules(t, "--dir", t.TempDir()); strings.Contains(out, "(repo)") {
-		t.Errorf("a checkout without .agents/rules changed a rule:\n%s", out)
+		t.Errorf("a checkout without .agents/watch changed a rule:\n%s", out)
 	}
 }
 

@@ -12,8 +12,7 @@ import (
 const (
 	// SourceFactory is factory's prebaked rules (Builtin).
 	SourceFactory = "factory"
-	// SourceRepo is a repository's rules, .agents/rules/<name>.yaml on its
-	// default branch.
+	// SourceRepo is a repository's rules, .agents/watch/<name>.yaml.
 	SourceRepo = "repo"
 )
 
@@ -29,34 +28,91 @@ func (r *Rule) IsToggle() bool {
 }
 
 // Load reads a directory of rule files, one per rule, each named after its
-// rule (<name>.yaml), as a repository's .agents/rules/ holds them. The
-// rules are not validated: Overlay does, once they are laid over the rules
-// they replace or toggle.
+// rule (<name>.yaml), as a repository's .agents/watch/ holds them. The
+// rules are not validated: Overlay and Augment do, once they are laid over
+// the rules they replace or toggle.
 func Load(fsys fs.FS) ([]*Rule, error) {
 	entries, err := fs.ReadDir(fsys, ".")
 	if err != nil {
 		return nil, err
 	}
-	var out []*Rule
+	files := map[string][]byte{}
 	for _, e := range entries {
-		name, ok := strings.CutSuffix(e.Name(), ".yaml")
-		if !ok || e.IsDir() {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".yaml") {
 			continue
 		}
-		data, err := fs.ReadFile(fsys, e.Name())
-		if err != nil {
+		if files[e.Name()], err = fs.ReadFile(fsys, e.Name()); err != nil {
 			return nil, err
 		}
-		r, err := Parse(data)
+	}
+	return LoadFiles(files)
+}
+
+// LoadFiles is Load on files already read, by file name; a name that is
+// not <rule>.yaml is left out. In file name order.
+func LoadFiles(files map[string][]byte) ([]*Rule, error) {
+	names := make([]string, 0, len(files))
+	for file := range files {
+		names = append(names, file)
+	}
+	sort.Strings(names)
+	var out []*Rule
+	for _, file := range names {
+		name, ok := strings.CutSuffix(file, ".yaml")
+		if !ok {
+			continue
+		}
+		r, err := Parse(files[file])
 		if err != nil {
-			return nil, fmt.Errorf("%s: %w", e.Name(), err)
+			return nil, fmt.Errorf("%s: %w", file, err)
 		}
 		if r.Name != name {
-			return nil, fmt.Errorf("%s: the rule is named %s; a rule's file is named after it", e.Name(), r.Name)
+			return nil, fmt.Errorf("%s: the rule is named %s; a rule's file is named after it", file, r.Name)
 		}
 		out = append(out, r)
 	}
 	return out, nil
+}
+
+// Compose lays a repository's rules over base as mode says, the
+// repository recipe mode (spec.repoRecipe.mode) the watch also reads its
+// rules by: off (or empty) is base alone; augment adds the repository's
+// rules of new names only (Augment); replace lays them over base by name
+// (Overlay). skipped names the repository's rules augment left out, and
+// why.
+func Compose(base Set, repo []*Rule, mode string) (set Set, skipped []string, err error) {
+	switch mode {
+	case "", "off":
+		return base, nil, nil
+	case "augment":
+		return Augment(base, repo)
+	case "replace":
+		set, err := Overlay(base, repo)
+		return set, nil, err
+	default:
+		return nil, nil, fmt.Errorf("repository rule mode %q is not one of: off, augment, replace", mode)
+	}
+}
+
+// Augment adds a repository's rules of names base does not have: a rule of
+// one of base's names, or a toggle, is left out (skipped, with why) - in
+// augment mode the repository adds rules of its own and changes none of
+// factory's. The result is validated, in name order.
+func Augment(base Set, repo []*Rule) (Set, []string, error) {
+	var add []*Rule
+	var skipped []string
+	for _, r := range repo {
+		switch {
+		case base.Named(r.Name) != nil:
+			skipped = append(skipped, fmt.Sprintf("%s: factory has a rule of that name, which only replace mode changes", r.Name))
+		case r.IsToggle():
+			skipped = append(skipped, fmt.Sprintf("%s: turns on or off a rule factory does not have", r.Name))
+		default:
+			add = append(add, r)
+		}
+	}
+	set, err := Overlay(base, add)
+	return set, skipped, err
 }
 
 // Overlay lays a repository's rules over base (factory's): a toggle turns
