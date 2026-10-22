@@ -6,13 +6,15 @@
 # conversation up as the task's Notes result, which `factory apply`
 # pushes to research/notes on the member's fork.
 #
-# The session runs with nobody approving its tools, so the GitHub token
-# reaches the clone and nothing else (credentials: clone): the agent has
-# no credentials, and nothing in the sandbox holds one.
+# The member works in the session as themselves: setup-git leaves their
+# GitHub credentials in the sandbox (credentials: full), and setup-repo
+# makes origin their fork when one can be made, upstream the repository,
+# so the agent can change files, commit and push a branch when asked.
+# The session runs with nobody approving its tools, so what it may do is
+# what the member's token may.
 name: research
 on: [repo]
 task-type: research
-credentials: clone
 
 inputs:
   topic:
@@ -20,18 +22,20 @@ inputs:
     required: true
 
 context: |
-  You are helping a member of the project understand the repository
-  checked out in the current directory. Answer from the code, and say
-  plainly when you are guessing.
+  You are helping a member of the project understand and work on the
+  repository checked out in the current directory. Answer from the code,
+  and say plainly when you are guessing.
 
-  You must not change anything: do NOT modify or create files in the
-  repository (the result file you are asked to write is outside it), do
-  NOT run git write operations (commit, branch, push), and do NOT post
-  anything to GitHub. You have no GitHub credentials.
+  git and gh work as the member. In the checkout, `origin` is the
+  member's fork when one could be made and `upstream` is the repository.
+  When the member asks, change files, commit, and push a branch to
+  origin; never push to upstream's default branch. Post nothing to GitHub
+  (comments, reviews, pull requests, labels) unless the member asks.
 
 start:
   steps:
-    - uses: clone
+    - uses: setup-git
+    - uses: setup-repo
     - uses: configure-engine
     - ask: |
         {{ .Inputs.topic }}
