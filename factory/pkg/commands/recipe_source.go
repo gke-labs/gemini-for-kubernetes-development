@@ -6,12 +6,14 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
 	"regexp"
 	"sort"
 	"strings"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/recipe"
 	githubv39 "github.com/google/go-github/v39/github"
+	"k8s.io/klog/v2"
 )
 
 // repoRecipesDir is where a repository keeps recipes of its own
@@ -31,9 +33,17 @@ const repoRecipesDir = ".agents/recipes"
 //     under names of their own, read at the default branch.
 //   - EnvRepoRecipeCommit: the commit .agents/recipes is read at, a SHA or
 //     latest (the default branch's head, also when unset).
+//   - EnvRepoRecipeDir: a local clone of the repository (the overseer's
+//     /workspaces/<repo>), whose git objects the recipes are read from
+//     instead of GitHub's API: latest is its upstream/HEAD (else
+//     origin/HEAD), as the overseer last fetched it (run.sh, every watch
+//     cycle); a SHA is that commit. Never the working tree, and nothing is
+//     written to the clone: a commit it lacks, or a clone that cannot
+//     answer, leaves the read to the API.
 const (
 	EnvRepoRecipeMode   = "FACTORY_REPO_RECIPE_MODE"
 	EnvRepoRecipeCommit = "FACTORY_REPO_RECIPE_COMMIT"
+	EnvRepoRecipeDir    = "FACTORY_REPO_RECIPE_DIR"
 )
 
 func repoRecipeMode() string {
@@ -57,8 +67,73 @@ type repoFile func(ctx context.Context, path string) ([]byte, error)
 
 // githubRepoFile reads owner/repo's files through gh, at the default
 // branch: what has been reviewed and merged, never a pull request's head;
-// at EnvRepoRecipeCommit's commit when that names one.
+// at EnvRepoRecipeCommit's commit when that names one. With
+// EnvRepoRecipeDir set, from that clone's git objects first
+// (localRepoFile).
 func githubRepoFile(gh *githubv39.Client, owner, repo string) repoFile {
+	api := githubAPIRepoFile(gh, owner, repo)
+	if dir := strings.TrimSpace(os.Getenv(EnvRepoRecipeDir)); dir != "" {
+		return localRepoFile(dir, repoRecipeCommit(), api)
+	}
+	return api
+}
+
+// localRepoFile reads files from the git objects of the clone in dir, at
+// commit (a SHA, or latest: the clone's upstream/HEAD, else origin/HEAD),
+// never its working tree, which is the overseer's state branch with the
+// queue's changes. A file the commit lacks is os.ErrNotExist; a clone that
+// cannot answer (it lacks the commit, or is no clone) leaves the read to
+// api. It only reads: keeping the clone fresh is the overseer's.
+func localRepoFile(dir, commit string, api repoFile) repoFile {
+	var rev string
+	resolved := false
+	return func(ctx context.Context, path string) ([]byte, error) {
+		if !resolved {
+			rev, resolved = localRev(ctx, dir, commit), true
+		}
+		if rev == "" {
+			return api(ctx, path)
+		}
+		var stderr strings.Builder
+		cmd := exec.CommandContext(ctx, "git", "-C", dir, "show", rev+":"+path)
+		cmd.Stderr = &stderr
+		out, err := cmd.Output()
+		switch {
+		case err == nil:
+			return out, nil
+		case strings.Contains(stderr.String(), "does not exist in") || strings.Contains(stderr.String(), "exists on disk, but not in"):
+			return nil, os.ErrNotExist
+		}
+		klog.Warningf("reading %s from the clone in %s at %s: %v: %s; reading it from GitHub", path, dir, rev, err, strings.TrimSpace(stderr.String()))
+		return api(ctx, path)
+	}
+}
+
+// localRev is the commit of the clone in dir that commit names, "" when
+// the clone has none: latest is upstream/HEAD, else origin/HEAD; a SHA,
+// when the clone has it.
+func localRev(ctx context.Context, dir, commit string) string {
+	resolve := func(ref string) string {
+		out, err := exec.CommandContext(ctx, "git", "-C", dir, "rev-parse", "--verify", "--quiet", ref+"^{commit}").Output()
+		if err != nil {
+			return ""
+		}
+		return strings.TrimSpace(string(out))
+	}
+	if commit == "latest" {
+		for _, ref := range []string{"upstream/HEAD", "origin/HEAD"} {
+			if sha := resolve(ref); sha != "" {
+				return sha
+			}
+		}
+		return ""
+	}
+	return resolve(commit)
+}
+
+// githubAPIRepoFile reads owner/repo's files through GitHub's API, at the
+// default branch, or at EnvRepoRecipeCommit's commit when it names one.
+func githubAPIRepoFile(gh *githubv39.Client, owner, repo string) repoFile {
 	var opts *githubv39.RepositoryContentGetOptions
 	if c := repoRecipeCommit(); c != "latest" {
 		opts = &githubv39.RepositoryContentGetOptions{Ref: c}
