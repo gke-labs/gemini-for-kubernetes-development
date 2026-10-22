@@ -1,0 +1,69 @@
+# factory recipe summarize --url <issue> [--length …] [--apply]: what an
+# issue is about and where it stands, for whoever comes to it next. The
+# task's result is a Summary task output, which `factory apply` (or
+# --apply) posts on the issue.
+#
+# It is the board's proof that a recipe needs no board code: the rows
+# offer it, run it, open its session and apply it from what `factory
+# recipe list` says of it. Asked to in its session, the agent rewrites the
+# summary, and the task's result follows.
+name: summarize
+
+inputs:
+  length:
+    description: How long the summary should be
+    default: a short paragraph and a few bullet points
+
+context: |
+  You are summarising a GitHub issue for a repository maintainer who has
+  not read it.
+
+  You must not change anything: do NOT modify or create files (but the
+  result file you are asked to write), do NOT run git write operations
+  (commit, branch, push), and do NOT post anything to GitHub (no comments,
+  labels, or assignments).
+
+  The repository is already cloned in the current directory.
+
+on: [issue]
+
+start:
+  steps:
+    - uses: setup-git
+    - uses: setup-repo
+    - run: sleep 5 # lib.sh's HACK: avoid git lock issues
+    - uses: checkout-default-branch
+    - uses: configure-engine
+
+    - ask: |
+        Read this issue and its comments: `gh issue view {{ .Inputs.issue_number }} --comments`.
+        Where it references other issues or PRs, skim those too.
+
+        <issue_url>{{ .Inputs.issue_url }}</issue_url>
+        <issue_title>{{ .Inputs.issue_title }}</issue_title>
+
+        Then summarise it in {{ .Inputs.length }}: what is asked, what has
+        been said or decided so far, and what is still open. Write the
+        summary to the file {{ output "summary-output.md" }}, as markdown with
+        no title heading.
+
+        Write the whole file with your file tool (if it refuses the path, with
+        the shell), replacing anything in it. Whenever later in this
+        conversation you are asked to change the summary or to save it, write
+        that file again, whole, as markdown. Then say in a line or two that it
+        is written.
+      expects: summary-output.md
+
+outputs:
+  - summary-output.md
+
+task-output:
+  kind: Summary
+  from: summary-output.md
+  actions:
+    - verb: edit
+      field: spec.markdown
+      format: markdown
+    - verb: comment
+      label: Post summary
+    - verb: reject

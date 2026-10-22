@@ -1,0 +1,120 @@
+# factory recipe fanout --url <issue> [--apply]: a fan-out spec for an
+# issue that describes one task for many items (see
+# factory/design/fanout.md). The task's result is a FanOut task output:
+# the spec in the standard markdown form. Applying it (post-spec) labels
+# the issue a fan-out, stopped, and posts the spec as the bot's comment;
+# maintainers edit that comment, then remove the stop label to start it.
+#
+# The agent only reads and writes text: the watch daemon creates and
+# labels the children. Changes to the spec are made in the
+# comment.
+name: fanout
+label: Fan out
+on: [issue]
+# Applies only to an issue marked a fan-out parent, as the watch daemon
+# marks one: overseer/fanout or <trigger>/fanout.
+applicable-when:
+  label: "{{ .Trigger }}/fanout"
+
+context: |
+  You are writing a fan-out spec for a GitHub issue: a description of one
+  task, repeated for each of many items, that a controller turns into a
+  child issue per item.
+
+  You must not change anything: do NOT modify or create files (but the
+  result file you are asked to write), do NOT run git write operations
+  (commit, branch, push), and do NOT post anything to GitHub (no comments,
+  labels, issues, or assignments).
+
+  The repository is already cloned in the current directory.
+
+start:
+  steps:
+    - uses: setup-git
+    - uses: setup-repo
+    - run: sleep 5 # lib.sh's HACK: avoid git lock issues
+    - uses: checkout-default-branch
+    - uses: configure-engine
+
+    - ask: |
+        Read this issue. Do not write the spec yet.
+
+        <issue_url>{{ .Inputs.issue_url }}</issue_url>
+        <issue_number>{{ .Inputs.issue_number }}</issue_number>
+        <issue_title>{{ .Inputs.issue_title }}</issue_title>
+        <issue_body>
+        {{ .Inputs.issue_body }}
+        </issue_body>
+
+        1. Read the issue and its comments: `gh issue view {{ .Inputs.issue_number }} --comments`.
+        2. Find, in its text, three things:
+           - the task: what has to be done for ONE item;
+           - the items: the list of things the task is done for, usually a
+             checklist;
+           - a final step, if any: something to do once every item is done.
+        3. Skim the files the issue names, so the task you write is right
+           for one item.
+
+        Summarise in a few lines: the task, how many items, and the final step.
+
+    - ask: |
+        Now write the spec to the file {{ output "fanout-output.md" }}, as
+        markdown, in exactly these sections, in this order, with nothing else
+        in the file.
+
+        ## Fan-out
+        A YAML block, written out in full so maintainers see the settings:
+        ```yaml
+        title: "<child issue title, with the names (below) where the item's name goes>"
+        labels: []      # only labels the issue asks children to carry; never a
+                        # label ending in /fanout or /stop, nor the trigger label
+        group: 1        # items per child; {start: 1, max: 4} groups more as children merge
+        create: lazy    # a child is created when it is labelled (the only value)
+        window: {start: 2, max: 8}
+        checkpoints: [2]
+        ```
+
+        ## Task
+        What to do for the child's items, rewritten from the issue's own steps.
+        A child may get more than one item when maintainers raise `group`, so
+        write it for "each item listed under Items below", not for exactly
+        one. It is a Go template: wherever the items' names go, write exactly
+
+            {{ `{{range $i, $it := .items}}{{if $i}}, {{end}}{{$it.name}}{{end}}` }}
+
+        (the names, comma-separated; one name when the child has one item),
+        and {{ "{{.parent.title}}" }} for this issue's title. Use the same
+        names in the title. Each item's whole line, file paths included, is
+        added to the child under "Items", so refer to "the files listed under
+        Items below" instead of repeating them. Do not write `{{ "{{" }}`
+        anywhere else: it starts a template action.
+
+        ## Items
+        The items as a checklist, one per line, copied exactly as the issue
+        writes them, file paths included:
+        - [ ] **ItemName** (details, files)
+        The name is the bold text. Keep items the issue marks done as `- [x]`.
+
+        ## Finally
+        The final step, if the issue has one. Leave the section out if not.
+
+        Write the whole file with your file tool (if it refuses the path, with
+        the shell), replacing anything in it. Whenever later in this
+        conversation you are asked to change the spec or to save it, write
+        that file again, whole, in these sections. Then say in a line or two
+        that it is written.
+      expects: fanout-output.md
+
+outputs:
+  - fanout-output.md
+
+task-output:
+  kind: FanOut
+  from: fanout-output.md
+  actions:
+    - verb: edit
+      field: spec.markdown
+      format: markdown
+    - verb: post-spec
+      label: Post spec
+    - verb: reject

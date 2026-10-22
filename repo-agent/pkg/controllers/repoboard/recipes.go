@@ -59,14 +59,16 @@ type boardCatalog struct {
 
 // recipeCatalog is the recipes the controller's factory runs for work's
 // board: the built-ins and its repository's own (.agents/recipes at the
-// default branch, read with the board owner's token). Every catalogPeek
+// default branch, read with the board owner's token), as the board's
+// spec.repoRecipe.mode has them - cached per repository and mode. Every catalogPeek
 // it peeks at the folder's tree SHA, and reads the catalog again only
 // when that changed (or the peek failed). A failed read keeps the last
 // catalog, else falls back to the built-ins alone; nil when even those
 // cannot be read, retried next reconcile.
 func (r *Reconciler) recipeCatalog(ctx context.Context, work *workState) []boardv1alpha1.BoardRecipe {
 	logger := log.FromContext(ctx)
-	key := work.owner + "/" + work.repo
+	mode := work.board.Spec.RepoRecipe.Mode
+	key := catalogKey(work)
 	r.catalogMu.Lock()
 	defer r.catalogMu.Unlock()
 	last, ok := r.catalogs[key]
@@ -93,13 +95,13 @@ func (r *Reconciler) recipeCatalog(ctx context.Context, work *workState) []board
 			tree = trees[recipesTree]
 		}
 	}
-	recipes, skipped, err := r.Factory.Recipes(ctx, repoURL, token)
+	recipes, skipped, err := r.Factory.Recipes(ctx, repoURL, mode, token)
 	if err != nil && repoURL != "" {
 		logger.Error(err, "unable to read the repository's recipes", "repo", key)
 		if ok {
 			return last.recipes
 		}
-		recipes, skipped, err = r.Factory.Recipes(ctx, "", "")
+		recipes, skipped, err = r.Factory.Recipes(ctx, "", "", "")
 	}
 	if err != nil {
 		logger.Error(err, "unable to read the recipe catalog")
@@ -231,7 +233,7 @@ func (r *Reconciler) ensureRecipe(ctx context.Context, work *workState, req *boa
 	r.stampUnpaused(ctx, sb)
 	r.stampEngine(ctx, sb, boardEngine(work.board))
 	opts := r.recipeOptions(work, rec.Name, spec.Member, name, itemURL(work, spec.Item, spec.Number), token, recipeRunName(req))
-	opts.RepoRecipe = !rec.IsBuiltin()
+	opts.RepoRecipe = !rec.HasCommand()
 	opts.Inputs = spec.Inputs
 	opts.NewSession = spec.NewSession && rec.Session != ""
 	// What the recipe declares the board applies when the run ends (care's
@@ -364,5 +366,11 @@ func (r *Reconciler) settleRecipe(work *workState, req *boardv1alpha1.Request, n
 func (r *Reconciler) catalogCopy(work *workState) []boardv1alpha1.BoardRecipe {
 	r.catalogMu.Lock()
 	defer r.catalogMu.Unlock()
-	return r.catalogs[work.owner+"/"+work.repo].recipes
+	return r.catalogs[catalogKey(work)].recipes
+}
+
+// catalogKey is where work's board's catalog is cached: per repository and
+// repository recipe mode, which boards on one repository may differ on.
+func catalogKey(work *workState) string {
+	return work.owner + "/" + work.repo + "#" + work.board.Spec.RepoRecipe.Mode
 }

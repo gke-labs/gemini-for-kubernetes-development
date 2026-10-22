@@ -482,6 +482,7 @@ func (r *Reconciler) recipeOptions(work *workState, recipe, member, sandbox, url
 		Engine:            boardEngine(work.board),
 		Disclose:          work.board.Spec.Policy.Disclose,
 		RunName:           runName,
+		RepoRecipes:       work.board.Spec.RepoRecipe.Mode,
 	}
 }
 
@@ -610,6 +611,7 @@ func (r *Reconciler) ensureRunbookClaims(ctx context.Context, work *workState, c
 			Runbook:     claim.runbook,
 			Target:      claim.target,
 			RepoURL:     fmt.Sprintf("https://github.com/%s/%s", work.owner, work.repo),
+			RepoRecipes: work.board.Spec.RepoRecipe.Mode,
 			GithubToken: token,
 			Engine:      boardEngine(work.board),
 		})

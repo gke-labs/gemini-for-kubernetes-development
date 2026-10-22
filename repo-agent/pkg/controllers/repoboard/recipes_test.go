@@ -442,9 +442,9 @@ func TestRepositoryRecipesAreReadAgainOnlyWhenTheyChange(t *testing.T) {
 	stale := func() {
 		r.catalogMu.Lock()
 		defer r.catalogMu.Unlock()
-		c := r.catalogs["test/repo"]
+		c := r.catalogs["test/repo#"]
 		c.at = time.Now().Add(-catalogPeek - time.Second)
-		r.catalogs["test/repo"] = c
+		r.catalogs["test/repo#"] = c
 	}
 
 	// Within catalogPeek: neither a peek nor a read.

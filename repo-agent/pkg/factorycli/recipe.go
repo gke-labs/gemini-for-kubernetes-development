@@ -20,6 +20,9 @@ import (
 type RecipeOptions struct {
 	// Recipe is the recipe's name (factory recipe list).
 	Recipe string
+	// RepoRecipes is the board's repository recipe mode (factory
+	// --repo-recipes): off, augment or replace; empty is factory's default.
+	RepoRecipes string
 	// RepoRecipe is a recipe of the target repository's
 	// (.agents/recipes/<name>.yaml): factory has no command of its name,
 	// so it runs as factory recipe run --recipe <name>.
@@ -117,7 +120,7 @@ func (r *Runner) StartRecipe(key string, opts RecipeOptions) bool {
 		if sandbox == "" {
 			sandbox = opts.URL
 		}
-		pre = r.harvest(sandbox, opts.Namespace, opts.RunName, opts.Apply, opts.GithubToken)
+		pre = r.harvest(sandbox, opts.Namespace, opts.RunName, opts.Apply, opts.RepoRecipes, opts.GithubToken)
 	}
 	// No probe: the run name is the run.
 	return r.startWithPreflight(key, recipeArgs(opts, timeout), opts.GithubToken, timeout, pre)
@@ -175,7 +178,17 @@ func recipeArgs(opts RecipeOptions, timeout time.Duration) []string {
 	if opts.Engine != "" {
 		args = append(args, "--engine", opts.Engine)
 	}
+	args = append(args, repoRecipesArgs(opts.RepoRecipes)...)
 	return append(args, "--disclose="+strconv.FormatBool(opts.Disclose))
+}
+
+// repoRecipesArgs is factory's --repo-recipes for a board's mode, none
+// for factory's default.
+func repoRecipesArgs(mode string) []string {
+	if mode == "" {
+		return nil
+	}
+	return []string{"--repo-recipes=" + mode}
 }
 
 // taskOutputBanner opens the task output in a run's Output, and
@@ -192,7 +205,7 @@ const bannerCloser = "================================================"
 // factory posted before), so running it again after a restart repeats
 // nothing. The namespace rides along because a Change names no sandbox:
 // open-pr finds the issue's in it, to alias to the PR.
-func (r *Runner) harvest(sandbox, namespace, runName, action, githubToken string) *preflight {
+func (r *Runner) harvest(sandbox, namespace, runName, action, repoRecipes, githubToken string) *preflight {
 	return &preflight{
 		harvest: func(ctx context.Context, out string, err error) (string, error) {
 			if err != nil {
@@ -206,7 +219,7 @@ func (r *Runner) harvest(sandbox, namespace, runName, action, githubToken string
 			if action == "" {
 				return section, nil
 			}
-			applied, err := r.applyDocIn(ctx, doc, action, namespace, githubToken)
+			applied, err := r.applyDocIn(ctx, doc, action, namespace, repoRecipes, githubToken)
 			if err != nil {
 				return section + applied, fmt.Errorf("applying %s: %w", action, err)
 			}
@@ -252,13 +265,15 @@ func HarvestedOutput(kind, output string) string {
 // Recipes is the catalog of recipes this factory binary runs (factory
 // recipe list -o json), in the board's order (OrderRecipes): the
 // built-in ones, and with repoURL that repository's own, read at its
-// default branch with token. A repository's file that is not a recipe is
+// default branch with token, as the board's repository recipe mode has it
+// (repoRecipes). A repository's file that is not a recipe is
 // left out, and named in skipped with why.
-func (r *Runner) Recipes(ctx context.Context, repoURL, token string) (recipes []boardv1alpha1.BoardRecipe, skipped []string, err error) {
+func (r *Runner) Recipes(ctx context.Context, repoURL, repoRecipes, token string) (recipes []boardv1alpha1.BoardRecipe, skipped []string, err error) {
 	args := []string{"recipe", "list", "-o", "json"}
 	if repoURL != "" {
 		args = append(args, "--url", repoURL)
 	}
+	args = append(args, repoRecipesArgs(repoRecipes)...)
 	out, err := r.execStdout(ctx, args, token)
 	if err != nil {
 		return nil, nil, fmt.Errorf("factory recipe list: %w: %s", err, tail(out, 2000))

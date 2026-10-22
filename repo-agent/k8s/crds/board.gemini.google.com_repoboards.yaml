@@ -126,6 +126,15 @@ spec:
                     default: true
                     type: boolean
                 type: object
+              repoRecipe:
+                properties:
+                  mode:
+                    enum:
+                    - "off"
+                    - augment
+                    - replace
+                    type: string
+                type: object
               repoURL:
                 type: string
                 x-kubernetes-validations:
@@ -278,6 +287,8 @@ spec:
                       type: array
                     onFinish:
                       type: string
+                    replaces:
+                      type: boolean
                     session:
                       type: string
                     source:

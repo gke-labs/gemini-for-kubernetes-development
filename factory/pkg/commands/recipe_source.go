@@ -46,8 +46,26 @@ const (
 	EnvRepoRecipeDir    = "FACTORY_REPO_RECIPE_DIR"
 )
 
+// repoRecipesFlag is --repo-recipes: EnvRepoRecipeMode for one command, as
+// a board passes its own (RepoBoard spec.repoRecipe.mode).
+var repoRecipesFlag string
+
+// repoRecipeMode is --repo-recipes, else EnvRepoRecipeMode.
 func repoRecipeMode() string {
+	if repoRecipesFlag != "" {
+		return repoRecipesFlag
+	}
 	return strings.TrimSpace(os.Getenv(EnvRepoRecipeMode))
+}
+
+// checkRepoRecipeMode refuses a mode that is none of the three.
+func checkRepoRecipeMode() error {
+	switch m := repoRecipeMode(); m {
+	case "", "off", "augment", "replace":
+		return nil
+	default:
+		return fmt.Errorf("repository recipe mode %q is not one of: off, augment, replace", m)
+	}
 }
 
 // repoRecipeCommit is EnvRepoRecipeCommit's value: "latest" when unset.
@@ -161,6 +179,9 @@ func githubAPIRepoFile(gh *githubv39.Client, owner, repo string) repoFile {
 // In replace mode the repository's recipe of that name comes first,
 // whatever the name (overrideRecipe).
 func resolveRecipe(ctx context.Context, arg string, readRepo repoFile) ([]byte, *recipe.Recipe, error) {
+	if err := checkRepoRecipeMode(); err != nil {
+		return nil, nil, err
+	}
 	if strings.ContainsRune(arg, '/') || strings.HasSuffix(arg, ".yaml") || strings.HasSuffix(arg, ".yml") {
 		data, err := os.ReadFile(arg)
 		if err != nil {
@@ -215,14 +236,24 @@ func overrideRecipe(ctx context.Context, name string, readRepo repoFile) (data [
 	if err != nil {
 		return nil, nil, false, err
 	}
-	if rec, err = recipe.Parse(data); err != nil {
+	if rec, err = parseReplacingRecipe(name, data); err != nil {
 		return nil, nil, false, fmt.Errorf("%s at %s: %w", path, repoRecipeCommit(), err)
-	}
-	if rec.Name != name {
-		return nil, nil, false, fmt.Errorf("%s at %s: recipe is named %s, not %s as its file is", path, repoRecipeCommit(), rec.Name, name)
 	}
 	fmt.Fprintf(os.Stderr, "Using the repository's recipe %s (%s at %s)\n", name, path, repoRecipeCommit())
 	return data, rec, true, nil
+}
+
+// parseReplacingRecipe parses a repository's recipe file name.yaml in
+// replace mode, held only to being named as its file is.
+func parseReplacingRecipe(name string, data []byte) (*recipe.Recipe, error) {
+	rec, err := recipe.Parse(data)
+	if err != nil {
+		return nil, err
+	}
+	if rec.Name != name {
+		return nil, fmt.Errorf("recipe is named %s, not %s as its file is", rec.Name, name)
+	}
+	return rec, nil
 }
 
 // parseRepoRecipe parses a repository's recipe file name.yaml. It must
@@ -276,7 +307,9 @@ type repoRecipe struct {
 }
 
 // listRepoRecipes reads every recipe file in owner/repo's .agents/recipes
-// at its default branch, sorted by name. A repository with none has none.
+// at its default branch, sorted by name, each parsed as the mode has it
+// (parseReplacingRecipe in replace mode, else parseRepoRecipe). A
+// repository with none has none.
 func listRepoRecipes(ctx context.Context, gh *githubv39.Client, owner, repo string) ([]repoRecipe, error) {
 	_, dir, resp, err := gh.Repositories.GetContents(ctx, owner, repo, repoRecipesDir, nil)
 	if resp != nil && resp.StatusCode == http.StatusNotFound {
@@ -294,7 +327,11 @@ func listRepoRecipes(ctx context.Context, gh *githubv39.Client, owner, repo stri
 		}
 		r := repoRecipe{name: name, path: e.GetPath()}
 		if r.data, r.err = read(ctx, r.path); r.err == nil {
-			r.rec, r.err = parseRepoRecipe(name, r.data)
+			if repoRecipeMode() == "replace" {
+				r.rec, r.err = parseReplacingRecipe(name, r.data)
+			} else {
+				r.rec, r.err = parseRepoRecipe(name, r.data)
+			}
 		}
 		out = append(out, r)
 	}

@@ -1,0 +1,169 @@
+# factory agent create --url <repo> --agent <definition>: a chore, a
+# custom agent (.agents/<name>.md) that is not a workflow, runs as this
+# recipe on the repository, in the agent's own sandbox
+# (agent-<repo>-<slug>). `factory agent create` reads the definition and
+# passes its prompt, name and skipPR. A workflow
+# (mode: workflow) runs as the workflow recipe instead.
+#
+# The agent works on agent/<slug>: from the latest default branch, or, if
+# that branch's PR on the member's fork is still open, from it, rebased.
+# It commits; the push step pushes the branch to the fork, and the
+# Change's open-pr opens the PR, or finds the one open. A run that changes
+# nothing leaves no Change (the task output is optional).
+#
+# With skip_pr true the agent works on the default branch and nothing is
+# committed or pushed: a chore that only comments, labels or opens issues.
+#
+# A chore has no precondition: a definition's preconditionScript is a
+# workflow's (the workflow recipe), and a chore's is ignored.
+#
+# The agent keeps the token gh holds (credentials: full): chores comment,
+# label and open issues themselves.
+name: agent
+label: Agent
+on: [repo]
+sandbox:
+  kind: agent
+task-type: agent
+
+inputs:
+  prompt:
+    description: What the agent is asked, the definition's prompt
+    required: true
+  agent_name:
+    description: The agent's name, from its definition
+    required: true
+  agent_file:
+    description: The definition's path in the repository
+  skip_pr:
+    description: Whether the agent's changes are kept out of a PR, true or false
+    default: "false"
+  labels:
+    description: Labels for the PR, comma-separated
+
+context: |
+  You are an automated agent working on a GitHub repository. The
+  repository is checked out in the current directory. The git remote
+  "origin" is the member's fork, "upstream" the repository. Do not run
+  `git push`: factory pushes what has to be pushed. Do not run `git config
+  --global`: in this environment it overwrites /dev/null and breaks git
+  for the rest of the run.
+
+  Rules you must always follow:
+  1. Respect stop labels: NEVER remove, delete or modify `overseer/stop` (or
+     any `*/stop`) labels on any pull request or issue. A stop label means
+     automated processing was paused; leave stopped items untouched.
+  2. NEVER add, remove or change assignees on pull requests or issues.
+
+start:
+  steps:
+    - uses: setup-git
+    - uses: setup-fork
+    # run: steps run in the checkout, which setup-fork makes (clones)
+    # on a sandbox that has none yet: the input check comes after it.
+    - run: |
+        case "${INPUT_SKIP_PR}" in true|false) ;; *) echo "skip_pr ${INPUT_SKIP_PR} is neither true nor false" >&2; exit 1 ;; esac
+    - run: sleep 5 # lib.sh's HACK: avoid git lock issues
+    - uses: configure-engine
+
+    - uses: checkout-default-branch
+    # The branch the push step pushes, the commit it starts from, and the
+    # head to lease against.
+    - if: '{{ eq .Inputs.skip_pr "false" }}'
+      run: |
+        slug="$(printf '%s' "${INPUT_AGENT_NAME}" | tr '[:upper:]' '[:lower:]' | tr -c '[:alnum:]' '-' | sed 's/^-*//;s/-*$//')"
+        branch="agent/${slug}"
+        base="$(git rev-parse HEAD)"
+        printf '%s\n' "${branch}" > "$TASK_DIR/branch"
+        printf '%s\n' "${base}" > "$TASK_DIR/base"
+        login="$(gh api user --jq .login)"
+        open="$(gh pr list --state open --head "${branch}" --json number,headRepositoryOwner --jq "map(select(.headRepositoryOwner.login == \"${login}\")) | .[0].number // empty")"
+        if git fetch origin "+refs/heads/${branch}:refs/remotes/origin/${branch}" 2>/dev/null; then
+          # Pushed by an earlier run: the push leases against it.
+          git rev-parse "refs/remotes/origin/${branch}" | tr -d '\n' > "$TASK_DIR/lease"
+        fi
+        if [ -n "${open}" ]; then
+          # Its PR (#${open}) is open: the agent goes on from it, kept up
+          # to date with the default branch.
+          git checkout -B "${branch}" "refs/remotes/origin/${branch}"
+          if ! git rebase "${base}"; then
+            echo "Warning: rebasing ${branch} onto the default branch failed; continuing from where it was." >&2
+            git rebase --abort || true
+          fi
+        else
+          # No open PR: a closed one's commits do not come back.
+          git checkout -B "${branch}"
+        fi
+
+    - ask: |
+        {{ .Inputs.prompt }}
+
+        ---
+        {{- if eq .Inputs.skip_pr "false" }}
+        Commit your changes, with clean commits whose messages say what
+        changed and start with "chore: ". Never push: factory pushes your
+        commits and opens or updates the pull request. If nothing needs
+        changing, commit nothing.
+        {{- else }}
+        Do not commit, push or open a pull request: changes to the checkout
+        are not kept.
+        {{- end }}
+        {{- if eq .Inputs.disclose "true" }}
+        What you write may say that an agent wrote it.
+        {{- else }}
+        Do not say anywhere — commit messages, comments or files — that an
+        agent or AI wrote this, and do not add Co-authored-by or similar
+        trailers.
+        {{- end }}
+        When you are done, say briefly what you did.
+
+    # What the agent left uncommitted is committed, rather than lost; then
+    # whether there is anything to push.
+    - id: changed
+      if: '{{ eq .Inputs.skip_pr "false" }}'
+      continue-on-error: true
+      run: |
+        if [ -n "$(git status --porcelain)" ]; then
+          git add -A
+          git commit -m "chore: automatic updates from agent ${INPUT_AGENT_NAME}"
+        fi
+        head="$(git rev-parse HEAD)"
+        if [ "${head}" = "$(cat "$TASK_DIR/base")" ] || [ "${head}" = "$(cat "$TASK_DIR/lease" 2>/dev/null)" ]; then
+          echo "No changes to push."
+          exit 1
+        fi
+    - if: '{{ and (eq .Inputs.skip_pr "false") (eq .Steps.changed.ExitCode 0) }}'
+      run: |
+        # The Change is factory's, never an agent's: the PR is titled
+        # after the agent and lists its commits.
+        python3 - <<'PY'
+        import json, os, subprocess
+        name, path = os.environ["INPUT_AGENT_NAME"], os.environ.get("INPUT_AGENT_FILE", "")
+        log = subprocess.run(["git", "log", "--format=- %s", open(os.path.join(os.environ["TASK_DIR"], "base")).read().strip() + "..HEAD"], capture_output=True, text=True).stdout
+        body = "This Pull Request was generated by the **%s** agent" % name
+        if path:
+            body += " ([%s](https://github.com/%s/%s/blob/HEAD/%s))" % (path, os.environ["INPUT_REPO_OWNER"], os.environ["INPUT_REPO_NAME"], path)
+        body += ".\n\n### Changes\n" + log
+        change = {"title": "chore: " + name, "body": body, "draft": False,
+                  "labels": [l for l in os.environ.get("INPUT_LABELS", "").split(",") if l]}
+        with open(os.path.join(os.environ["TASK_DIR"], "change.yaml"), "w") as f:
+            json.dump({"change": change}, f)  # JSON is YAML
+        PY
+    - if: '{{ and (eq .Inputs.skip_pr "false") (eq .Steps.changed.ExitCode 0) }}'
+      uses: push
+
+outputs:
+  - change.yaml
+
+task-output:
+  kind: Change
+  from: change.yaml
+  optional: true
+  preview: spec.title
+  actions:
+    - verb: edit
+      field: spec
+      format: yaml
+    - verb: open-pr
+      label: Open PR
+    - verb: reject
