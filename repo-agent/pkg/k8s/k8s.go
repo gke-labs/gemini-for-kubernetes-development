@@ -59,6 +59,34 @@ func (m *Manager) DeleteSandbox(ctx context.Context, namespace, name string) err
 	return nil
 }
 
+// ErrSandboxPaused refuses to restart a sandbox scaled to zero: it has no
+// pod to restart; waking it starts one.
+var ErrSandboxPaused = errors.NewBadRequest("the sandbox is paused: wake it instead")
+
+// RestartSandboxPod deletes a sandbox's pod, which the sandbox controller
+// makes again on the same PVC: the daemon starts afresh and resumes its
+// sessions (session/load), ending a turn the engine never ended. It also
+// brings back a pod that was evicted, which the controller leaves in
+// phase Succeeded. Whatever ran in the pod stops; the workspace stays.
+func (m *Manager) RestartSandboxPod(ctx context.Context, namespace, name string) error {
+	sb, err := m.Client.Resource(SandboxGVR).Namespace(namespace).Get(ctx, name, v1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("reading sandbox %s: %w", name, err)
+	}
+	if replicas, found, _ := unstructured.NestedInt64(sb.Object, "spec", "replicas"); found && replicas == 0 {
+		return ErrSandboxPaused
+	}
+	pod := sb.GetAnnotations()["agents.x-k8s.io/pod-name"]
+	if pod == "" {
+		pod = name
+	}
+	err = m.Clientset.CoreV1().Pods(namespace).Delete(ctx, pod, v1.DeleteOptions{})
+	if err != nil && !errors.IsNotFound(err) {
+		return fmt.Errorf("deleting pod %s: %w", pod, err)
+	}
+	return nil
+}
+
 func (m *Manager) ListOverseers(ctx context.Context) (*unstructured.UnstructuredList, error) {
 	return m.Client.Resource(OverseerGVR).List(ctx, v1.ListOptions{})
 }

@@ -1461,6 +1461,28 @@ export function ResearchConversation({
       .finally(() => setWaking(false));
   };
 
+  // Restarting is the sandbox card's restart: its pod is made again on
+  // the same disk and the daemon resumes the conversation. It is what
+  // ends a turn the engine never ended — Stop only asks the engine, and
+  // an engine that ignores it leaves the session "working" for good.
+  // The probe reconnects once acpd answers again, as after a wake.
+  const restart = () => {
+    if (!window.confirm('Restart the agent?\n\nThe sandbox\'s pod starts again: the turn in flight ends, and anything running in the sandbox stops (builds, tests the agent started). The conversation and the checkout stay.')) return;
+    setWaking(true);
+    setError('');
+    fetch(`${apiBase}/sandbox-card/${encodeURIComponent(task.sandbox)}/lifecycle`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'restart' }),
+    })
+      .then(res => {
+        if (!res.ok) return res.text().then(t => setError(`restart failed: ${t || `HTTP ${res.status}`}`));
+        setPhase('starting');
+        setDetail('restarting the agent');
+      })
+      .catch(err => setError(`restart failed: ${err}`))
+      .finally(() => setWaking(false));
+  };
+
   const composerDisabled = phase !== 'live' || busy || sending || taskState.held;
 
   // Why the composer will not send, as a line beside the Send button.
@@ -1632,6 +1654,10 @@ export function ResearchConversation({
           )}
           {phase === 'live' && busy && !taskState.held && (
             <button className="btn btn-sm" onClick={cancel} title="Interrupt the turn in flight">Stop</button>
+          )}
+          {phase === 'live' && busy && !taskState.held && (
+            <button className="btn btn-sm" onClick={restart} disabled={waking}
+              title="Stop not working? Restart the sandbox's pod: the turn ends, the conversation and the checkout stay">Restart</button>
           )}
           {/* A research conversation's notes are what the agent writes
               when asked: this asks, as a turn of the member's. */}

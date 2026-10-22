@@ -321,6 +321,38 @@ describe('ResearchConversation', () => {
         expect(container.textContent).toContain('ready');
     });
 
+    // Stop only asks the engine; one that never ends its turn leaves the
+    // session working for good. Restart is the way out: the sandbox card's
+    // restart, confirmed first, then the session reconnects.
+    test('a live turn offers Restart, which restarts the sandbox once confirmed', async () => {
+        global.fetch = jest.fn(() => reply(200, { sessionId: 's1', repo: 'repo-agent' }));
+        await act(async () => { root.render(<ResearchConversation sessionId="s1" task={taskOf('s1')} />); });
+        await flush();
+        const ws = FakeSocket.instances[0];
+        await act(async () => {
+            ws.deliver({ type: 'open', session: { busy: false, offset: 0 } });
+            ws.deliver({ type: 'event', offset: 30, event: { seq: 1, kind: 'user_prompt', data: { text: 'go' } } });
+        });
+        const restart = [...container.querySelectorAll('button')].find(b => b.textContent === 'Restart');
+        expect(restart).toBeTruthy();
+
+        const confirm = jest.spyOn(window, 'confirm').mockReturnValueOnce(false);
+        global.fetch.mockClear();
+        await act(async () => { restart.click(); });
+        expect(global.fetch).not.toHaveBeenCalled();
+
+        confirm.mockReturnValueOnce(true);
+        global.fetch.mockImplementation(() => reply(200, {}));
+        await act(async () => { restart.click(); });
+        await flush();
+        expect(global.fetch).toHaveBeenCalledWith('/api/sandbox-card/rsch-s1/lifecycle', expect.objectContaining({
+            method: 'POST', body: JSON.stringify({ action: 'restart' }),
+        }));
+        // The session reconnects, as after a wake.
+        expect(container.textContent).toContain('sandbox starting');
+        confirm.mockRestore();
+    });
+
     test('a pending permission is rendered with its options', async () => {
         global.fetch = jest.fn(() => reply(200, { sessionId: 's1', repo: 'repo-agent' }));
         await act(async () => { root.render(<ResearchConversation sessionId="s1" task={taskOf('s1')} />); });

@@ -159,6 +159,18 @@ export default function SandboxCard({ name, namespace, onClose, apiBase = '/api'
             {card && !card.paused && !card.starting && (
               <button className="btn btn-sm" onClick={() => lifecycle('pause')} title="Scale the sandbox to zero (state stays on its disk)">Pause</button>
             )}
+            {/* Restart is the other recovery path, short of Delete: a
+                session stuck "working" (its engine never ended the turn)
+                or a pod that was evicted. Starting covers the evicted
+                pod, which never comes back by itself. */}
+            {card && !card.paused && (
+              <button className="btn btn-sm"
+                title="Restart the sandbox's pod on the same disk: ends a stuck agent turn or brings back an evicted pod. Anything running in it stops; the checkout and conversations stay."
+                onClick={() => {
+                  if (!window.confirm(`Restart sandbox ${name}?\n\nIts pod starts again on the same disk: anything running in it stops (a stuck agent turn, builds, tests). The checkout, drafts and conversations stay.`)) return;
+                  lifecycle('restart');
+                }}>Restart</button>
+            )}
             {/* Delete is the wedge-recovery path, so it must stay
                 available in exactly the states a wedge presents as:
                 paused, starting-forever, or running. */}
