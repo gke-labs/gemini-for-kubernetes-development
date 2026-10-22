@@ -139,7 +139,7 @@ func (r *Reconciler) discoverAuto(ctx context.Context, ghClient *github.Client, 
 		board.Status.AutoRuleErrors = nil
 		return nil
 	}
-	catalog := r.recipeCatalog(ctx)
+	catalog := r.recipeCatalog(ctx, work)
 	if catalog == nil {
 		return nil // the catalog is read again next pass
 	}
@@ -232,7 +232,7 @@ func (r *Reconciler) fileAutoRequests(ctx context.Context, work *workState, want
 		return
 	}
 	logger := log.FromContext(ctx)
-	catalog := r.recipeCatalog(ctx)
+	catalog := r.recipeCatalog(ctx, work)
 	if catalog == nil {
 		return
 	}

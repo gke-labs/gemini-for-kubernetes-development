@@ -38,21 +38,57 @@ import (
 // Every recipe runs this one way, a click's and automation's alike
 // (auto.go files automation's Requests).
 
-// recipeCatalog is the recipes the controller's factory runs, read once
-// per process (the binary does not change under it), and retried on the
-// next reconcile when the read fails.
-func (r *Reconciler) recipeCatalog(ctx context.Context) []boardv1alpha1.BoardRecipe {
+// catalogTTL is how long a board's catalog is kept: the built-ins do not
+// change under the process, a repository's recipes change when its
+// default branch does.
+const catalogTTL = 10 * time.Minute
+
+// boardCatalog is a board repository's catalog, and when it was read.
+type boardCatalog struct {
+	recipes []boardv1alpha1.BoardRecipe
+	at      time.Time
+}
+
+// recipeCatalog is the recipes the controller's factory runs for work's
+// board: the built-ins and its repository's own (.agents/recipes at the
+// default branch, read with the board owner's token), kept catalogTTL.
+// A failed read keeps the last catalog, else falls back to the
+// built-ins alone; nil when even those cannot be read, retried next
+// reconcile.
+func (r *Reconciler) recipeCatalog(ctx context.Context, work *workState) []boardv1alpha1.BoardRecipe {
+	logger := log.FromContext(ctx)
+	key := work.owner + "/" + work.repo
 	r.catalogMu.Lock()
 	defer r.catalogMu.Unlock()
-	if r.catalog != nil {
-		return r.catalog
+	last, ok := r.catalogs[key]
+	if ok && time.Since(last.at) < catalogTTL {
+		return last.recipes
 	}
-	recipes, err := r.Factory.Recipes(ctx)
+	repoURL := fmt.Sprintf("https://github.com/%s/%s", work.owner, work.repo)
+	token, err := r.executorToken(ctx, work.board.Namespace)
 	if err != nil {
-		log.FromContext(ctx).Error(err, "unable to read the recipe catalog")
+		logger.Info("listing the built-in recipes only: the board owner has no GitHub token", "board", work.board.Name, "error", err.Error())
+		repoURL = ""
+	}
+	recipes, skipped, err := r.Factory.Recipes(ctx, repoURL, token)
+	if err != nil && repoURL != "" {
+		logger.Error(err, "unable to read the repository's recipes", "repo", key)
+		if ok {
+			return last.recipes
+		}
+		recipes, skipped, err = r.Factory.Recipes(ctx, "", "")
+	}
+	if err != nil {
+		logger.Error(err, "unable to read the recipe catalog")
 		return nil
 	}
-	r.catalog = recipes
+	for _, s := range skipped {
+		logger.Info("a repository recipe file is not a recipe", "repo", key, "problem", s)
+	}
+	if r.catalogs == nil {
+		r.catalogs = map[string]boardCatalog{}
+	}
+	r.catalogs[key] = boardCatalog{recipes: recipes, at: time.Now()}
 	return recipes
 }
 
@@ -108,7 +144,7 @@ func (r *Reconciler) ensureRecipes(ctx context.Context, work *workState, reqs []
 	if len(reqs) == 0 {
 		return
 	}
-	catalog := r.recipeCatalog(ctx)
+	catalog := r.recipeCatalog(ctx, work)
 	for _, req := range reqs {
 		// One settle fails is not launched.
 		if rec, ok := findRecipe(catalog, req.Spec.Recipe); ok && startsOn(rec, req.Spec.Item) {
@@ -172,6 +208,7 @@ func (r *Reconciler) ensureRecipe(ctx context.Context, work *workState, req *boa
 	r.stampUnpaused(ctx, sb)
 	r.stampEngine(ctx, sb, boardEngine(work.board))
 	opts := r.recipeOptions(work, rec.Name, spec.Member, name, itemURL(work, spec.Item, spec.Number), token, recipeRunName(req))
+	opts.RepoRecipe = !rec.IsBuiltin()
 	opts.Inputs = spec.Inputs
 	opts.NewSession = spec.NewSession && rec.Session != ""
 	// What the recipe declares the board applies when the run ends (care's
@@ -248,7 +285,7 @@ func itemURL(work *workState, item string, number int) string {
 // one run; another is another click.
 func (r *Reconciler) settleRecipe(work *workState, req *boardv1alpha1.Request, now time.Time) requestOutcome {
 	spec := req.Spec
-	catalog := r.catalogCopy()
+	catalog := r.catalogCopy(work)
 	if catalog == nil {
 		// Not read yet: nothing can be said about the recipe.
 		return pendingOutcome(req, now)
@@ -300,9 +337,9 @@ func (r *Reconciler) settleRecipe(work *workState, req *boardv1alpha1.Request, n
 	return requestOutcome{phase: boardv1alpha1.RequestRunning, reason: "Storing", sandbox: name}
 }
 
-// catalogCopy is the catalog as read, without reading it.
-func (r *Reconciler) catalogCopy() []boardv1alpha1.BoardRecipe {
+// catalogCopy is work's board's catalog as last read, without reading it.
+func (r *Reconciler) catalogCopy(work *workState) []boardv1alpha1.BoardRecipe {
 	r.catalogMu.Lock()
 	defer r.catalogMu.Unlock()
-	return r.catalog
+	return r.catalogs[work.owner+"/"+work.repo].recipes
 }

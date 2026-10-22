@@ -87,9 +87,10 @@ type Reconciler struct {
 	// memberGithubClient (token from the namespace's github-pat secret).
 	NewGithubClient func(ctx context.Context, r *Reconciler, namespace string) (*github.Client, string, error)
 
-	// catalog is the recipes factory runs (recipeCatalog).
+	// catalogs are the recipes factory runs for each board's repository
+	// (recipeCatalog), by owner/repo.
 	catalogMu sync.Mutex
-	catalog   []boardv1alpha1.BoardRecipe
+	catalogs  map[string]boardCatalog
 
 	// refusals are the recipe Requests ensureRecipe refused to launch, by
 	// UID, with why: settleRecipe fails them with it (refuseRecipe).
@@ -719,7 +720,7 @@ func (r *Reconciler) activeCount(work *workState) int {
 }
 
 func (r *Reconciler) updateCounts(ctx context.Context, work *workState) {
-	catalog := r.recipeCatalog(ctx)
+	catalog := r.recipeCatalog(ctx, work)
 	work.board.Status.Counts = boardv1alpha1.BoardCounts{
 		NeedsHuman: needsHuman(work.sandboxes, catalog),
 		Active:     r.activeCount(work),

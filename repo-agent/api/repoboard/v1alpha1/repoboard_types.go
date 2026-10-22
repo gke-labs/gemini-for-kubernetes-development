@@ -355,7 +355,16 @@ type BoardRecipe struct {
 	// default.
 	// +kubebuilder:validation:Optional
 	Timeout string `json:"timeout,omitempty"`
+	// Source is where it comes from: builtin, or the path of the board's
+	// repository's recipe file (.agents/recipes/<name>.yaml), which runs
+	// as factory recipe run --recipe <name>.
+	// +kubebuilder:validation:Optional
+	Source string `json:"source,omitempty"`
 }
+
+// IsBuiltin reports whether the recipe ships with factory rather than
+// with the board's repository.
+func (r BoardRecipe) IsBuiltin() bool { return r.Source == "" || r.Source == "builtin" }
 
 // BoardRecipeApplicableWhen is which items a recipe applies to.
 type BoardRecipeApplicableWhen struct {

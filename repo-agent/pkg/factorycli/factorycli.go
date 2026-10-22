@@ -287,8 +287,8 @@ type Launcher interface {
 	// task output to its issue, with the member's token.
 	StartApply(key string, opts ApplyOptions) bool
 	// Recipes is the catalog of recipes factory runs, in the board's
-	// order.
-	Recipes(ctx context.Context) ([]boardv1alpha1.BoardRecipe, error)
+	// order: the built-ins, and with repoURL that repository's own.
+	Recipes(ctx context.Context, repoURL, token string) ([]boardv1alpha1.BoardRecipe, []string, error)
 	IsRunning(key string) bool
 	// Running is the keys in flight that start with prefix.
 	Running(prefix string) []string

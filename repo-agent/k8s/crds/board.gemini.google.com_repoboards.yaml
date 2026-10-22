@@ -280,6 +280,8 @@ spec:
                       type: string
                     session:
                       type: string
+                    source:
+                      type: string
                     taskType:
                       type: string
                     timeout:

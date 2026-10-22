@@ -391,3 +391,37 @@ func TestReviewRecipeRefusedOverTheMembersPendingReview(t *testing.T) {
 		}
 	}
 }
+
+// A board's catalog is factory's list for its repository: the built-ins
+// and the repository's own recipes (.agents/recipes), published on the
+// board's status, read with the board owner's token and kept catalogTTL.
+// A click on a repository recipe runs it as recipe run --recipe.
+func TestRepositoryRecipesAreOnTheBoard(t *testing.T) {
+	g := gomega.NewWithT(t)
+	fake := newFakeLauncher()
+	fake.repoRecipes = []boardv1alpha1.BoardRecipe{
+		{Name: "explain-pr", Label: "Explain", On: []string{"pr"}, Kind: "Summary", TaskType: "recipe-explain-pr", Source: ".agents/recipes/explain-pr.yaml"},
+	}
+	req := testRequest(boardv1alpha1.RequestSpec{Verb: boardv1alpha1.VerbRecipe, Recipe: "explain-pr", Item: "pr", Number: 12})
+	r := newTestReconciler(fake, testGithubClient(`[]`), testBoard(map[string]string{}), githubSecret(), req)
+	r.reconcileBoard(t)
+
+	g.Expect(fake.listed).To(gomega.ContainElement("https://github.com/test/repo"))
+	launches := fake.launches()
+	g.Expect(launches).To(gomega.HaveLen(1))
+	g.Expect(launches[0].RecipeOpts.Recipe).To(gomega.Equal("explain-pr"))
+	g.Expect(launches[0].RecipeOpts.RepoRecipe).To(gomega.BeTrue())
+
+	board := &boardv1alpha1.RepoBoard{}
+	g.Expect(r.Get(context.Background(), boardRequest().NamespacedName, board)).To(gomega.Succeed())
+	names := []string{}
+	for _, rec := range board.Status.Recipes {
+		names = append(names, rec.Name)
+	}
+	g.Expect(names).To(gomega.ContainElements("fix", "explain-pr"))
+
+	// Read once per catalogTTL, not on every reconcile.
+	before := len(fake.listed)
+	r.reconcileBoard(t)
+	g.Expect(fake.listed).To(gomega.HaveLen(before))
+}
