@@ -38,6 +38,10 @@ type RecordedRun struct {
 	// it writes, if it declares one.
 	Recipe string `json:"recipe,omitempty"`
 	Kind   string `json:"kind,omitempty"`
+	// Source is where the recipe came from: builtin, or the repository's
+	// .agents/recipes/<name>.yaml@<commit>. Empty on runs recorded before
+	// factory said.
+	Source string `json:"source,omitempty"`
 	// State is the run's own: Running, Completed or Failed. EndedAt is
 	// when it stopped running.
 	State   string     `json:"state,omitempty"`

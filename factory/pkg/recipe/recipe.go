@@ -113,6 +113,11 @@ type Recipe struct {
 	// Sandbox is the sandbox a recipe on a repository runs in, required
 	// for one (SandboxDecl). Like TaskOutput it is factory's.
 	Sandbox *SandboxDecl `yaml:"sandbox,omitempty"`
+
+	// Source is where the recipe was loaded from, set by whoever loads it
+	// and never part of the file: SourceBuiltin, a local file's path, or
+	// a repository's .agents/recipes/<name>.yaml@<commit>.
+	Source string `yaml:"-"`
 	// Timeout is how long a run may take (a Go duration: 3h), for
 	// whoever runs the recipe for a board; unset, its own default. Like
 	// TaskOutput it is factory's.
@@ -132,6 +137,9 @@ const (
 	// factory recipe does not run a recipe of this kind.
 	SandboxAgent = "agent"
 )
+
+// SourceBuiltin is a built-in recipe's Source.
+const SourceBuiltin = "builtin"
 
 // sandboxPrefixRE is a prefix a recipe may give its sandboxes' names.
 var sandboxPrefixRE = regexp.MustCompile(`^[a-z][a-z0-9]{0,9}$`)

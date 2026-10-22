@@ -927,6 +927,7 @@ func recordedRunSessions(sb *unstructured.Unstructured, catalog []boardv1alpha1.
 			Task:      run.SessionOf(),
 			Run:       run.Key,
 			Kind:      run.Kind,
+			Source:    run.Source,
 			State:     run.State,
 			StartedAt: run.StartedAt.UTC().Format(time.RFC3339),
 			Output:    annotations[factorycli.OutputAnnotation(run.Key)] != "",

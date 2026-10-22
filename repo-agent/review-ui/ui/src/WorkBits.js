@@ -47,6 +47,17 @@ export const RUN_STYLE = {
 // READY_STYLE is a draft's button: your verdict is the bottleneck.
 export const READY_STYLE = RUN_STYLE.ready;
 
+// recipeSource is where a run's recipe came from, for a hover: the
+// built-in, or the repository's .agents/recipes file at the commit it was
+// read at; '' for a run recorded before factory said.
+export function recipeSource(run) {
+  const source = run && run.source;
+  if (!source) return '';
+  if (source === 'builtin') return 'recipe: built-in';
+  const [path, commit] = source.split('@');
+  return `recipe: ${path}${commit ? ` @ ${commit.slice(0, 7)}` : ''}`;
+}
+
 // ageOf is how long ago ts was: 5m, 3h, 2d.
 export function ageOf(ts) {
   if (!ts) return '';

@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ResearchConversation, GrowingTextarea, repoFromURL } from './Research';
 import SandboxCard from './SandboxCard';
-import { EngineIcon, ageOf } from './WorkBits';
+import { EngineIcon, ageOf, recipeSource } from './WorkBits';
 import { fetchWorkFeed } from './Work';
 
 // Sessions: every agent conversation in the member's namespace, whatever
@@ -482,7 +482,7 @@ function SessionStrip({ row, rows, onOpen, onCard }) {
           {runs.map((run, i) => (
             <span key={run.run || i}>
               {i > 0 && <span style={muted}> → </span>}
-              <span title={`${run.recipe} · ${run.status}${run.startedAt ? ' · started ' + ageOf(run.startedAt) + ' ago' : ''}`}>
+              <span title={`${run.recipe} · ${run.status}${run.startedAt ? ' · started ' + ageOf(run.startedAt) + ' ago' : ''}${recipeSource(run) ? '\n' + recipeSource(run) : ''}`}>
                 {run.label || run.recipe} <StateMark state={{ running: 'working', ready: 'needs-you', done: 'done', failed: 'failed' }[run.status] || 'done'} />
               </span>
             </span>
