@@ -6,24 +6,20 @@ import (
 )
 
 // RecipeTask is how the runner runs a task type as a `factory recipe`:
-// how its runs are named and the sandbox it runs in. What it runs - the
-// recipe, the action of its result the CLI applies, the inputs - is the
-// rule's that decided the task, stamped on it (QueueTask.Recipe, Apply,
-// Inputs, PRLabels; act.Task).
+// how its runs are named. What it runs - the recipe, the action of its
+// result the CLI applies, the inputs - is the rule's that decided the
+// task, stamped on it (QueueTask.Recipe, Apply, Inputs, PRLabels;
+// act.Task); the sandbox, the recipe's (sandbox.Service.ResolveName).
 type RecipeTask struct {
 	// RunPrefix starts its run names (RunName).
 	RunPrefix string
-	// Sandbox, for a credentials: clone recipe, is the recipe whose own
-	// sandbox (<recipe>-<repo>-<N>) it runs in; "" runs it in the PR's
-	// fix sandbox.
-	Sandbox string
 }
 
 // recipeTasks are the task types that run as `factory recipe`. The other,
 // agent-chore, runs as `factory agent create`, which runs the agent or
 // workflow recipe (ChoreRunName).
 var recipeTasks = map[TaskType]RecipeTask{
-	TypePRReview:      {RunPrefix: "review", Sandbox: "review"},
+	TypePRReview:      {RunPrefix: "review"},
 	TypePRInvestigate: {RunPrefix: "investigate"},
 	TypePRComments:    {RunPrefix: "comments"},
 	TypePRIterate:     {RunPrefix: "iterate"},
@@ -86,6 +82,22 @@ func (rt RecipeTask) RunName(t *QueueTask) string {
 		prefix = t.Rule
 	}
 	return fmt.Sprintf("%s-%d-%s-%d", prefix, t.Number, sha, at.Unix())
+}
+
+// RunNameOf is t's run name (factory --run-name): the one stamped on it
+// when it was queued (TaskQueueManager.Enqueue), else its type's - RunName
+// for a recipe task, ChoreRunName for an agent chore - "" for neither.
+func RunNameOf(t *QueueTask) string {
+	if t.RunName != "" {
+		return t.RunName
+	}
+	if rt, ok := RecipeTaskOf(t.Type); ok {
+		return rt.RunName(t)
+	}
+	if t.Type == TypeAgentChore {
+		return ChoreRunName(t)
+	}
+	return ""
 }
 
 // ChoreRunName names a run of an agent-chore task t (factory agent create

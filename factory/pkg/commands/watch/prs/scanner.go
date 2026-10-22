@@ -85,7 +85,7 @@ type Entities interface {
 // the last check before queueing: a sandbox already executing holds the
 // workspace a second task would fight over.
 type Sandboxes interface {
-	ResolveName(ctx context.Context, taskType api.TaskType, num int) string
+	ResolveName(ctx context.Context, taskType api.TaskType, recipeName string, num int) string
 	IsTaskRunning(ctx context.Context, name string) (bool, error)
 }
 

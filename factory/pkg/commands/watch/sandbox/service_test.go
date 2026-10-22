@@ -106,18 +106,23 @@ func TestServiceResolveName(t *testing.T) {
 	tests := []struct {
 		name     string
 		taskType api.TaskType
+		recipe   string
 		num      int
 		want     string
 	}{
-		{"issue task", api.TypeIssueFix, 10, "fix-test-repo-10"},
-		{"pr recipe runs in the PR's fix sandbox", api.TypePRComments, 55, "fix-test-repo-55"},
-		{"rebase runs in the PR's fix sandbox", api.TypePRIterate, 55, "fix-test-repo-55"},
-		{"review runs in the review recipe's sandbox", api.TypePRReview, 55, "review-test-repo-55"},
+		{"issue task", api.TypeIssueFix, "fix", 10, "fix-test-repo-10"},
+		{"pr recipe runs in the PR's fix sandbox", api.TypePRComments, "care-comments", 55, "fix-test-repo-55"},
+		{"rebase runs in the PR's fix sandbox", api.TypePRIterate, "care-rebase", 55, "fix-test-repo-55"},
+		// A credentials: clone recipe has a sandbox of its own, whatever
+		// the task's type: review's, and a repository rule's run of it.
+		{"review runs in the review recipe's sandbox", api.TypePRReview, "review", 55, "review-test-repo-55"},
+		{"a rule task of a clone recipe too", api.TypePRRule, "review", 55, "review-test-repo-55"},
+		{"a rule task of another recipe in the PR's", api.TypePRRule, "summarize", 55, "fix-test-repo-55"},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := svc.ResolveName(ctx, tc.taskType, tc.num); got != tc.want {
+			if got := svc.ResolveName(ctx, tc.taskType, tc.recipe, tc.num); got != tc.want {
 				t.Errorf("ResolveName(%s, %d) = %q, want %q", tc.taskType, tc.num, got, tc.want)
 			}
 		})
@@ -145,7 +150,7 @@ func TestServiceResolveNamePRRecipeFollowsFixSandbox(t *testing.T) {
 			svc := NewService(ServiceConfig{Namespace: testNamespace, Owner: "test-owner", Repo: "test-repo"}, ServiceDeps{
 				Kube: newFakeKubeClient(t, tc.sandboxes...),
 			})
-			if got := svc.ResolveName(context.Background(), api.TypePRInvestigate, 55); got != tc.want {
+			if got := svc.ResolveName(context.Background(), api.TypePRInvestigate, "care-ci", 55); got != tc.want {
 				t.Errorf("ResolveName = %q, want %q", got, tc.want)
 			}
 		})
@@ -183,7 +188,7 @@ func TestServiceResolveNamePrefersWorkflowSandbox(t *testing.T) {
 		Kube: newFakeKubeClient(t, newSandbox("wf-issue-10", nil)),
 	})
 
-	if got := svc.ResolveName(context.Background(), api.TypeIssueFix, 10); got != "wf-issue-10" {
+	if got := svc.ResolveName(context.Background(), api.TypeIssueFix, "fix", 10); got != "wf-issue-10" {
 		t.Errorf("expected the existing workflow sandbox to win, got %q", got)
 	}
 }

@@ -13,6 +13,7 @@ task:
     commitSHA: 0123456789abcdef
     instructions:
         - check the docs
+    runName: review-10-0123456-<enqueued>
     rule: review
     recipe: review
     apply: submit-review

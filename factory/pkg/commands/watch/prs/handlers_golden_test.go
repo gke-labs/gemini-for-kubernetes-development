@@ -3,6 +3,7 @@ package prs
 import (
 	"context"
 	"flag"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -110,6 +111,14 @@ func TestHandlersQueueTheSameTasks(t *testing.T) {
 			if err := yaml.Unmarshal(data, &task); err != nil {
 				t.Fatal(err)
 			}
+			// Stamped when queued, as the runner would have named it from
+			// the task: the enqueue clock masked, as the time is.
+			unstamped := task
+			unstamped.RunName = ""
+			if want := api.RunNameOf(&unstamped); task.RunName != want {
+				t.Errorf("run name %q, want %q", task.RunName, want)
+			}
+			task.RunName = strings.TrimSuffix(task.RunName, fmt.Sprintf("-%d", task.EnqueuedAt.Unix())) + "-<enqueued>"
 			task.EnqueuedAt = time.Time{}
 			got, err := yaml.Marshal(struct {
 				File string         `yaml:"file"`
