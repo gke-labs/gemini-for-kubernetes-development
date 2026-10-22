@@ -1,0 +1,17 @@
+file: task-pr-10-iterate.yaml
+task:
+    type: pr-iterate
+    url: https://github.com/test-owner/test-repo/pull/10
+    number: 10
+    priority: medium
+    phase: 2
+    createdAt: 2026-10-20T10:00:00Z
+    triggerEventTime: 2026-10-20T10:00:00Z
+    triggerReason: PRMergeConflict
+    triggerNotes: 'PR #10 has merge conflicts with base branch ''main''; head commit 0123456 committer date 2026-10-20T10:00:00Z, PR updated at 2026-10-20T10:30:00Z'
+    assignee: bot1
+    status: Pending
+    commitSHA: 0123456789abcdef
+    rule: conflict
+    recipe: care-rebase
+    apply: post-replies

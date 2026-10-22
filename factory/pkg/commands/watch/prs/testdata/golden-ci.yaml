@@ -1,0 +1,17 @@
+file: task-pr-10-investigate.yaml
+task:
+    type: pr-investigate
+    url: https://github.com/test-owner/test-repo/pull/10
+    number: 10
+    priority: medium
+    phase: 3
+    createdAt: 2026-10-20T10:00:00Z
+    triggerEventTime: 2026-10-20T10:10:00Z
+    triggerReason: PRCheckFailed
+    triggerNotes: Earliest CI failure in 'unit' (failure) at 2026-10-20T10:10:00Z; total 2 failed check(s) on commit 0123456
+    assignee: bot1
+    status: Pending
+    commitSHA: 0123456789abcdef
+    rule: ci
+    recipe: care-ci
+    apply: post-replies
