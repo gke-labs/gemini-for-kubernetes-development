@@ -6,12 +6,16 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/recipe"
 	githubv39 "github.com/google/go-github/v39/github"
+	"k8s.io/klog/v2"
 )
 
 // repoRecipesDir is where a repository keeps recipes of its own
@@ -31,9 +35,18 @@ const repoRecipesDir = ".agents/recipes"
 //     under names of their own, read at the default branch.
 //   - EnvRepoRecipeCommit: the commit .agents/recipes is read at, a SHA or
 //     latest (the default branch's head, also when unset).
+//   - EnvRepoRecipeDir: a local clone of the repository (the overseer's
+//     /workspaces/<repo>), whose git objects the recipes are read from
+//     instead of GitHub's API: latest is its upstream/HEAD (else
+//     origin/HEAD), whose default branch is fetched again when its last
+//     fetch is older than localFetchEvery; a SHA is that commit, fetched
+//     once if the clone lacks it.
+//     Never the working tree. A clone that cannot answer leaves it to the
+//     API.
 const (
 	EnvRepoRecipeMode   = "FACTORY_REPO_RECIPE_MODE"
 	EnvRepoRecipeCommit = "FACTORY_REPO_RECIPE_COMMIT"
+	EnvRepoRecipeDir    = "FACTORY_REPO_RECIPE_DIR"
 )
 
 func repoRecipeMode() string {
@@ -57,8 +70,112 @@ type repoFile func(ctx context.Context, path string) ([]byte, error)
 
 // githubRepoFile reads owner/repo's files through gh, at the default
 // branch: what has been reviewed and merged, never a pull request's head;
-// at EnvRepoRecipeCommit's commit when that names one.
+// at EnvRepoRecipeCommit's commit when that names one. With
+// EnvRepoRecipeDir set, from that clone's git objects first
+// (localRepoFile).
 func githubRepoFile(gh *githubv39.Client, owner, repo string) repoFile {
+	api := githubAPIRepoFile(gh, owner, repo)
+	if dir := strings.TrimSpace(os.Getenv(EnvRepoRecipeDir)); dir != "" {
+		return localRepoFile(dir, repoRecipeCommit(), api)
+	}
+	return api
+}
+
+// localRepoFile reads files from the git objects of the clone in dir, at
+// commit (a SHA, or latest: the clone's upstream/HEAD, else origin/HEAD),
+// never its working tree, which is the overseer's state branch with the
+// queue's changes. A file the commit lacks is os.ErrNotExist; a clone that
+// cannot answer (no such commit after a fetch, not a clone) leaves the
+// read to api.
+func localRepoFile(dir, commit string, api repoFile) repoFile {
+	var rev string
+	resolved := false
+	return func(ctx context.Context, path string) ([]byte, error) {
+		if !resolved {
+			rev, resolved = localRev(ctx, dir, commit), true
+		}
+		if rev == "" {
+			return api(ctx, path)
+		}
+		var stderr strings.Builder
+		cmd := exec.CommandContext(ctx, "git", "-C", dir, "show", rev+":"+path)
+		cmd.Stderr = &stderr
+		out, err := cmd.Output()
+		switch {
+		case err == nil:
+			return out, nil
+		case strings.Contains(stderr.String(), "does not exist in") || strings.Contains(stderr.String(), "exists on disk, but not in"):
+			return nil, os.ErrNotExist
+		}
+		klog.Warningf("reading %s from the clone in %s at %s: %v: %s; reading it from GitHub", path, dir, rev, err, strings.TrimSpace(stderr.String()))
+		return api(ctx, path)
+	}
+}
+
+// localRev is the commit of the clone in dir that commit names, "" when
+// the clone has none: latest is upstream/HEAD, else origin/HEAD; a SHA
+// the clone lacks is fetched from upstream, else origin, once.
+func localRev(ctx context.Context, dir, commit string) string {
+	resolve := func(ref string) string {
+		out, err := exec.CommandContext(ctx, "git", "-C", dir, "rev-parse", "--verify", "--quiet", ref+"^{commit}").Output()
+		if err != nil {
+			return ""
+		}
+		return strings.TrimSpace(string(out))
+	}
+	if commit == "latest" {
+		for _, remote := range []string{"upstream", "origin"} {
+			if resolve(remote+"/HEAD") == "" {
+				continue
+			}
+			freshen(ctx, dir, remote)
+			return resolve(remote + "/HEAD")
+		}
+		return ""
+	}
+	if sha := resolve(commit); sha != "" {
+		return sha
+	}
+	for _, remote := range []string{"upstream", "origin"} {
+		if exec.CommandContext(ctx, "git", "-C", dir, "fetch", "--quiet", remote, commit).Run() == nil {
+			if sha := resolve(commit); sha != "" {
+				return sha
+			}
+		}
+	}
+	return ""
+}
+
+// localFetchEvery is how stale a clone's default branch may be before
+// latest fetches it again.
+var localFetchEvery = 2 * time.Minute
+
+// freshen fetches remote's default branch (what remote/HEAD points at)
+// into the clone in dir when that was last fetched longer ago than
+// localFetchEvery: one small, incremental fetch of one ref, which moves
+// refs/remotes/<remote>/<branch> and nothing checked out. A failed fetch
+// leaves the clone as it was.
+func freshen(ctx context.Context, dir, remote string) {
+	out, err := exec.CommandContext(ctx, "git", "-C", dir, "symbolic-ref", "refs/remotes/"+remote+"/HEAD").Output()
+	if err != nil {
+		return
+	}
+	ref := strings.TrimSpace(string(out)) // refs/remotes/<remote>/<branch>
+	branch := strings.TrimPrefix(ref, "refs/remotes/"+remote+"/")
+	stamp := filepath.Join(dir, ".git", "factory-fetched-"+remote)
+	if fi, err := os.Stat(stamp); err == nil && time.Since(fi.ModTime()) < localFetchEvery {
+		return
+	}
+	if err := exec.CommandContext(ctx, "git", "-C", dir, "fetch", "--quiet", remote, "+refs/heads/"+branch+":"+ref).Run(); err != nil {
+		klog.Warningf("fetching %s's %s into %s: %v; reading the clone as it is", remote, branch, dir, err)
+		return
+	}
+	_ = os.WriteFile(stamp, nil, 0o644)
+}
+
+// githubAPIRepoFile reads owner/repo's files through GitHub's API, at the
+// default branch, or at EnvRepoRecipeCommit's commit when it names one.
+func githubAPIRepoFile(gh *githubv39.Client, owner, repo string) repoFile {
 	var opts *githubv39.RepositoryContentGetOptions
 	if c := repoRecipeCommit(); c != "latest" {
 		opts = &githubv39.RepositoryContentGetOptions{Ref: c}
