@@ -128,13 +128,6 @@ type OverseerSpec struct {
 	// +kubebuilder:validation:Optional
 	TaskTimeout *metav1.Duration `json:"taskTimeout,omitempty"`
 
-	// Attempts makes the watcher count a give-up's attempts (CI
-	// investigations of a PR) from its queue's journal of runs, which
-	// survives its restarts and does not count a dropped task, rather than
-	// from its own comments alone.
-	// +kubebuilder:validation:Optional
-	Attempts bool `json:"attempts,omitempty"`
-
 	// Rules is how the watch rules (factory/docs/watch-rules.md) run beside
 	// the watcher's scanners.
 	// +kubebuilder:validation:Optional
