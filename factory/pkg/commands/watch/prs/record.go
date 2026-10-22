@@ -101,7 +101,11 @@ func (s *Scanner) recordRuns(num int) {
 // its tasks that ended, and the rules whose task is queued or running.
 func (s *Scanner) fillRuns(it *rules.Item, num int) {
 	h, _ := s.queue.(runHistory)
-	for _, t := range prTaskRules {
+	tasks := slices.Clone(prTaskRules)
+	for _, r := range s.ruleTaskRules() {
+		tasks = append(tasks, struct{ suffix, rule string }{"rule-" + r, r})
+	}
+	for _, t := range tasks {
 		filename := fmt.Sprintf("task-pr-%d-%s.yaml", num, t.suffix)
 		var ended []rules.PastRun
 		if h != nil {
@@ -201,14 +205,42 @@ func (s *Scanner) engineOutcome(rule string) string {
 }
 
 // engineCareRule is the pr-care rule the engine decided, "" when none:
-// they take the PR, so there is at most one.
+// they take the PR, so there is at most one. A rule factory does not
+// handle by name that takes the PR (a repository's) is one too, carried
+// out as a rule task (handleRuleTask).
 func (s *Scanner) engineCareRule() string {
 	for _, d := range s.engineCare {
 		if slices.Contains(prCareRules, d.Rule) {
 			return d.Rule
 		}
+		if r := s.rules.Set().Named(d.Rule); r != nil && !rules.IsBuiltinName(d.Rule) && r.IsExclusive() {
+			return d.Rule
+		}
 	}
 	return ""
+}
+
+// ruleTaskRules are the rules on pull requests that run a recipe and that
+// factory does not handle by name (a repository's): each runs as a rule
+// task, task-pr-<n>-rule-<name>.yaml.
+func (s *Scanner) ruleTaskRules() []string {
+	var names []string
+	for _, r := range s.rules.Set() {
+		if r.On == rules.OnPR && r.Run.Recipe != "" && !rules.IsBuiltinName(r.Name) {
+			names = append(names, r.Name)
+		}
+	}
+	return names
+}
+
+// actOnRuleWrites carries out what the engine decided of the rules factory
+// does not handle by name that do not take the PR: their GitHub writes.
+func (s *Scanner) actOnRuleWrites(ctx context.Context, prIssue *githubv39.Issue) {
+	for _, d := range s.engineCare {
+		if r := s.rules.Set().Named(d.Rule); r != nil && !rules.IsBuiltinName(d.Rule) && !r.IsExclusive() {
+			s.actOn(ctx, prIssue, d.Rule)
+		}
+	}
 }
 
 // actOn carries out the engine's decision on rule for the pull request

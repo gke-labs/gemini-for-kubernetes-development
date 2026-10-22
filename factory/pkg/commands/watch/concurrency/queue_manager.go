@@ -591,9 +591,11 @@ func (m *TaskQueueManager) HasActiveIssueTask(issueNumber int) bool {
 	return false
 }
 
-// issueTaskFile reports whether filename names a task for issue n.
+// issueTaskFile reports whether filename names a task for issue n: its
+// fix, a rule's (api.RuleTaskFile) or a workflow step.
 func issueTaskFile(filename string, n int) bool {
 	return filename == fmt.Sprintf("task-issue-%d.yaml", n) ||
+		strings.HasPrefix(filename, fmt.Sprintf("task-issue-%d-rule-", n)) ||
 		(strings.HasPrefix(filename, "task-workflow-") && strings.HasSuffix(filename, fmt.Sprintf("-issue-%d.yaml", n)))
 }
 

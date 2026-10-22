@@ -6,9 +6,10 @@ out its decisions. Phase 5 (a repository's own rules) is partly built:
 the watch reads a repository's `.agents/watch/` when it starts, if its
 overseer lets the repository's `.agents/` in (`spec.repoRecipe.mode`
 replace, read at its `gitCommit` from the overseer's clone), and lays it
-over the prebaked rules (replace or toggle by name). A rule of a new name
-is left out with a warning, since the scanners carry out factory's rules
-by name; augment and off leave the prebaked rules alone. `factory watch
+over the prebaked rules (replace or toggle by name, or add); augment adds
+rules of new names only. A rule of a new name is carried out as a rule
+task (`task-pr-<n>-rule-<name>`, `task-issue-<n>-rule-<name>`): its
+recipe, which may be the repository's own, or its writes. `factory watch
 rules --dir` lays a checkout's rules over them for listing, explain and
 replay. The rule
 files' reference - every field, and how a rule is evaluated - is the
@@ -968,9 +969,13 @@ together once staging's shadow had agreed on every rule:
 `.agents/watch/*.yaml` once when it starts, under `spec.repoRecipe` (one
 switch for everything a repository's `.agents/` holds): replace mode
 replaces or turns off prebaked rules by name, within the global gates and
-floors. Not built: rules of new names (the scanners carry out factory's
-rules by name, so one is left out with a warning), settings beside the
-rules, and the board's auto rules on the same predicates.
+floors, and adds rules of new names, which run as rule tasks: a run is
+its recipe (factory's, or one in the repository's `.agents/recipes`,
+checked when the rules load), in `task-pr-<n>-rule-<name>.yaml` or
+`task-issue-<n>-rule-<name>.yaml` (types `pr-rule`, `issue-rule`, the run
+named after the rule); writes and give-ups go through the same
+`ApplyWrites` as factory's. Not built: settings beside the rules, and the
+board's auto rules on the same predicates.
 
 
 ## Open questions

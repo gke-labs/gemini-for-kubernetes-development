@@ -46,6 +46,7 @@ func (s *Scanner) Facts(ctx context.Context, num int) (rules.Item, rules.Env, er
 	if s.queue.TaskExists(filename) {
 		it.Queued = append(it.Queued, rule)
 	}
+	s.fillRuleTaskRuns(&it, num)
 	switch wf = wf.check(ctx, s.gh); wf.Status {
 	case common.WorkflowMissing, common.WorkflowUnusable:
 		it.WorkflowMissing = true

@@ -315,3 +315,55 @@ func (s *Scanner) handlePRReview(ctx context.Context, pc *prContext, checkRuns [
 	}
 	return true
 }
+
+// handleRuleTask queues the task of a rule factory does not handle by name
+// (a repository's, .agents/watch) that the engine decided on the pull
+// request: its recipe, apply and inputs as the rule says (act.Task), in
+// api.RuleTaskFile. A rule that takes the PR with GitHub writes and no
+// recipe is carried out as its writes.
+func (s *Scanner) handleRuleTask(ctx context.Context, pc *prContext, rule string) bool {
+	if r := s.rules.Set().Named(rule); r == nil || r.Run.Recipe == "" {
+		s.actOn(ctx, pc.prIssue, rule)
+		return true
+	}
+	if os.Getenv("DRY_RUN") == "true" {
+		return true
+	}
+	num := pc.prIssue.GetNumber()
+	filename := api.RuleTaskFile(true, num, rule)
+	if s.queue.TaskExists(filename) {
+		return true
+	}
+	sandboxName := s.sandboxes.ResolveName(ctx, api.TypePRRule, num)
+	running, err := s.sandboxes.IsTaskRunning(ctx, sandboxName)
+	if err != nil {
+		klog.Errorf("Failed to check if sandbox %s is running: %v", sandboxName, err)
+		return false
+	} else if running {
+		s.rec.Gated("its sandbox is busy")
+		klog.Infof("Skipping PR #%d rule %s because there is an in-flight sandbox %s.", num, rule, sandboxName)
+		return false
+	}
+	task := s.newTask(taskOptions{
+		Type:          api.TypePRRule,
+		PR:            pc.pr,
+		PRIssue:       pc.prIssue,
+		Phase:         api.PhaseComments,
+		Assignee:      pc.taskAssignee,
+		CommitSHA:     pc.headSHA,
+		TriggerReason: api.TriggerReasonRuleDecided,
+		TriggerNotes:  fmt.Sprintf("The %s rule decided to run on commit %s", rule, pc.shortSHA),
+	})
+	if s.cfg.DryRun {
+		fmt.Printf("[DRYRUN] Would queue the %s rule's task for PR #%d: %s\n", rule, num, pc.prURL)
+		return true
+	}
+	fmt.Printf("Queueing the %s rule's task for PR #%d...\n", rule, num)
+	s.rec.Decided(rule, rules.OutcomeRun)
+	s.stampDecision(task, rule)
+	if err := s.queue.Enqueue(filename, task); err != nil {
+		klog.Errorf("Failed to queue the %s rule's task for PR #%d: %v", rule, num, err)
+		return false
+	}
+	return true
+}

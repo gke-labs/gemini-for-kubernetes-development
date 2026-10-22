@@ -12,6 +12,7 @@ import (
 	"k8s.io/klog/v2"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/api"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/recipe"
 )
 
 // CLIRunnerConfig holds the sandbox and resource settings forwarded to the child factory CLI.
@@ -68,6 +69,10 @@ func (r *CLIRunner) BuildArgs(t *api.QueueTask, selectedUser string) []string {
 			return nil
 		}
 		args = []string{"recipe", t.Recipe, "--url", t.URL, "--run-name", rt.RunName(t)}
+		if _, _, err := recipe.Builtin(t.Recipe); err != nil {
+			// A repository's recipe has no command of its name.
+			args = []string{"recipe", "run", "--recipe", t.Recipe, "--url", t.URL, "--run-name", rt.RunName(t)}
+		}
 		args = append(args, api.RecipeArgs(t)...)
 		for _, inst := range t.Instructions {
 			args = append(args, "--instruction", inst)

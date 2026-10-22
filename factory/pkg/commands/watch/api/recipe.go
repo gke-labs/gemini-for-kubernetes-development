@@ -28,6 +28,9 @@ var recipeTasks = map[TaskType]RecipeTask{
 	TypePRComments:    {RunPrefix: "comments"},
 	TypePRIterate:     {RunPrefix: "iterate"},
 	TypeIssueFix:      {RunPrefix: "fix"},
+	// A rule task's run is named after its rule (RunName).
+	TypePRRule:    {RunPrefix: "rule"},
+	TypeIssueRule: {RunPrefix: "rule"},
 }
 
 // RecipeArgs are the arguments of the run the rules engine decided for t,
@@ -78,7 +81,11 @@ func (rt RecipeTask) RunName(t *QueueTask) string {
 	if at.IsZero() {
 		at = t.CreatedAt
 	}
-	return fmt.Sprintf("%s-%d-%s-%d", rt.RunPrefix, t.Number, sha, at.Unix())
+	prefix := rt.RunPrefix
+	if (t.Type == TypePRRule || t.Type == TypeIssueRule) && t.Rule != "" {
+		prefix = t.Rule
+	}
+	return fmt.Sprintf("%s-%d-%s-%d", prefix, t.Number, sha, at.Unix())
 }
 
 // ChoreRunName names a run of an agent-chore task t (factory agent create

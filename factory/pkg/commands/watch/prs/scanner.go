@@ -640,6 +640,8 @@ func (s *Scanner) evaluate(ctx context.Context, prIssue *githubv39.Issue) {
 		completed = s.handlePRInvestigate(ctx, pc, checkAnalysis)
 	case rule == "review":
 		completed = s.handlePRReview(ctx, pc, checkAnalysis.checkRuns)
+	default:
+		completed = s.handleRuleTask(ctx, pc, rule)
 	}
 
 	// The engine's ready or ready-unreview: its writes.
@@ -650,6 +652,8 @@ func (s *Scanner) evaluate(ctx context.Context, prIssue *githubv39.Issue) {
 			}
 		}
 	}
+	// A repository's rules that do not take the PR: their writes.
+	s.actOnRuleWrites(ctx, prIssue)
 	if !completed {
 		return
 	}
