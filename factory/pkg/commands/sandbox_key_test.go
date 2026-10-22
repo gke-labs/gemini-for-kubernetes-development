@@ -10,8 +10,8 @@ import (
 	factorysandbox "github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/sandbox"
 )
 
-// --sandbox-key goes with a recipe on a repository whose sandbox is of
-// scope key, and only with one; an agent's recipe runs through factory
+// --sandbox-key goes with a recipe on a repository that runs in its own
+// sandbox, and only with one; an agent's recipe runs through factory
 // agent create.
 func TestCheckSandboxKey(t *testing.T) {
 	repo := githubItem{Owner: "o", Repo: "r"}
@@ -19,8 +19,7 @@ func TestCheckSandboxKey(t *testing.T) {
 	with := func(d recipe.SandboxDecl) *recipe.Recipe {
 		return &recipe.Recipe{Name: "x", On: []string{recipe.OnRepo}, Sandbox: &d}
 	}
-	keyed := with(recipe.SandboxDecl{Prefix: "rsch", Scope: recipe.ScopeKey})
-	perRepo := with(recipe.SandboxDecl{Prefix: "tools", Scope: recipe.ScopeRepo})
+	own := with(recipe.SandboxDecl{Prefix: "rsch"})
 	warm := with(recipe.SandboxDecl{Kind: recipe.SandboxWarm})
 	agent := with(recipe.SandboxDecl{Kind: recipe.SandboxAgent})
 	for name, tc := range map[string]struct {
@@ -30,10 +29,8 @@ func TestCheckSandboxKey(t *testing.T) {
 		key  string
 		want string
 	}{
-		"keyed with a key":      {keyed, repo, recipeRunOpts{}, "s1", ""},
-		"keyed without":         {keyed, repo, recipeRunOpts{}, "", "give it one with --sandbox-key"},
-		"repo scope with a key": {perRepo, repo, recipeRunOpts{}, "k", "drop --sandbox-key"},
-		"repo scope without":    {perRepo, repo, recipeRunOpts{}, "", ""},
+		"own with a key":        {own, repo, recipeRunOpts{}, "s1", ""},
+		"own without":           {own, repo, recipeRunOpts{}, "", "give it one with --sandbox-key"},
 		"warm with a key":       {warm, repo, recipeRunOpts{}, "k", "drop --sandbox-key"},
 		"warm without":          {warm, repo, recipeRunOpts{}, "", ""},
 		"agent by recipe":       {agent, repo, recipeRunOpts{}, "", "factory agent create"},
@@ -56,7 +53,7 @@ func TestBuiltinSandboxNames(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		got := factorysandbox.ScopedSandboxName(rec.Sandbox.Prefix, "k8s-config-connector", "deploy-gke-k8s1")
+		got := factorysandbox.RepoSandboxName(rec.Sandbox.Prefix, "k8s-config-connector", "deploy-gke-k8s1")
 		if !strings.HasPrefix(got, want) || strings.Contains(got, "deploy-gke") {
 			t.Errorf("%s = %s, want %s<hash>", name, got, want)
 		}

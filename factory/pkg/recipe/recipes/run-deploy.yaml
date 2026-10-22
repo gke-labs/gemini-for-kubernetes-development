@@ -26,7 +26,6 @@ task-type: run
 # down. Sized for building images unless the caller chose.
 sandbox:
   prefix: run               # run-<repo>-<hash of --sandbox-key>: one per run, every phase
-  scope: key
   cpu-request: "2"          # runs build images and compile big module graphs
   cpu-limit: "4"
   memory-request: 4Gi

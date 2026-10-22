@@ -10,17 +10,17 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
-// A scoped sandbox is the size its recipe's sandbox: declares, all of it;
+// A repository sandbox is the size its recipe's sandbox: declares, all of it;
 // the SANDBOX_* environment the caller's flags set does not size it. Its
 // labels and annotations are the generic ones, whatever its prefix.
-func TestScopedSandbox(t *testing.T) {
+func TestRepoSandbox(t *testing.T) {
 	ns := "u"
 	kc := prClients(t, ns)
-	ensure := func(t *testing.T, s sandbox.Scoped) *unstructured.Unstructured {
+	ensure := func(t *testing.T, s sandbox.RepoSandbox) *unstructured.Unstructured {
 		t.Helper()
-		name, err := sandbox.EnsureScopedSandbox(context.Background(), kc, ns, s, "k8s-config-connector", "clone", "html", "", "", nil, nil, "barney-s")
+		name, err := sandbox.EnsureRepoSandbox(context.Background(), kc, ns, s, "k8s-config-connector", "clone", "html", "", "", nil, nil, "barney-s")
 		if err != nil {
-			t.Fatalf("EnsureScopedSandbox: %v", err)
+			t.Fatalf("EnsureRepoSandbox: %v", err)
 		}
 		sb, err := kc.DynamicClient.Resource(k8s.SandboxGVR).Namespace(ns).Get(context.Background(), name, metav1.GetOptions{})
 		if err != nil {
@@ -50,36 +50,26 @@ func TestScopedSandbox(t *testing.T) {
 	t.Setenv("SANDBOX_MEMORY_LIMIT", "2Gi")
 
 	big := sandbox.Size{Disk: "100Gi", CPURequest: "8", CPULimit: "16", MemoryRequest: "32Gi", MemoryLimit: "48Gi", EphemeralStorage: "8Gi"}
-	sb := ensure(t, sandbox.Scoped{Prefix: "rsch", Scope: "key", Key: "s1", Size: big})
+	sb := ensure(t, sandbox.RepoSandbox{Prefix: "rsch", Key: "s1", Size: big})
 	if got := size(sb); got["cpu"] != "8/16" || got["mem"] != "32Gi/48Gi" || got["eph"] != "8Gi" || got["pvc"] != "100Gi" {
 		t.Errorf("the recipe's sandbox: = %v", got)
 	}
-	if sb.GetName() != sandbox.ScopedSandboxName("rsch", "k8s-config-connector", "s1") {
+	if sb.GetName() != sandbox.RepoSandboxName("rsch", "k8s-config-connector", "s1") {
 		t.Errorf("name = %s", sb.GetName())
 	}
 	labels, annotations := sb.GetLabels(), sb.GetAnnotations()
-	if labels[sandbox.LabelType] != "rsch" || labels[sandbox.LabelScope] != "key" || labels[sandbox.LabelKey] != sandbox.ShortID("s1") || annotations[sandbox.AnnotationKeyID] != "s1" {
+	if labels[sandbox.LabelType] != "rsch" || labels[sandbox.LabelKey] != sandbox.ShortID("s1") || annotations[sandbox.AnnotationKeyID] != "s1" {
 		t.Errorf("labels %v, annotations %v", labels, annotations)
 	}
 	if sa, _, _ := unstructured.NestedString(sb.Object, "spec", "podTemplate", "spec", "serviceAccountName"); sa != sandbox.DeployerServiceAccount {
 		t.Errorf("service account = %q", sa)
 	}
 
-	small := sandbox.Size{Disk: "30Gi", CPURequest: "2", CPULimit: "4", MemoryRequest: "4Gi", MemoryLimit: "8Gi", EphemeralStorage: "10Gi"}
-	sb = ensure(t, sandbox.Scoped{Prefix: "tools", Scope: "repo", Size: small})
-	if sb.GetName() != "tools-k8s-config-connector" || sb.GetLabels()[sandbox.LabelScope] != "repo" {
-		t.Errorf("a repo-scoped sandbox: %s %v", sb.GetName(), sb.GetLabels())
-	}
-	if got := size(sb); got["cpu"] != "2/4" || got["pvc"] != "30Gi" {
-		t.Errorf("repo scope size = %v", got)
-	}
-
-	for name, s := range map[string]sandbox.Scoped{
-		"no prefix":        {Scope: "key", Key: "k"},
-		"keyed, no key":    {Prefix: "rsch", Scope: "key"},
-		"repo, with a key": {Prefix: "rsch", Scope: "repo", Key: "k"},
+	for name, s := range map[string]sandbox.RepoSandbox{
+		"no prefix": {Key: "k"},
+		"no key":    {Prefix: "rsch"},
 	} {
-		if _, err := sandbox.EnsureScopedSandbox(context.Background(), kc, ns, s, "r", "", "", "", "", nil, nil, ""); err == nil {
+		if _, err := sandbox.EnsureRepoSandbox(context.Background(), kc, ns, s, "r", "", "", "", "", nil, nil, ""); err == nil {
 			t.Errorf("%s: made", name)
 		}
 	}

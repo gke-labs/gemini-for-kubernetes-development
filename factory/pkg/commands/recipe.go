@@ -333,9 +333,9 @@ func runRecipe(ctx context.Context, recipeArg, itemURL, runName, sandboxKey, use
 }
 
 // checkSandboxKey holds --sandbox-key to the recipe's sandbox: a recipe on
-// a repository whose sandbox is of scope key is given one; one of scope
-// repo, warm's, or a recipe on an issue or PR is not; and an agent's runs
-// in the sandbox factory agent create makes.
+// a repository that runs in its own is given one; warm's, or a recipe on
+// an issue or PR is not; and an agent's runs in the sandbox factory agent
+// create makes.
 func checkSandboxKey(rec *recipe.Recipe, it githubItem, opts recipeRunOpts, key string) error {
 	if !it.IsRepo() {
 		if key != "" {
@@ -347,11 +347,9 @@ func checkSandboxKey(rec *recipe.Recipe, it githubItem, opts recipeRunOpts, key 
 	switch {
 	case sb.Kind == recipe.SandboxAgent && opts.ensure == nil:
 		return fmt.Errorf("recipe %s runs in an agent's own sandbox: run it with factory agent create", rec.Name)
-	case sb.Keyed() && key == "":
+	case sb.Own() && key == "":
 		return fmt.Errorf("recipe %s runs in a %s sandbox of its own: give it one with --sandbox-key <id> (runs with the same key share it)", rec.Name, sb.Prefix)
-	case sb.Scoped() && !sb.Keyed() && key != "":
-		return fmt.Errorf("recipe %s runs in the repository's %s sandbox, which no key names: drop --sandbox-key", rec.Name, sb.Prefix)
-	case !sb.Scoped() && key != "":
+	case !sb.Own() && key != "":
 		return fmt.Errorf("recipe %s runs in the repository's %s sandbox, which no key names: drop --sandbox-key", rec.Name, sb.Kind)
 	}
 	return nil
@@ -536,11 +534,11 @@ func runRecipeIn(ctx context.Context, opts recipeRunOpts, recipeArg, itemURL, ru
 	case it.IsRepo():
 		// The recipe's own (research's, a run's): the one its prefix and
 		// the key name, sized as its sandbox: says - nothing the caller
-		// passes (factorysandbox.EnsureScopedSandbox).
+		// passes (factorysandbox.EnsureRepoSandbox).
 		sb := rec.Sandbox
 		fmt.Printf("Ensuring the %s sandbox %s for %s/%s...\n", sb.Prefix, sandboxKey, it.Owner, it.Repo)
-		sandboxName, err = factorysandbox.EnsureScopedSandbox(ctx, kubeClient, rootFlags.Namespace, factorysandbox.Scoped{
-			Prefix: sb.Prefix, Scope: sb.Scope, Key: sandboxKey,
+		sandboxName, err = factorysandbox.EnsureRepoSandbox(ctx, kubeClient, rootFlags.Namespace, factorysandbox.RepoSandbox{
+			Prefix: sb.Prefix, Key: sandboxKey,
 			Size: factorysandbox.Size{Disk: sb.Disk, EphemeralStorage: sb.EphemeralStorage,
 				CPURequest: sb.CPURequest, CPULimit: sb.CPULimit, MemoryRequest: sb.MemoryRequest, MemoryLimit: sb.MemoryLimit},
 		}, it.Repo, cloneURL, htmlURL, rootFlags.Image, rootFlags.StorageClass, rootFlags.ResolvedSecrets, rootFlags.ResolvedEnvs, user)
@@ -625,10 +623,7 @@ func runRecipeIn(ctx context.Context, opts recipeRunOpts, recipeArg, itemURL, ru
 	if apply.on {
 		fmt.Println("Interrupting stops the waiting, not the task: run the same command again to wait for it and apply its result.")
 	}
-	// A recipe's own sandbox gets its ready receipt once its task is
-	// handed over.
-	scoped := it.IsRepo() && opts.ensure == nil && rec.Sandbox.Scoped()
-	if done, err := startRecipeTask(ctx, kubeClient, sb, it, rec, task, recipeBytes, inputs, envMap, secrets, opts.usage, scoped); err != nil || !done {
+	if done, err := startRecipeTask(ctx, kubeClient, sb, it, rec, task, recipeBytes, inputs, envMap, secrets, opts.usage); err != nil || !done {
 		return err
 	}
 	if apply.on {
@@ -958,7 +953,7 @@ func needsAPerson(e spool.Entry) string {
 // startRecipeTask records the task on its sandbox and hands it over.
 // Unless --detached it follows the task to its end and prints its
 // outputs, and returns true.
-func startRecipeTask(ctx context.Context, kubeClient *clients.KubernetesClient, sb taskapi.Sandbox, it githubItem, rec *recipe.Recipe, task spool.Task, recipeBytes []byte, inputs, envMap, secrets map[string]string, usage func(*usagereport.Meta), scoped bool) (bool, error) {
+func startRecipeTask(ctx context.Context, kubeClient *clients.KubernetesClient, sb taskapi.Sandbox, it githubItem, rec *recipe.Recipe, task spool.Task, recipeBytes []byte, inputs, envMap, secrets map[string]string, usage func(*usagereport.Meta)) (bool, error) {
 	sandboxName := sb.Name()
 	taskType, side := recipeTaskType(rec, it)
 	update := factorysandbox.UpdateSandboxTaskAnnotation
@@ -970,10 +965,11 @@ func startRecipeTask(ctx context.Context, kubeClient *clients.KubernetesClient, 
 		_ = update(ctx, kubeClient, rootFlags.Namespace, sandboxName, taskType, "Failed")
 		return false, fmt.Errorf("running recipe: %w", err)
 	}
-	if scoped {
-		// The sandbox is the session's (the run's) from here: the receipt
-		// that keeps EnsureScopedSandbox from taking it for an interrupted
-		// launch's and replacing it.
+	if it.IsRepo() {
+		// A repository's sandbox is the session's (the run's) from here:
+		// the receipt that keeps EnsureRepoSandbox from taking it for an
+		// interrupted launch's and replacing it. Harmless on warm's and an
+		// agent's, which nothing replaces.
 		if err := factorysandbox.MarkReady(ctx, kubeClient, rootFlags.Namespace, sandboxName, rootFlags.Engine); err != nil {
 			return false, err
 		}
