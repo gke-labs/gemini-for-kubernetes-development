@@ -1,6 +1,6 @@
 # Recipes from the repository
 
-Status: steps 1-3 built, and repository recipes on the board (each board's catalog is `recipe list --url` for its repository): a task keeps its recipe (#1934); recipes load from the repository's `.agents/recipes/` with `recipe list --url` and sources (#1935); results are files the agent writes and revise goes, factory #1938 and repo-agent #1939, #1940 (design #1933, #1936). Step 4 is built as scoped sandboxes (below). Not built: step 5 (`long-lived` labels, `repoRecipes.identity`), step 6 (the overseer launching repository recipes; the watch's rules, watch-rules.md, are factory's, and a repository's `.agents/rules/` is read only by `factory watch rules … --dir`). A PR per run is not built. The overseer runs a repository's recipes when its operator says so: `spec.repoRecipe.mode` off (default), augment (the repository's recipes under names of their own) or replace (the repository's recipe of a name before factory's, built-ins included), read at `spec.repoRecipe.gitCommit` (a SHA, or latest); the watch's commands get it as `FACTORY_REPO_RECIPE_MODE` and `FACTORY_REPO_RECIPE_COMMIT`. Sandboxes (step 4): a recipe on a repository declares `sandbox: {prefix, scope: key|repo, <six sizes>}`, or `{kind: warm|agent}`; scope key is given its sandbox with `--sandbox-key` (`--session` is gone), named `<prefix>-<repo>-<hash of the key>`, scope repo is `<prefix>-<repo>`; sizes come only from the recipe; a repository's recipe may declare any scoped sandbox, not warm or agent.
+Status: steps 1-3 built, and repository recipes on the board (each board's catalog is `recipe list --url` for its repository): a task keeps its recipe (#1934); recipes load from the repository's `.agents/recipes/` with `recipe list --url` and sources (#1935); results are files the agent writes and revise goes, factory #1938 and repo-agent #1939, #1940 (design #1933, #1936). Step 4 is built as repository sandboxes (below). Not built: step 5 (`long-lived` labels, `repoRecipes.identity`), step 6 (the overseer launching repository recipes; the watch's rules, watch-rules.md, are factory's, and a repository's `.agents/rules/` is read only by `factory watch rules … --dir`). A PR per run is not built. The overseer runs a repository's recipes when its operator says so: `spec.repoRecipe.mode` off (default), augment (the repository's recipes under names of their own) or replace (the repository's recipe of a name before factory's, built-ins included), read at `spec.repoRecipe.gitCommit` (a SHA, or latest); the watch's commands get it as `FACTORY_REPO_RECIPE_MODE` and `FACTORY_REPO_RECIPE_COMMIT`. Sandboxes (step 4): a recipe on a repository declares `sandbox: {prefix, <six sizes>}`, or `{kind: warm|agent}`; its own is given with `--sandbox-key` (`--session` is gone), named `<prefix>-<repo>-<hash of the key>`; sizes come only from the recipe; a repository's recipe may declare its own sandbox, not warm or agent.
 
 A repository can define its own recipes in `.agents/recipes/<name>.yaml`. They run like the built-in ones: from the CLI (`factory recipe run --recipe <name> --url <item>`), and from a board's catalog, on the items their `on:` names. Adding one should take no Go change.
 
@@ -49,8 +49,7 @@ Not built: a recipe with nothing for a board to launch (the warm recipe) says so
 
 ```yaml
 sandbox:
-  prefix: run        # the name's prefix and the type label
-  scope: key         # key: <prefix>-<repo>-<hash of --sandbox-key>; repo: <prefix>-<repo>
+  prefix: run        # the type label; named <prefix>-<repo>-<hash of --sandbox-key>
   cpu-request: "2"   # every size is required: nothing else sizes it
   cpu-limit: "4"
   memory-request: 4Gi
@@ -59,9 +58,9 @@ sandbox:
   disk: 30Gi
 ```
 
-Every scoped sandbox carries the same labels and annotations (`type` = prefix, `scope`, `key`, and `key-id`, `ready`, `engine`), so the board finds research's, a run's or a repository recipe's the same way. The warm recipe declares `kind: warm` and the agent recipe `kind: agent`; `runRecipe`'s name check is gone. A recipe without `sandbox:` gets its target's sandbox, as before: the item's, or a PR review's own (`credentials: clone`).
+Every repository sandbox carries the same labels and annotations (`type` = prefix, `key`, and `key-id`, `ready`, `engine`), so the board finds research's, a run's or a repository recipe's the same way. The warm recipe declares `kind: warm` and the agent recipe `kind: agent`; `runRecipe`'s name check is gone. A recipe without `sandbox:` gets its target's sandbox, as before: the item's, or a PR review's own (`credentials: clone`).
 
-Not built: `identity` (every scoped sandbox runs as the deployer service account today) and `long-lived` (the board still exempts the `run` prefix from idle-pause and slot counting by its type label).
+Not built: `identity` (every repository sandbox runs as the deployer service account today) and `long-lived` (the board still exempts the `run` prefix from idle-pause and slot counting by its type label).
 
 ### Trust
 
@@ -107,6 +106,6 @@ Instead, the agent writes the result to a file, as the prompt tells it to. The f
 3. **Results are files the agent writes** (factory #1938; repo-agent #1939 inputs with instructions, #1940 re-read results and revise removed):
    - factory: the `output` template function, output files cleared at a run's start and required at its end (`optional`), every built-in's prompts writing their result, `revise:` and result capture removed;
    - repo-agent: outputs read again when a turn ends, review, plan and triage passing a Request's inputs with instructions asked on launch, and the revise route, verb, Requests and buttons removed.
-4. **Generic `sandbox:`**: prefix, scope and sizes; warm and agent as kinds; the name checks gone. Not built: `identity`, `long-lived`, `board: false`.
+4. **Generic `sandbox:`**: prefix and sizes; warm and agent as kinds; the name checks gone. Not built: `identity`, `long-lived`, `board: false`.
 5. **repo-agent** (not built): the catalog per repository, `long-lived` read from labels, and the board's `repoRecipes.identity` setting.
 6. **Later:** the overseer launching repository recipes (on labels or events), and a PR per run (factory/design/run-branches.md).

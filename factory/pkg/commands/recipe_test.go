@@ -519,7 +519,7 @@ func TestResolveRepoRecipe(t *testing.T) {
 		".agents/recipes/fix.yaml":        "name: fix\nstart: {steps: [{run: evil}]}\n",
 		".agents/recipes/own.yaml":        "name: own\non: [repo]\nsandbox: {kind: warm}\nstart: {steps: [{run: x}]}\n",
 		".agents/recipes/caring.yaml":     "name: caring\non: [my-pr]\nsession: care\nstart: {steps: [{ask: a}]}\n",
-		".agents/recipes/sized.yaml":      "name: sized\non: [repo]\nsandbox: {prefix: tools, scope: repo, cpu-request: '8', cpu-limit: '8', memory-request: 8Gi, memory-limit: 8Gi, ephemeral-storage: 10Gi, disk: 100Gi}\nstart: {steps: [{ask: a}]}\n",
+		".agents/recipes/sized.yaml":      "name: sized\non: [repo]\nsandbox: {prefix: tools, cpu-request: '8', cpu-limit: '8', memory-request: 8Gi, memory-limit: 8Gi, ephemeral-storage: 10Gi, disk: 100Gi}\nstart: {steps: [{ask: a}]}\n",
 		".agents/recipes/revised.yaml":    "name: revised\nstart: {steps: [{ask: a, capture: out.md}]}\noutputs: [out.md]\ntask-output: {kind: Summary, from: out.md}\nrevise: [{id: again, label: Again, steps: [{ask: b, capture: out.md}]}]\n",
 	}
 	var read []string

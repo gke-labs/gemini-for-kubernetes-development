@@ -99,9 +99,9 @@ func RunbookInstance(runbook, instance string) string {
 }
 
 // RunSandboxName is a run's own sandbox, keyed by its instance (factory
-// --sandbox-key): ScopedSandboxName with the run recipes' prefix.
+// --sandbox-key): RepoSandboxName with the run recipes' prefix.
 func RunSandboxName(repo, instance string) string {
-	return ScopedSandboxName(RunPrefix, repo, instance)
+	return RepoSandboxName(RunPrefix, repo, instance)
 }
 
 // RunOptions parameterize `factory run <mode>` — planning, deploying

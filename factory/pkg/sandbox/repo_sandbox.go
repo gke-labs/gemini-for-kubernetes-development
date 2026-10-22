@@ -19,19 +19,15 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/k8s"
 )
 
-// A scoped sandbox is the one a recipe on a repository declares by prefix
-// and scope (recipe.SandboxDecl): <prefix>-<repo>-<hash of the key> for
-// scope key, <prefix>-<repo> for scope repo. Whatever the recipe, these
-// are the labels and annotations it carries, so a board finds a research
-// session's, a run's or a repository recipe's the same way.
+// A repository sandbox is the one a recipe on a repository declares by
+// its prefix (recipe.SandboxDecl), one per key: <prefix>-<repo>-<hash of
+// the key>. Whatever the recipe, these are the labels and annotations it
+// carries, so a board finds a research session's, a run's or a repository
+// recipe's the same way.
 const (
 	// LabelType is the sandbox's prefix (rsch, run, ...): what it is for.
 	LabelType = "sandbox.gemini.google.com/type"
-	// LabelScope is its scope, key or repo: every scoped sandbox has it, so
-	// a board can keep them all out of its task slots, whatever the prefix.
-	LabelScope = "sandbox.gemini.google.com/scope"
-	// LabelKey is the key's short hash (ShortID), on a keyed sandbox: a
-	// label value has a charset and a length the key need not respect.
+	// LabelKey is the key's short hash (ShortID): a label value has a charset and a length the key need not respect.
 	LabelKey = "sandbox.gemini.google.com/key"
 	// AnnotationKeyID is the key in full (a research session's id, a
 	// run's name): the label cannot hold it, so this is the only place the
@@ -57,8 +53,8 @@ const (
 	AnnotationEngine = "sandbox.gemini.google.com/engine"
 )
 
-// setupGrace is how long a scoped sandbox may go without its ready
-// receipt before EnsureScopedSandbox stops adopting it and replaces it
+// setupGrace is how long a repository sandbox may go without its ready
+// receipt before EnsureRepoSandbox stops adopting it and replaces it
 // instead.
 //
 // Set to the launch's own timeout, which is a bound rather than a
@@ -92,13 +88,13 @@ const (
 	replace disposition = "replace"
 )
 
-// scopedDisposition decides between the two, and is the whole policy for
+// readyDisposition decides between the two, and is the whole policy for
 // an interrupted launch.
 //
 // Ready is the only thing that protects a sandbox from replacement, so
 // a finished session is never at risk however long it has been idle —
 // age alone never condemns one.
-func scopedDisposition(sb *unstructured.Unstructured, now time.Time) disposition {
+func readyDisposition(sb *unstructured.Unstructured, now time.Time) disposition {
 	switch {
 	case sandboxReady(sb):
 		return adopt
@@ -109,7 +105,7 @@ func scopedDisposition(sb *unstructured.Unstructured, now time.Time) disposition
 	}
 }
 
-// MarkReady writes a scoped sandbox's ready receipt and the engine it was
+// MarkReady writes a repository sandbox's ready receipt and the engine it was
 // set up for: the launch handed it its task, so it is a session's from
 // here, not an interrupted launch's husk. Called once, by the launch.
 //
@@ -167,22 +163,18 @@ func ShortID(key string) string {
 	return hex.EncodeToString(sum[:])[:shortIDLen]
 }
 
-// ScopedSandboxName is a scoped sandbox's name: <prefix>-<repo slug>-<short
-// hash of the key>, or <prefix>-<repo slug> without a key (scope repo), the
-// slug budgeted for the companion -lb Service's DNS cap. The same prefix and
-// key always name the same sandbox, whatever recipe runs: that is how
-// recipes of one prefix share one, and how a retried launch finds the one
-// it made.
-func ScopedSandboxName(prefix, repo, key string) string {
-	suffix := ""
-	if key != "" {
-		suffix = "-" + ShortID(key)
-	}
+// RepoSandboxName is a repository sandbox's name: <prefix>-<repo slug>-<short
+// hash of the key>, the slug budgeted for the companion -lb Service's DNS
+// cap. The same prefix and key always name the same sandbox, whatever
+// recipe runs: that is how recipes of one prefix share one, and how a
+// retried launch finds the one it made.
+func RepoSandboxName(prefix, repo, key string) string {
+	short := ShortID(key)
 	slug := slugifyName(repo)
-	if budget := 60 - len(prefix) - 1 - len(suffix); len(slug) > budget {
+	if budget := 60 - len(prefix) - 1 - len(short) - 1; len(slug) > budget {
 		slug = strings.Trim(slug[:budget], "-")
 	}
-	return prefix + "-" + slug + suffix
+	return prefix + "-" + slug + "-" + short
 }
 
 // slugifyName reduces a name to the lowercase alphanumeric-and-dash
@@ -200,65 +192,49 @@ func slugifyName(s string) string {
 	return strings.Trim(b.String(), "-")
 }
 
-// Scoped is a scoped sandbox as its recipe declares it: Prefix and Scope
-// (recipe.ScopeKey, with Key, or recipe.ScopeRepo, without) and its Size,
-// which only the recipe sets.
-type Scoped struct {
-	Prefix, Scope, Key string
-	Size               Size
+// RepoSandbox is a repository sandbox as its recipe declares it: its
+// Prefix, the Key that names it, and its Size, which only the recipe sets.
+type RepoSandbox struct {
+	Prefix, Key string
+	Size        Size
 }
 
-// Size is a scoped sandbox's size, every field of it from the recipe.
+// Size is a repository sandbox's size, every field of it from the recipe.
 type Size struct {
 	Disk, EphemeralStorage                           string
 	CPURequest, CPULimit, MemoryRequest, MemoryLimit string
 }
 
-// scopeRepo is recipe.ScopeRepo, mirrored so this package stays below
-// recipe.
-const scopeRepo = "repo"
-
-// labels are a scoped sandbox's labels: what it is, its scope and key, and
-// whose.
-func (s Scoped) labels(repoName, user string) map[string]string {
-	labels := map[string]string{
+// labels are a repository sandbox's labels: what it is, its key, and whose.
+func (s RepoSandbox) labels(repoName, user string) map[string]string {
+	return map[string]string{
 		LabelType:                           s.Prefix,
-		LabelScope:                          s.Scope,
+		LabelKey:                            ShortID(s.Key),
 		LabelRepo:                           labelValue(repoName),
 		"factory.gemini.google.com/managed": "true",
 		"factory.gemini.google.com/user":    user,
 	}
-	if s.Key != "" {
-		labels[LabelKey] = ShortID(s.Key)
-	}
-	return labels
 }
 
 // annotations record what the sandbox is for: its key, and which
 // repository, in the repo/cloneURL/htmlURL keys every sandbox type writes.
-func (s Scoped) annotations(repoName, cloneURL, htmlURL string) map[string]string {
-	annotations := map[string]string{"repo": repoName, "cloneURL": cloneURL, "htmlURL": htmlURL}
-	if s.Key != "" {
-		annotations[AnnotationKeyID] = s.Key
-	}
-	return annotations
+func (s RepoSandbox) annotations(repoName, cloneURL, htmlURL string) map[string]string {
+	return map[string]string{"repo": repoName, "cloneURL": cloneURL, "htmlURL": htmlURL, AnnotationKeyID: s.Key}
 }
 
-// EnsureScopedSandbox ensures a scoped sandbox, ScopedSandboxName(prefix,
+// EnsureRepoSandbox ensures a repository sandbox, RepoSandboxName(prefix,
 // repo, key), as the deployer service account. Runs of any recipe of the
 // prefix given the same key share it - a research session's transcript, a
 // run's deployment live on its disk. A sandbox without its ready receipt
 // is adopted while young and replaced once a husk (setupGrace).
-func EnsureScopedSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace string, s Scoped, repoName, cloneURL, htmlURL, image, storageClass string, secrets []SecretMount, envs []EnvVar, user string) (string, error) {
+func EnsureRepoSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace string, s RepoSandbox, repoName, cloneURL, htmlURL, image, storageClass string, secrets []SecretMount, envs []EnvVar, user string) (string, error) {
 	switch {
 	case s.Prefix == "":
-		return "", fmt.Errorf("a scoped sandbox needs a prefix")
-	case s.Scope == scopeRepo && s.Key != "":
-		return "", fmt.Errorf("a %s sandbox of scope repo takes no key", s.Prefix)
-	case s.Scope != scopeRepo && s.Key == "":
-		return "", fmt.Errorf("a %s sandbox of scope %s needs a key", s.Prefix, s.Scope)
+		return "", fmt.Errorf("a repository sandbox needs a prefix")
+	case s.Key == "":
+		return "", fmt.Errorf("a %s sandbox needs a key", s.Prefix)
 	}
-	name := ScopedSandboxName(s.Prefix, repoName, s.Key)
+	name := RepoSandboxName(s.Prefix, repoName, s.Key)
 	if err := ensureDeployerServiceAccount(ctx, kubeClient, namespace); err != nil {
 		return "", err
 	}
@@ -272,7 +248,7 @@ func EnsureScopedSandbox(ctx context.Context, kubeClient *clients.KubernetesClie
 		if werr := awaitSandboxGone(ctx, kubeClient, namespace, name); werr != nil {
 			return "", werr
 		}
-	case err == nil && scopedDisposition(sb, time.Now()) == adopt:
+	case err == nil && readyDisposition(sb, time.Now()) == adopt:
 		// Finished, or unfinished and young enough that the launch which
 		// made it is still running or died moments ago. Worth keeping:
 		// the pod, the image pull and the disk are the expensive parts,

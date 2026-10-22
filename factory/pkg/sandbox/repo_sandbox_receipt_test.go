@@ -18,9 +18,9 @@ var dns1123Label = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`)
 // Creation has to be idempotent. A caller whose create times out
 // retries with the same key; if the name were random it would get a
 // second sandbox, and a second engine, for one conversation.
-func TestScopedSandboxNameIsDeterministic(t *testing.T) {
-	first := ScopedSandboxName("rsch", "kubernetes", "1d9f5c1e-3f4a-4f0e-9c3b-2a1b7d8e6f00")
-	second := ScopedSandboxName("rsch", "kubernetes", "1d9f5c1e-3f4a-4f0e-9c3b-2a1b7d8e6f00")
+func TestRepoSandboxNameIsDeterministic(t *testing.T) {
+	first := RepoSandboxName("rsch", "kubernetes", "1d9f5c1e-3f4a-4f0e-9c3b-2a1b7d8e6f00")
+	second := RepoSandboxName("rsch", "kubernetes", "1d9f5c1e-3f4a-4f0e-9c3b-2a1b7d8e6f00")
 	if first != second {
 		t.Errorf("same inputs gave %q then %q", first, second)
 	}
@@ -32,21 +32,18 @@ func TestScopedSandboxNameIsDeterministic(t *testing.T) {
 // Two conversations about one repository must not land in one sandbox:
 // the transcript lives on the PVC, so sharing the sandbox shares the
 // conversation.
-func TestScopedSandboxNameSeparatesKeys(t *testing.T) {
-	a := ScopedSandboxName("rsch", "kubernetes", "session-a")
-	b := ScopedSandboxName("rsch", "kubernetes", "session-b")
+func TestRepoSandboxNameSeparatesKeys(t *testing.T) {
+	a := RepoSandboxName("rsch", "kubernetes", "session-a")
+	b := RepoSandboxName("rsch", "kubernetes", "session-b")
 	if a == b {
 		t.Errorf("distinct keys collided on %q", a)
-	}
-	if got := ScopedSandboxName("rsch", "kubernetes", ""); got != "rsch-kubernetes" {
-		t.Errorf("a repo-scoped name = %q, want rsch-kubernetes", got)
 	}
 }
 
 // The name is assembled from caller-supplied text, so every plausible
 // shape of it has to come out as a legal object name within the budget
 // the -lb Service's DNS cap allows.
-func TestScopedSandboxNameIsAlwaysLegal(t *testing.T) {
+func TestRepoSandboxNameIsAlwaysLegal(t *testing.T) {
 	cases := []struct {
 		name    string
 		repo    string
@@ -61,12 +58,11 @@ func TestScopedSandboxNameIsAlwaysLegal(t *testing.T) {
 		{"empty repo", "", "s1"},
 		{"session with slashes", "kubernetes", "org/team/session-1"},
 		{"long session", "kubernetes", strings.Repeat("x", 500)},
-		{"repo scope, very long", strings.Repeat("averylongreponame", 12), ""},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := ScopedSandboxName("rsch", tc.repo, tc.session)
+			got := RepoSandboxName("rsch", tc.repo, tc.session)
 			if len(got) > 60 {
 				t.Errorf("name %q is %d chars, over the 60 budget", got, len(got))
 			}
@@ -99,13 +95,12 @@ func TestShortIDShape(t *testing.T) {
 // say for itself which key and which repository it belongs to; the key
 // label is the digest in the name, the annotation the key verbatim, which
 // no label could hold.
-func TestScopedLabelsAndAnnotations(t *testing.T) {
+func TestRepoSandboxLabelsAndAnnotations(t *testing.T) {
 	const key = "org/team/Session With Spaces"
-	s := Scoped{Prefix: "rsch", Scope: "key", Key: key}
+	s := RepoSandbox{Prefix: "rsch", Key: key}
 	labels := s.labels("owner/kubernetes", "barney-s")
 	want := map[string]string{
 		LabelType:                           "rsch",
-		LabelScope:                          "key",
 		LabelKey:                            ShortID(key),
 		LabelRepo:                           labelValue("owner/kubernetes"),
 		"factory.gemini.google.com/managed": "true",
@@ -116,26 +111,21 @@ func TestScopedLabelsAndAnnotations(t *testing.T) {
 			t.Errorf("label %q = %q, want %q", k, labels[k], v)
 		}
 	}
-	if !strings.HasSuffix(ScopedSandboxName("rsch", "kubernetes", key), labels[LabelKey]) {
+	if len(labels) != len(want) {
+		t.Errorf("labels = %v", labels)
+	}
+	if !strings.HasSuffix(RepoSandboxName("rsch", "kubernetes", key), labels[LabelKey]) {
 		t.Error("the key label does not match the digest in the sandbox name")
 	}
 	annotations := s.annotations("kubernetes", "clone", "html")
 	if annotations[AnnotationKeyID] != key || annotations["repo"] != "kubernetes" || annotations["cloneURL"] != "clone" || annotations["htmlURL"] != "html" {
 		t.Errorf("annotations = %v", annotations)
 	}
-
-	repo := Scoped{Prefix: "tools", Scope: "repo"}
-	if _, ok := repo.labels("kubernetes", "u")[LabelKey]; ok {
-		t.Error("a repo-scoped sandbox has a key label")
-	}
-	if _, ok := repo.annotations("kubernetes", "", "")[AnnotationKeyID]; ok {
-		t.Error("a repo-scoped sandbox has a key-id annotation")
-	}
 }
 
-// scopedSB is a sandbox of a given age, with or without the receipt
+// repoSB is a sandbox of a given age, with or without the receipt
 // that says its setup finished.
-func scopedSB(age time.Duration, ready bool) *unstructured.Unstructured {
+func repoSB(age time.Duration, ready bool) *unstructured.Unstructured {
 	meta := map[string]interface{}{
 		"name":              "rsch-repo-deadbeef",
 		"namespace":         "alice",
@@ -156,9 +146,9 @@ func scopedSB(age time.Duration, ready bool) *unstructured.Unstructured {
 // The receipt is the only protection from replacement, and it is
 // absolute: a conversation someone comes back to after a week is not a
 // husk, and deleting it would take the transcript with it.
-func TestFinishedScopedSandboxIsNeverReplaced(t *testing.T) {
-	old := scopedSB(30*24*time.Hour, true)
-	if got := scopedDisposition(old, time.Now()); got != adopt {
+func TestFinishedRepoSandboxIsNeverReplaced(t *testing.T) {
+	old := repoSB(30*24*time.Hour, true)
+	if got := readyDisposition(old, time.Now()); got != adopt {
 		t.Errorf("disposition of a ready month-old sandbox = %v, want adopt", got)
 	}
 }
@@ -169,9 +159,9 @@ func TestFinishedScopedSandboxIsNeverReplaced(t *testing.T) {
 // each new controller was about to complete — and repeated restarts are
 // exactly when interrupted launches happen, so that policy would never
 // converge.
-func TestYoungUnfinishedScopedSandboxIsAdopted(t *testing.T) {
-	young := scopedSB(setupGrace/2, false)
-	if got := scopedDisposition(young, time.Now()); got != adopt {
+func TestYoungUnfinishedRepoSandboxIsAdopted(t *testing.T) {
+	young := repoSB(setupGrace/2, false)
+	if got := readyDisposition(young, time.Now()); got != adopt {
 		t.Errorf("disposition of a young unfinished sandbox = %v, want adopt", got)
 	}
 }
@@ -180,9 +170,9 @@ func TestYoungUnfinishedScopedSandboxIsAdopted(t *testing.T) {
 // outlive its own timeout. What remains is a pod with an empty
 // workspace, which an engine cannot chdir into — so it is replaced
 // rather than handed to the session as if it worked.
-func TestOldUnfinishedScopedSandboxIsReplaced(t *testing.T) {
-	stale := scopedSB(setupGrace+time.Minute, false)
-	if got := scopedDisposition(stale, time.Now()); got != replace {
+func TestOldUnfinishedRepoSandboxIsReplaced(t *testing.T) {
+	stale := repoSB(setupGrace+time.Minute, false)
+	if got := readyDisposition(stale, time.Now()); got != replace {
 		t.Errorf("disposition of a stale unfinished sandbox = %v, want replace", got)
 	}
 }
@@ -190,7 +180,7 @@ func TestOldUnfinishedScopedSandboxIsReplaced(t *testing.T) {
 // An empty annotation value is not a receipt. The receipt is written as
 // a timestamp, and a blank one would mean a patch that half-landed.
 func TestBlankReadyAnnotationIsNotAReceipt(t *testing.T) {
-	sb := scopedSB(time.Hour, false)
+	sb := repoSB(time.Hour, false)
 	sb.SetAnnotations(map[string]string{AnnotationReady: ""})
 	if sandboxReady(sb) {
 		t.Error("a blank ready annotation was read as a finished setup")
