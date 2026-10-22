@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"net/http"
 	"regexp"
@@ -238,6 +239,24 @@ func (s *Server) sandboxLifecycle(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "wake failed", "details": err.Error()})
 			return
 		}
+	case "restart":
+		// Recovery for a session stuck in a turn its engine never ended,
+		// which Stop cannot end (the engine ignores the cancel), and for
+		// an evicted pod: the pod is made again on the same disk, and the
+		// daemon resumes the conversation. The wake stamp shields the
+		// booting pod from pauseFinished, as for a wake.
+		if err := s.K8sManager.UpdateSandboxAnnotation(ctx, namespace, name, "sandbox.gemini.google.com/unpaused-at", nowRFC3339()); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "restart failed", "details": err.Error()})
+			return
+		}
+		if err := s.K8sManager.RestartSandboxPod(ctx, namespace, name); err != nil {
+			code := http.StatusInternalServerError
+			if errors.Is(err, k8s.ErrSandboxPaused) {
+				code = http.StatusConflict
+			}
+			c.JSON(code, gin.H{"error": "restart failed", "details": err.Error()})
+			return
+		}
 	case "pause":
 		if err := s.K8sManager.ScaledownSandboxByName(ctx, namespace, name); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "pause failed", "details": err.Error()})
@@ -260,7 +279,7 @@ func (s *Server) sandboxLifecycle(c *gin.Context) {
 			return
 		}
 	default:
-		c.JSON(http.StatusBadRequest, gin.H{"error": "unknown action (wake|pause|delete|retry)"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "unknown action (wake|restart|pause|delete|retry)"})
 		return
 	}
 	c.Status(http.StatusOK)
