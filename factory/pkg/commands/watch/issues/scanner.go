@@ -453,14 +453,15 @@ func (s *Scanner) queueTask(ctx context.Context, issue *githubv39.Issue, refIssu
 	case common.WorkflowMissing, common.WorkflowUnusable:
 		s.rec.Fill(func(it *rules.Item) { it.WorkflowMissing = true })
 		// The engine's workflow-missing (off, or not decided: the issue is
-		// neither stopped nor stepped); its stop, with the load error in its
-		// comment, is the handler's.
-		if !rules.Decided(s.rules.Decide(*s.rec.Item, s.rulesEnv()), "workflow-missing") {
+		// neither stopped nor stepped); its stop is the handler's, which
+		// posts the rule's comment with the definition and its load error.
+		d, ok := decisionOf(s.rules.Decide(*s.rec.Item, s.rulesEnv()), "workflow-missing")
+		if !ok {
 			klog.Infof("Skipping issue #%d: the rules engine does not decide workflow-missing", num)
 			return
 		}
 		s.rec.Decided("workflow-missing", rules.OutcomeRun)
-		s.stopForUnavailableWorkflow(ctx, num, wf)
+		s.stopForUnavailableWorkflow(ctx, num, wf, d.Writes.Comment)
 		return
 	case common.WorkflowUnresolved:
 		// Whether the definition exists is unknown, so neither run it nor
@@ -662,14 +663,15 @@ func (s *Scanner) applyTriggerLabel(ctx context.Context, num int) {
 }
 
 // stopForUnavailableWorkflow pauses an issue whose workflow definition does
-// not exist or cannot be used, and tells its author why. Queueing the run
-// would only fail, and fail again after every cooldown, with nothing on the
-// issue to say so.
+// not exist or cannot be used, and tells its author why: the
+// workflow-missing rule's comment (ruleComment), then which definition and
+// its error. Queueing the run would only fail, and fail again after every
+// cooldown, with nothing on the issue to say so.
 //
 // The stop label goes on first. It is what keeps later cycles from coming back
 // here, so if it cannot be applied the comment is held back too: the next
 // cycle retries both, rather than posting the same comment every cycle.
-func (s *Scanner) stopForUnavailableWorkflow(ctx context.Context, num int, wf issueWorkflow) {
+func (s *Scanner) stopForUnavailableWorkflow(ctx context.Context, num int, wf issueWorkflow, ruleComment string) {
 	stopLabel := conventions.StopLabel(s.cfg.TriggerLabel)
 	if s.cfg.DryRun {
 		fmt.Printf("[DRYRUN] Would add label '%s' to issue #%d and comment: workflow %s unavailable: %v\n", stopLabel, num, wf.Path, wf.Err)
@@ -683,25 +685,21 @@ func (s *Scanner) stopForUnavailableWorkflow(ctx context.Context, num int, wf is
 	if err := s.queue.RemovePendingTasksForNumber(num); err != nil {
 		klog.Warningf("Failed to withdraw pending tasks for issue #%d: %v", num, err)
 	}
-	if err := s.gh.AddComment(ctx, num, unavailableWorkflowComment(wf, stopLabel)); err != nil {
+	if err := s.gh.AddComment(ctx, num, unavailableWorkflowComment(ruleComment, wf, stopLabel)); err != nil {
 		klog.Errorf("Failed to comment on issue #%d about its unavailable workflow: %v", num, err)
 	}
 }
 
-// unavailableWorkflowComment explains to an issue's author that the workflow
-// it names could not be found or used, and how to resume once that is fixed.
-func unavailableWorkflowComment(wf issueWorkflow, stopLabel string) string {
+// unavailableWorkflowComment is the stop comment of the workflow-missing
+// rule (act.StopComment of its words), then which definition could not be
+// found or loaded, what to check, and its error.
+func unavailableWorkflowComment(ruleComment string, wf issueWorkflow, stopLabel string) string {
 	var b strings.Builder
+	b.WriteString(act.StopComment(ruleComment, stopLabel))
 	if wf.Status == common.WorkflowUnusable {
-		fmt.Fprintf(&b, "🤖 AI Factory could not load the workflow definition `%s` referenced in this issue, so no workflow run was started. ", wf.Path)
+		fmt.Fprintf(&b, "\n\nThe workflow definition `%s` could not be loaded: fix the problem described below.", wf.Path)
 	} else {
-		fmt.Fprintf(&b, "🤖 AI Factory could not find the workflow definition `%s` referenced in this issue (or it is not accessible), so no workflow run was started. ", wf.Path)
-	}
-	fmt.Fprintf(&b, "I have attached the `%s` label to pause automated processing.\n\n", stopLabel)
-	if wf.Status == common.WorkflowUnusable {
-		fmt.Fprintf(&b, "Please fix the problem described below, then remove the `%s` label to try again.", stopLabel)
-	} else {
-		fmt.Fprintf(&b, "Please check that the path is correct, that the file exists on the default branch and is readable by the bot (and that any `redirect` it declares points to a file that exists), then remove the `%s` label to try again.", stopLabel)
+		fmt.Fprintf(&b, "\n\nThe workflow definition `%s` could not be found (or is not accessible): check that the path is correct, that the file exists on the default branch and is readable by the bot, and that any `redirect` it declares points to a file that exists.", wf.Path)
 	}
 	if wf.Err != nil {
 		fmt.Fprintf(&b, "\n\n<details><summary>Details</summary>\n\n```\n%v\n```\n</details>", wf.Err)

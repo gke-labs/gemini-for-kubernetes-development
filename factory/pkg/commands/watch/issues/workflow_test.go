@@ -202,8 +202,12 @@ func TestQueueTask_UnusableWorkflowStopsTheIssue(t *testing.T) {
 	if len(fake.labels) != 1 || fake.labels[0] != "factory/stop" {
 		t.Errorf("added labels %v, want ['factory/stop']", fake.labels)
 	}
-	if len(fake.comments) != 1 || !strings.Contains(fake.comments[0], "could not load") || !strings.Contains(fake.comments[0], "chained workflow redirects") {
-		t.Errorf("want one comment saying the workflow could not be loaded and why, got %v", fake.comments)
+	// The rule's own words first, then which definition and why.
+	set, _ := rules.Builtin()
+	words := set.Named("workflow-missing").Run.Stop.Comment
+	if len(fake.comments) != 1 || !strings.HasPrefix(fake.comments[0], "🤖 "+words) ||
+		!strings.Contains(fake.comments[0], "`.agents/workflows/chained.md` could not be loaded") || !strings.Contains(fake.comments[0], "chained workflow redirects") {
+		t.Errorf("want one comment, the rule's words then the definition and its error, got %v", fake.comments)
 	}
 }
 
