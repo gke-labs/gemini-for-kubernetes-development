@@ -9,6 +9,7 @@ import (
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
@@ -285,7 +286,10 @@ func EnsureResearchSandbox(ctx context.Context, kubeClient *clients.KubernetesCl
 	}
 
 	if diskSize == "" {
-		diskSize = "10Gi"
+		diskSize = ResearchDiskSize
+	}
+	if ephemeralStorage == "" {
+		ephemeralStorage = ResearchEphemeralStorage
 	}
 
 	opt := AgentSandboxOptions{
@@ -306,6 +310,14 @@ func EnsureResearchSandbox(ctx context.Context, kubeClient *clients.KubernetesCl
 	}
 
 	fillEnvResources(&opt.DevSandboxOptions)
+	// A conversation reads, builds and tests the whole repository, as a
+	// fix does, and a big one (KCC) was evicted at the code tasks'
+	// 500m/2Gi and 6Gi of scratch. Raised only where neither flags,
+	// config, nor SANDBOX_* env chose a value, and kept a valid pair: a
+	// default request no more than the limit chosen, a default limit no
+	// less than the request chosen.
+	opt.CPURequest, opt.CPULimit = defaultPair(opt.CPURequest, opt.CPULimit, ResearchCPURequest, ResearchCPULimit)
+	opt.MemoryRequest, opt.MemoryLimit = defaultPair(opt.MemoryRequest, opt.MemoryLimit, ResearchMemoryRequest, ResearchMemoryLimit)
 	sbObj, svc := NewAgentSandbox(opt)
 
 	if err := createSandbox(ctx, kubeClient, namespace, sbObj, svc); err != nil {
@@ -313,3 +325,35 @@ func EnsureResearchSandbox(ctx context.Context, kubeClient *clients.KubernetesCl
 	}
 	return name, nil
 }
+
+// defaultPair fills an unset request or limit with its default, keeping
+// request <= limit when one of them was chosen.
+func defaultPair(req, lim, defReq, defLim string) (string, string) {
+	switch {
+	case req == "" && lim == "":
+		return defReq, defLim
+	case req == "":
+		if l, err := resource.ParseQuantity(lim); err == nil && l.Cmp(resource.MustParse(defReq)) < 0 {
+			return lim, lim
+		}
+		return defReq, lim
+	case lim == "":
+		if r, err := resource.ParseQuantity(req); err == nil && r.Cmp(resource.MustParse(defLim)) > 0 {
+			return req, req
+		}
+		return req, defLim
+	}
+	return req, lim
+}
+
+// A research sandbox's size when the caller chooses none: a conversation
+// builds and tests the repository as a fix does. 10Gi of ephemeral
+// storage is GKE Autopilot's most.
+const (
+	ResearchCPURequest       = "4"
+	ResearchCPULimit         = "8"
+	ResearchMemoryRequest    = "12Gi"
+	ResearchMemoryLimit      = "16Gi"
+	ResearchEphemeralStorage = "10Gi"
+	ResearchDiskSize         = "40Gi"
+)
