@@ -25,7 +25,7 @@ var taskFileRE = regexp.MustCompile(`^task-(?:pr-(\d+)-([a-z]+)|issue-(\d+)|work
 var ruleTaskFileRE = regexp.MustCompile(`^task-(pr|issue)-(\d+)-rule-([a-z0-9][a-z0-9-]*)\.yaml$`)
 
 // prTaskSuffixRules are the rules a PR's task files run, by their suffix
-// (prs.prTaskRules).
+// (prs.prRuleTasks).
 var prTaskSuffixRules = map[string]string{"comments": "comments", "iterate": "conflict", "investigate": "ci", "review": "review"}
 
 // taskRule is the rule a task file runs, the kind of item it is on and

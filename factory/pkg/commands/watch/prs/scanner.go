@@ -616,10 +616,12 @@ func (s *Scanner) evaluate(ctx context.Context, prIssue *githubv39.Issue) {
 		isExplicitlyAssigned: assignedBot != "",
 		prURL:                fmt.Sprintf("https://github.com/%s/%s/pull/%d", s.gh.Owner(), s.gh.Repo(), num),
 		refIssues:            refs,
+		checks:               checkAnalysis,
+		comments:             commentAnalysis,
 	}
 
 	// The pr-care rule the engine decides, at most one (they take the PR):
-	// its give-up is its writes, its run its handler's task.
+	// its give-up is its writes, its run its task (queueRuleTask).
 	s.engineCare = s.engineDecide()
 	completed := true
 	rule := s.engineCareRule()
@@ -627,21 +629,15 @@ func (s *Scanner) evaluate(ctx context.Context, prIssue *githubv39.Issue) {
 	case rule == "":
 	case s.engineOutcome(rule) == rules.OutcomeGiveUp:
 		s.actOn(ctx, prIssue, rule)
-	case rule == "comments":
-		completed = s.handlePRComments(ctx, pc, commentAnalysis)
 	case rule == "conflict":
 		// Returns without recording the evaluation, so a conflicted pull
 		// request is evaluated again every cycle: whether the conflict is
 		// gone is answered by GetPullRequest, and nothing about resolving
 		// it upstream necessarily moves this pull request's updated_at.
-		s.handlePRIterate(ctx, pc)
+		s.queueRuleTask(ctx, pc, rule)
 		return
-	case rule == "ci":
-		completed = s.handlePRInvestigate(ctx, pc, checkAnalysis)
-	case rule == "review":
-		completed = s.handlePRReview(ctx, pc, checkAnalysis.checkRuns)
 	default:
-		completed = s.handleRuleTask(ctx, pc, rule)
+		completed = s.queueRuleTask(ctx, pc, rule)
 	}
 
 	// The engine's ready or ready-unreview: its writes.

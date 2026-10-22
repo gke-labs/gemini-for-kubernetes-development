@@ -5,6 +5,7 @@ import (
 	"flag"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -20,19 +21,8 @@ var updateGolden = flag.Bool("update", false, "rewrite the handlers' golden task
 // queueFor queues the task the engine decided for rule on the pull request,
 // as the evaluation does, and reports whether it completed.
 func queueFor(s *Scanner, ctx context.Context, pc *prContext, rule string, checks prCheckAnalysis, comments prCommentAnalysis) bool {
-	switch rule {
-	case "comments":
-		return s.handlePRComments(ctx, pc, comments)
-	case "conflict":
-		s.handlePRIterate(ctx, pc)
-		return true
-	case "ci":
-		return s.handlePRInvestigate(ctx, pc, checks)
-	case "review":
-		return s.handlePRReview(ctx, pc, checks.checkRuns)
-	default:
-		return s.handleRuleTask(ctx, pc, rule)
-	}
+	pc.checks, pc.comments = checks, comments
+	return s.queueRuleTask(ctx, pc, rule)
 }
 
 // Each PR rule queues the same task, field for field, whatever handler
@@ -72,10 +62,31 @@ func TestHandlersQueueTheSameTasks(t *testing.T) {
 	}
 	comments := prCommentAnalysis{hasNewComments: true, oldestCommentTime: comment, oldestCommentAuthor: "alice", oldestCommentType: "review comment", oldestCommentID: 42}
 
-	for _, rule := range []string{"comments", "conflict", "ci", "review", "preview"} {
-		t.Run(rule, func(t *testing.T) {
+	for _, name := range []string{"comments", "comments-retry", "conflict", "ci", "review", "preview"} {
+		rule, retry := strings.CutSuffix(name, "-retry")
+		t.Run(name, func(t *testing.T) {
 			dir := t.TempDir()
-			s, _ := newTestScanner(t, dir, testOpts{BotUsers: []string{"bot1"}, TriggerLabel: "factory", Rules: control})
+			s, queue := newTestScanner(t, dir, testOpts{BotUsers: []string{"bot1"}, TriggerLabel: "factory", Rules: control})
+			comments := comments
+			if retry {
+				// Again after a run that failed on this head: no new
+				// feedback, the last run's trigger and retry count.
+				comments = prCommentAnalysis{}
+				last := &api.QueueTask{Type: api.TypePRComments, Number: 10, RetryCount: 1, TriggerEventTime: failed, Status: api.StatusFailed}
+				if err := queue.Enqueue("task-pr-10-comments.yaml", last); err != nil {
+					t.Fatal(err)
+				}
+				fn, task, err := queue.ClaimNextCandidate()
+				if err != nil || fn == "" {
+					t.Fatalf("claim: %v", err)
+				}
+				if err := queue.StartTask(fn, task); err != nil {
+					t.Fatal(err)
+				}
+				if err := queue.FailTask(fn, task, "boom"); err != nil {
+					t.Fatal(err)
+				}
+			}
 			r := set.Named(rule)
 			s.engineCare = []rules.Decision{{Rule: rule, Kind: rules.OnPR, Number: 10, Outcome: rules.OutcomeRun, Recipe: r.Run.Recipe, Apply: r.Run.Apply, Inputs: r.Run.Inputs, Phase: r.Policy.Phase}}
 			s.rec = s.startRecording(prIssue)
@@ -107,7 +118,7 @@ func TestHandlersQueueTheSameTasks(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			golden := filepath.Join("testdata", "golden-"+rule+".yaml")
+			golden := filepath.Join("testdata", "golden-"+name+".yaml")
 			if *updateGolden {
 				if err := os.WriteFile(golden, got, 0o644); err != nil {
 					t.Fatal(err)

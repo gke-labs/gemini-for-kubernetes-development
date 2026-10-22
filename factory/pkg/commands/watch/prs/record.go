@@ -21,14 +21,6 @@ type runHistory interface {
 	EndedRuns(filename string) []api.EndedRun
 }
 
-// prTaskRules are the rules a PR's task files run, by their suffix.
-var prTaskRules = []struct{ suffix, rule string }{
-	{"comments", "comments"},
-	{"iterate", "conflict"},
-	{"investigate", "ci"},
-	{"review", "review"},
-}
-
 // rulesEnv is the overseer's side of a rules decision, as the scanner sees
 // it.
 func (s *Scanner) rulesEnv() rules.Env {
@@ -101,9 +93,9 @@ func (s *Scanner) recordRuns(num int) {
 // its tasks that ended, and the rules whose task is queued or running.
 func (s *Scanner) fillRuns(it *rules.Item, num int) {
 	h, _ := s.queue.(runHistory)
-	tasks := slices.Clone(prTaskRules)
+	tasks := slices.Clone(prRuleTasks)
 	for _, r := range s.ruleTaskRules() {
-		tasks = append(tasks, struct{ suffix, rule string }{"rule-" + r, r})
+		tasks = append(tasks, ruleTaskOf(r))
 	}
 	for _, t := range tasks {
 		filename := fmt.Sprintf("task-pr-%d-%s.yaml", num, t.suffix)
@@ -207,7 +199,7 @@ func (s *Scanner) engineOutcome(rule string) string {
 // engineCareRule is the pr-care rule the engine decided, "" when none:
 // they take the PR, so there is at most one. A rule factory does not
 // handle by name that takes the PR (a repository's) is one too, carried
-// out as a rule task (handleRuleTask).
+// out as a rule task (queueRuleTask).
 func (s *Scanner) engineCareRule() string {
 	for _, d := range s.engineCare {
 		if slices.Contains(prCareRules, d.Rule) {
