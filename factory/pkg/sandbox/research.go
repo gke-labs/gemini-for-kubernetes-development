@@ -207,15 +207,23 @@ func ResearchShortID(sessionID string) string {
 }
 
 // ResearchSandboxName returns the sandbox name for one research
-// session: rsch-<slug>-<short id>, slug-budgeted for the companion
-// -lb Service's DNS cap.
+// session: rsch-<slug>-<short id> (KeyedSandboxName).
 func ResearchSandboxName(repo, sessionID string) string {
-	short := ResearchShortID(sessionID)
+	return KeyedSandboxName("rsch", repo, sessionID)
+}
+
+// KeyedSandboxName is the sandbox of a keyed kind (recipe.SandboxKinds)
+// for one key: <prefix>-<repo slug>-<short hash of the key>, the slug
+// budgeted for the companion -lb Service's DNS cap. The same key always
+// names the same sandbox, whatever recipe runs: that is how runs of a
+// kind share one, and how a retried launch finds the one it made.
+func KeyedSandboxName(prefix, repo, key string) string {
+	short := ResearchShortID(key)
 	slug := slugifyName(repo)
-	if budget := 60 - len("rsch-") - len(short) - 1; len(slug) > budget {
+	if budget := 60 - len(prefix) - 1 - len(short) - 1; len(slug) > budget {
 		slug = strings.Trim(slug[:budget], "-")
 	}
-	return "rsch-" + slug + "-" + short
+	return prefix + "-" + slug + "-" + short
 }
 
 // slugifyName reduces a name to the lowercase alphanumeric-and-dash
@@ -240,11 +248,16 @@ func slugifyName(s string) string {
 // would mean sharing a transcript.
 // size is what the recipe's sandbox: declares; factory's Research*
 // defaults fill in the rest. Nothing the caller passes sizes it.
-func EnsureResearchSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, repoName, sessionID, cloneURL, htmlURL, image, storageClass string, size ResearchSize, secrets []SecretMount, envs []EnvVar, user string) (string, error) {
+//
+// prefix starts its name ("" for research's own, rsch).
+func EnsureResearchSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, repoName, prefix, sessionID, cloneURL, htmlURL, image, storageClass string, size ResearchSize, secrets []SecretMount, envs []EnvVar, user string) (string, error) {
 	if sessionID == "" {
 		return "", fmt.Errorf("research sandbox needs a session id")
 	}
 	name := ResearchSandboxName(repoName, sessionID)
+	if prefix != "" {
+		name = KeyedSandboxName(prefix, repoName, sessionID)
+	}
 	if err := ensureDeployerServiceAccount(ctx, kubeClient, namespace); err != nil {
 		return "", err
 	}

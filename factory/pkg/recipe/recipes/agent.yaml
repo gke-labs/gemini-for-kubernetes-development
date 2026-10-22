@@ -22,6 +22,8 @@
 name: agent
 label: Agent
 on: [repo]
+sandbox:
+  kind: agent
 task-type: agent
 
 inputs:

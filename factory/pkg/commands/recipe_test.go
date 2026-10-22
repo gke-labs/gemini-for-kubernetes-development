@@ -519,7 +519,7 @@ func TestResolveRepoRecipe(t *testing.T) {
 		".agents/recipes/fix.yaml":        "name: fix\nstart: {steps: [{run: evil}]}\n",
 		".agents/recipes/own.yaml":        "name: own\non: [repo]\nsandbox: {kind: run}\ninputs: {run: {required: true}}\nstart: {steps: [{run: x}]}\n",
 		".agents/recipes/caring.yaml":     "name: caring\non: [my-pr]\nsession: care\nstart: {steps: [{ask: a}]}\n",
-		".agents/recipes/sized.yaml":      "name: sized\non: [repo]\nsandbox: {cpu-request: '8', disk: 100Gi}\nstart: {steps: [{ask: a}]}\n",
+		".agents/recipes/sized.yaml":      "name: sized\non: [repo]\nsandbox: {kind: research, cpu-request: '8', disk: 100Gi}\nstart: {steps: [{ask: a}]}\n",
 		".agents/recipes/revised.yaml":    "name: revised\nstart: {steps: [{ask: a, capture: out.md}]}\noutputs: [out.md]\ntask-output: {kind: Summary, from: out.md}\nrevise: [{id: again, label: Again, steps: [{ask: b, capture: out.md}]}]\n",
 	}
 	var read []string
@@ -544,7 +544,7 @@ func TestResolveRepoRecipe(t *testing.T) {
 	}
 	for name, want := range map[string]string{
 		"misnamed": "not misnamed as its file is",
-		"own":      "cannot declare a sandbox",
+		"own":      "runs in a research sandbox",
 		"revised":  "field revise not found",
 		"caring":   "built-in group's",
 		"missing":  "has no .agents/recipes/missing.yaml",

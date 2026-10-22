@@ -74,7 +74,7 @@ task-output:
 `runRecipe` needs an issue or PR URL today and fills `issue_*`. Research targets a repository:
 
 ```
-factory recipe research --url <repo url> --topic … [--session ID] [--run-name NAME]
+factory recipe research --url <repo url> --topic … --sandbox-key ID [--run-name NAME]
 ```
 
 - **The URL may be a repo.** `githubItem` gains a repo-only form (`Number` 0) with the inputs `repo_owner`, `repo_name`, `url` and `repo_url`. Every ask is rendered with the inputs before a sandbox is made, so a recipe that reads `issue_*` fails then for a repo target.
@@ -118,7 +118,7 @@ actions: …
 
 ### repo-agent
 
-- **Launch.** The Request verb `research` stays. The controller runs `factory recipe research --url <repo> --session <session> --run-name research/<session>/<ts> --topic …` instead of `factory research start` plus a kickoff. The kickoff annotation, its TTL, the 409, the `research-ready` receipt and `research-engine` all go. The recorded run says what ran, and the engine is the board's (claude still maps to gemini; see Known limits). Since #1921 the Sessions start box picks gemini or antigravity, filed as `spec.research.engine` on the Request.
+- **Launch.** The Request verb `research` stays. The controller runs `factory recipe research --url <repo> --sandbox-key <session> --run-name research/<session>/<ts> --topic …` instead of `factory research start` plus a kickoff. The kickoff annotation, its TTL, the 409, the `research-ready` receipt and `research-engine` all go. The recorded run says what ran, and the engine is the board's (claude still maps to gemini; see Known limits). Since #1921 the Sessions start box picks gemini or antigravity, filed as `spec.research.engine` on the Request.
 - **The rail.** Live state (busy / waiting / held) comes from the daemon's sessions, as the task-session view's does. Pending rows still come from Requests. Superseded: the rail is now the Sessions page, fed by `/api/sessions`; `GET /api/research` was deleted (#1921).
 - **Open.** A row opens the task-session view on its session (`#/task-session/<sandbox>/<task>`). The `#/research/<id>` view, its 💾, notes panel and event stream were deleted when one view served every recipe (#1766).
 - **Rename, delete, title.** Kept as they are: annotations on the sandbox, and deleting the sandbox.

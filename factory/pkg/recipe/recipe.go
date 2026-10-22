@@ -110,10 +110,9 @@ type Recipe struct {
 	// ApplicableWhen narrows the items on: names to those the recipe
 	// applies to. Unset, all of them. Like TaskOutput it is factory's.
 	ApplicableWhen *ApplicableWhen `yaml:"applicable-when,omitempty"`
-	// Sandbox is the sandbox a recipe on a repository runs in: kind run, a
-	// run's own (the run recipes); no kind, the conversation's, at the size
-	// it declares (factory's defaults for what it does not). Like
-	// TaskOutput it is factory's.
+	// Sandbox is the sandbox a recipe on a repository runs in: its kind
+	// (SandboxKinds), required for one, and its size. Like TaskOutput it is
+	// factory's.
 	Sandbox *SandboxDecl `yaml:"sandbox,omitempty"`
 	// Timeout is how long a run may take (a Go duration: 3h), for
 	// whoever runs the recipe for a board; unset, its own default. Like
@@ -121,20 +120,57 @@ type Recipe struct {
 	Timeout string `yaml:"timeout,omitempty"`
 }
 
-// SandboxRun is the one kind of sandbox a recipe may declare: a run's own,
-// run-<repo>-<run>, one per value of the recipe's run input, kept for
-// every phase of the run (the run recipes). With no kind, a recipe on a
-// repository runs in its conversation's sandbox (a research session's),
-// at the size it declares.
-const SandboxRun = "run"
+// The kinds of sandbox a recipe on a repository runs in. A kind is a
+// reuse scope: runs of any recipes of one kind given the same sandbox key
+// (--sandbox-key) run in one sandbox, <prefix>-<repo>-<hash of the key>;
+// a keyless kind has one sandbox per repository, <prefix>-<repo>.
+const (
+	// SandboxResearch is a conversation's (a research session's): one per
+	// key, sized as the recipe declares, factory's defaults otherwise.
+	SandboxResearch = "research"
+	// SandboxRun is a run's own (the run recipes): one per key, kept for
+	// every phase of the run.
+	SandboxRun = "run"
+	// SandboxWarm is the repository's warm workspace (design/warm-
+	// workspace.md): one per repository, no secret mounted, never restored
+	// from the snapshot it makes, and not a board's.
+	SandboxWarm = "warm"
+	// SandboxAgent is an agent's own, which factory agent create makes;
+	// factory recipe does not run a recipe of this kind.
+	SandboxAgent = "agent"
+)
+
+// SandboxKind is what a kind of sandbox is.
+type SandboxKind struct {
+	// Prefix starts its sandboxes' names, unless the recipe gives its own.
+	Prefix string
+	// Keyed is whether a run names its sandbox (--sandbox-key, required),
+	// rather than the repository having one.
+	Keyed bool
+	// Sized is whether the recipe's size fields apply.
+	Sized bool
+}
+
+// SandboxKinds are the kinds a recipe may declare.
+var SandboxKinds = map[string]SandboxKind{
+	SandboxResearch: {Prefix: "rsch", Keyed: true, Sized: true},
+	SandboxRun:      {Prefix: "run", Keyed: true, Sized: true},
+	SandboxWarm:     {Prefix: "warm"},
+	SandboxAgent:    {Prefix: "agent"},
+}
+
+// sandboxPrefixRE is a prefix a recipe may give its sandboxes' names.
+var sandboxPrefixRE = regexp.MustCompile(`^[a-z][a-z0-9]{0,9}$`)
 
 // SandboxDecl is the sandbox a recipe's tasks run in, and its size. A run
 // sandbox's disk and ephemeral storage are its defaults when the caller
 // chose none (--workspace-disk-size, --ephemeral-storage, or a factory
-// config's); a conversation's sandbox is the size it declares, and
-// factory's defaults for the rest, whatever the caller passes.
+// config's); a research sandbox is the size it declares, and factory's
+// defaults for the rest, whatever the caller passes.
 type SandboxDecl struct {
-	Kind             string `yaml:"kind,omitempty"`
+	Kind string `yaml:"kind"`
+	// Prefix starts its sandboxes' names instead of the kind's.
+	Prefix           string `yaml:"prefix,omitempty"`
 	Disk             string `yaml:"disk,omitempty"`
 	EphemeralStorage string `yaml:"ephemeral-storage,omitempty"`
 	CPURequest       string `yaml:"cpu-request,omitempty"`
@@ -346,16 +382,98 @@ var (
 
 // Parse reads and validates a recipe.
 func Parse(data []byte) (*Recipe, error) {
+	return parse(data, false)
+}
+
+// ParseKept parses a recipe a task kept when it started (its
+// recipe-source.yaml), which may be older than sandbox kinds: one on a
+// repository that declares none ran in the sandbox its kind names now -
+// warm's or an agent's by its name, else a research session's.
+func ParseKept(data []byte) (*Recipe, error) {
+	return parse(data, true)
+}
+
+func parse(data []byte, kept bool) (*Recipe, error) {
 	var r Recipe
 	dec := yaml.NewDecoder(strings.NewReader(string(data)))
 	dec.KnownFields(true)
 	if err := dec.Decode(&r); err != nil {
 		return nil, fmt.Errorf("parsing recipe: %w", err)
 	}
+	if kept && r.Sandbox == nil && len(r.On) == 1 && r.On[0] == OnRepo {
+		kind := SandboxResearch
+		switch r.Name {
+		case WarmRecipe:
+			kind = SandboxWarm
+		case AgentRecipe:
+			kind = SandboxAgent
+		}
+		r.Sandbox = &SandboxDecl{Kind: kind}
+	}
 	if err := r.Validate(); err != nil {
 		return nil, err
 	}
 	return &r, nil
+}
+
+// validateSandbox holds a recipe's sandbox: to its kind: required for a
+// recipe on a repository and only for one, a known kind, a short prefix,
+// and size fields that are quantities, for a kind they apply to.
+func (r *Recipe) validateSandbox() error {
+	onRepo := len(r.On) == 1 && r.On[0] == OnRepo
+	sb := r.Sandbox
+	switch {
+	case sb == nil && onRepo:
+		return fmt.Errorf("recipe %s: a recipe on: [repo] declares its sandbox: kind (one of: %s)", r.Name, strings.Join(SandboxKindNames(), ", "))
+	case sb == nil:
+		return nil
+	case !onRepo:
+		return fmt.Errorf("recipe %s: sandbox: is for a recipe on: [repo]", r.Name)
+	}
+	kind, ok := SandboxKinds[sb.Kind]
+	if !ok {
+		return fmt.Errorf("recipe %s: sandbox kind %q is not one of: %s", r.Name, sb.Kind, strings.Join(SandboxKindNames(), ", "))
+	}
+	if sb.Prefix != "" && !sandboxPrefixRE.MatchString(sb.Prefix) {
+		return fmt.Errorf("recipe %s: sandbox prefix %q is not %s", r.Name, sb.Prefix, sandboxPrefixRE)
+	}
+	sizes := map[string]string{"disk": sb.Disk, "ephemeral-storage": sb.EphemeralStorage, "cpu-request": sb.CPURequest, "cpu-limit": sb.CPULimit, "memory-request": sb.MemoryRequest, "memory-limit": sb.MemoryLimit}
+	for field, v := range sizes {
+		if v == "" {
+			continue
+		}
+		if !kind.Sized {
+			return fmt.Errorf("recipe %s: a %s sandbox is not sized by its recipe (%s)", r.Name, sb.Kind, field)
+		}
+		if _, err := resource.ParseQuantity(v); err != nil {
+			return fmt.Errorf("recipe %s: sandbox %s %q: %w", r.Name, field, v, err)
+		}
+	}
+	if sb.Kind == SandboxRun {
+		if in, ok := r.Inputs["run"]; !ok || !in.Required {
+			return fmt.Errorf("recipe %s: a run recipe requires its run input", r.Name)
+		}
+	}
+	return nil
+}
+
+// SandboxKindNames are the kinds a recipe may declare, sorted.
+func SandboxKindNames() []string {
+	names := make([]string, 0, len(SandboxKinds))
+	for n := range SandboxKinds {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// SandboxPrefix is the prefix of the sandboxes of a recipe's kind: its
+// own, else the kind's.
+func (d *SandboxDecl) SandboxPrefix() string {
+	if d.Prefix != "" {
+		return d.Prefix
+	}
+	return SandboxKinds[d.Kind].Prefix
 }
 
 // Validate checks what can be checked before anything runs, so a bad
@@ -364,28 +482,8 @@ func (r *Recipe) Validate() error {
 	if r.Name == "" {
 		return fmt.Errorf("recipe has no name")
 	}
-	if sb := r.Sandbox; sb != nil && sb.Kind == "" {
-		if len(r.On) != 1 || r.On[0] != OnRepo {
-			return fmt.Errorf("recipe %s: a sandbox: without a kind sizes a conversation's sandbox, for a recipe on: [repo]", r.Name)
-		}
-		for field, v := range map[string]string{"disk": sb.Disk, "ephemeral-storage": sb.EphemeralStorage, "cpu-request": sb.CPURequest, "cpu-limit": sb.CPULimit, "memory-request": sb.MemoryRequest, "memory-limit": sb.MemoryLimit} {
-			if v == "" {
-				continue
-			}
-			if _, err := resource.ParseQuantity(v); err != nil {
-				return fmt.Errorf("recipe %s: sandbox %s %q: %w", r.Name, field, v, err)
-			}
-		}
-	} else if sb != nil {
-		if sb.Kind != SandboxRun {
-			return fmt.Errorf("recipe %s: sandbox kind %q is not one of: %s", r.Name, sb.Kind, SandboxRun)
-		}
-		if in, ok := r.Inputs["run"]; !ok || !in.Required {
-			return fmt.Errorf("recipe %s: a run sandbox is named by the recipe's run input, which it must require", r.Name)
-		}
-		if len(r.On) != 1 || r.On[0] != OnRepo {
-			return fmt.Errorf("recipe %s: a run sandbox is for a recipe on: [repo]", r.Name)
-		}
+	if err := r.validateSandbox(); err != nil {
+		return err
 	}
 	if len(r.Start.Steps) == 0 {
 		return fmt.Errorf("recipe %s has no start steps", r.Name)

@@ -123,7 +123,7 @@ func TestStartRecipeRunsAndReadsBack(t *testing.T) {
 			t.Errorf("recipe args = %q, want %q", args[0], want)
 		}
 	}
-	if strings.Count(args[0], "--instruction") != 1 || strings.Contains(args[0], "--detached") || strings.Contains(args[0], "--session") {
+	if strings.Count(args[0], "--instruction") != 1 || strings.Contains(args[0], "--detached") || strings.Contains(args[0], "--sandbox-key") {
 		t.Errorf("recipe args = %q: no empty instruction, not detached, no session", args[0])
 	}
 	if !strings.HasPrefix(args[1], "sandbox task output fix-repo-5 --namespace alice --run-name plan/b/5/1") {
@@ -211,7 +211,7 @@ func TestStartRecipeDetached(t *testing.T) {
 	if len(args) != 1 {
 		t.Fatalf("commands run = %q, want only the recipe", args)
 	}
-	for _, want := range []string{"recipe research --run-name research/s1 ", "--session s1", "--detached", "--input topic=how are deletes handled?", "--timeout 20m0s"} {
+	for _, want := range []string{"recipe research --run-name research/s1 ", "--sandbox-key s1", "--detached", "--input topic=how are deletes handled?", "--timeout 20m0s"} {
 		if !strings.Contains(args[0], want) {
 			t.Errorf("recipe args = %q, want %q", args[0], want)
 		}

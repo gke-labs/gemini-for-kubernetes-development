@@ -46,7 +46,14 @@ func ResearchShortID(sessionID string) string {
 // Knowing the name without asking factory is what lets a caller find,
 // watch or delete the sandbox for a session it has only the id of.
 func ResearchSandboxName(repo, sessionID string) string {
-	short := ResearchShortID(sessionID)
+	return KeyedSandboxName("rsch", repo, sessionID)
+}
+
+// KeyedSandboxName mirrors factory's sandbox.KeyedSandboxName: a keyed
+// kind's sandbox for one key (factory --sandbox-key),
+// <prefix>-<repo slug>-<short hash of the key>.
+func KeyedSandboxName(prefix, repo, key string) string {
+	short := ResearchShortID(key)
 	slug := strings.ToLower(repo)
 	var b strings.Builder
 	for _, r := range slug {
@@ -57,10 +64,10 @@ func ResearchSandboxName(repo, sessionID string) string {
 		}
 	}
 	slug = strings.Trim(b.String(), "-")
-	if budget := 60 - len("rsch-") - len(short) - 1; len(slug) > budget {
+	if budget := 60 - len(prefix) - 1 - len(short) - 1; len(slug) > budget {
 		slug = strings.Trim(slug[:budget], "-")
 	}
-	return "rsch-" + slug + "-" + short
+	return prefix + "-" + slug + "-" + short
 }
 
 // ResearchRunAnnotation is where factory records a research conversation's

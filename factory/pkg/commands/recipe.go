@@ -59,11 +59,11 @@ func NewRecipeCommand(ctx context.Context) *cobra.Command {
 
 // recipeRunFlags are the flags every way of running a recipe takes.
 type recipeRunFlags struct {
-	itemURL, runName, session string
-	inputArgs                 []string
-	apply, dryRun             bool
-	newSession                bool
-	prLabels                  bool
+	itemURL, runName, sandboxKey string
+	inputArgs                    []string
+	apply, dryRun                bool
+	newSession                   bool
+	prLabels                     bool
 	// action is the one write --apply does, instead of each the result
 	// offers.
 	action string
@@ -74,7 +74,7 @@ type recipeRunFlags struct {
 
 func (f *recipeRunFlags) add(cmd *cobra.Command) {
 	cmd.Flags().StringVar(&f.itemURL, "url", "", "GitHub issue, PR or repository URL")
-	cmd.Flags().StringVar(&f.session, "session", "", "With a repository URL: the conversation the run is, which names its sandbox (made if missing). Default: the run name, else a new one")
+	cmd.Flags().StringVar(&f.sandboxKey, "sandbox-key", "", "For a recipe on a repository whose sandbox kind is keyed (research, run): names the sandbox it runs in, made if missing; runs given the same key share it. Required for those, refused otherwise")
 	cmd.Flags().StringArrayVar(&f.inputArgs, "input", nil, "An input as name=value; overrides what the URL sets. Repeatable.")
 	cmd.Flags().StringVar(&f.runName, "run-name", "", "Names this run: running again with the same name follows that task, or returns or applies its result, instead of starting another; find it with sandbox task status|output|attach --run-name")
 	cmd.Flags().BoolVar(&f.newSession, "new-session", false, "For a recipe in a session (session:): open a new conversation instead of continuing the one its group's last run recorded")
@@ -118,7 +118,7 @@ func (f *recipeRunFlags) run(ctx context.Context, c *cobra.Command, recipeArg st
 			instructions[in] = *vals
 		}
 	}
-	return runRecipe(ctx, recipeArg, f.itemURL, f.runName, f.session, "", f.newSession, applyMode{on: f.apply, dryRun: f.dryRun, verb: f.action, asUser: rootFlags.User != "", prLabels: f.prLabels}, overrides, instructions)
+	return runRecipe(ctx, recipeArg, f.itemURL, f.runName, f.sandboxKey, "", f.newSession, applyMode{on: f.apply, dryRun: f.dryRun, verb: f.action, asUser: rootFlags.User != "", prLabels: f.prLabels}, overrides, instructions)
 }
 
 // newBuiltinRecipeCommand makes a built-in recipe a command of its own,
@@ -328,8 +328,31 @@ func prInputs(it githubItem, pr *githubv39.PullRequest) map[string]string {
 // `factory pr review --instruction` resolves its own. With apply it applies
 // the task's result, picking up where an interrupted run left off. user is
 // the account the task runs as; empty, the command's own (--user).
-func runRecipe(ctx context.Context, recipeArg, itemURL, runName, session, user string, newSession bool, apply applyMode, overrides map[string]string, instructions map[string][]string) error {
-	return runRecipeIn(ctx, recipeRunOpts{}, recipeArg, itemURL, runName, session, user, newSession, apply, overrides, instructions)
+func runRecipe(ctx context.Context, recipeArg, itemURL, runName, sandboxKey, user string, newSession bool, apply applyMode, overrides map[string]string, instructions map[string][]string) error {
+	return runRecipeIn(ctx, recipeRunOpts{}, recipeArg, itemURL, runName, sandboxKey, user, newSession, apply, overrides, instructions)
+}
+
+// checkSandboxKey holds --sandbox-key to the recipe's sandbox kind: a
+// recipe on a repository of a keyed kind (research, run) is given one, a
+// keyless kind's (warm) or a recipe on an issue or PR is not, and an
+// agent's runs in the sandbox factory agent create makes.
+func checkSandboxKey(rec *recipe.Recipe, it githubItem, opts recipeRunOpts, key string) error {
+	if !it.IsRepo() {
+		if key != "" {
+			return fmt.Errorf("--sandbox-key is for a recipe on a repository; an issue's or PR's recipes run in its own sandbox")
+		}
+		return nil
+	}
+	kind := rec.Sandbox.Kind
+	switch {
+	case kind == recipe.SandboxAgent && opts.ensure == nil:
+		return fmt.Errorf("recipe %s runs in an agent's own sandbox: run it with factory agent create", rec.Name)
+	case recipe.SandboxKinds[kind].Keyed && key == "":
+		return fmt.Errorf("recipe %s runs in a %s sandbox: give it one with --sandbox-key <id> (runs with the same key share it)", rec.Name, kind)
+	case !recipe.SandboxKinds[kind].Keyed && key != "":
+		return fmt.Errorf("recipe %s runs in the repository's %s sandbox, which no key names: drop --sandbox-key", rec.Name, kind)
+	}
+	return nil
 }
 
 // ensureSandbox makes the sandbox a run goes to, given its target's
@@ -347,7 +370,7 @@ type recipeRunOpts struct {
 }
 
 // runRecipeIn is runRecipe with opts.
-func runRecipeIn(ctx context.Context, opts recipeRunOpts, recipeArg, itemURL, runName, session, user string, newSession bool, apply applyMode, overrides map[string]string, instructions map[string][]string) error {
+func runRecipeIn(ctx context.Context, opts recipeRunOpts, recipeArg, itemURL, runName, sandboxKey, user string, newSession bool, apply applyMode, overrides map[string]string, instructions map[string][]string) error {
 	it, err := parseRecipeTarget(itemURL)
 	if err != nil {
 		return err
@@ -364,11 +387,8 @@ func runRecipeIn(ctx context.Context, opts recipeRunOpts, recipeArg, itemURL, ru
 	if apply.on && rec.TaskOutput == nil {
 		return fmt.Errorf("recipe %s declares no task output; there is nothing to --apply", rec.Name)
 	}
-	if session != "" && !it.IsRepo() {
-		return fmt.Errorf("--session is for a repository; an issue's or PR's recipes run in its own sandbox")
-	}
-	if session != "" && rec.Sandbox != nil {
-		return fmt.Errorf("--session is for a repository's conversations; recipe %s runs in a sandbox of its own, named by --run", rec.Name)
+	if err := checkSandboxKey(rec, it, opts, sandboxKey); err != nil {
+		return err
 	}
 	if newSession && rec.Session == "" {
 		return fmt.Errorf("recipe %s is in no session (session:); every run of it opens a new conversation", rec.Name)
@@ -502,7 +522,7 @@ func runRecipeIn(ctx context.Context, opts recipeRunOpts, recipeArg, itemURL, ru
 	switch {
 	case opts.ensure != nil:
 		sandboxName, err = opts.ensure(ctx, kubeClient, cloneURL, htmlURL, user)
-	case rec.Sandbox != nil && rec.Sandbox.Kind == recipe.SandboxRun:
+	case it.IsRepo() && rec.Sandbox.Kind == recipe.SandboxRun:
 		// A run's own sandbox, kept for all its phases, sized for
 		// building images unless the caller chose: Go's build and module
 		// caches for a big monorepo alone run ~7.5Gi.
@@ -513,9 +533,9 @@ func runRecipeIn(ctx context.Context, opts recipeRunOpts, recipeArg, itemURL, ru
 		if ephemeralStorageDefaulted && rec.Sandbox.EphemeralStorage != "" {
 			ephemeral = rec.Sandbox.EphemeralStorage
 		}
-		fmt.Printf("Ensuring run %s's sandbox for %s/%s...\n", inputs["run"], it.Owner, it.Repo)
-		sandboxName, err = factorysandbox.EnsureRunSandbox(ctx, kubeClient, rootFlags.Namespace, it.Repo, inputs["run"], cloneURL, htmlURL, rootFlags.Image, disk, rootFlags.StorageClass, ephemeral, rootFlags.ResolvedSecrets, rootFlags.ResolvedEnvs, user)
-	case it.IsRepo() && rec.Name == recipe.WarmRecipe:
+		fmt.Printf("Ensuring the run sandbox %s for %s/%s...\n", sandboxKey, it.Owner, it.Repo)
+		sandboxName, err = factorysandbox.EnsureRunSandbox(ctx, kubeClient, rootFlags.Namespace, it.Repo, rec.Sandbox.Prefix, sandboxKey, cloneURL, htmlURL, rootFlags.Image, disk, rootFlags.StorageClass, ephemeral, rootFlags.ResolvedSecrets, rootFlags.ResolvedEnvs, user)
+	case it.IsRepo() && rec.Sandbox.Kind == recipe.SandboxWarm:
 		// Its disk becomes every new sandbox's (design/warm-workspace.md):
 		// a sandbox of its own, never restored, with no secret mounted.
 		fmt.Printf("Ensuring the warm sandbox for %s/%s...\n", it.Owner, it.Repo)
@@ -525,13 +545,7 @@ func runRecipeIn(ctx context.Context, opts recipeRunOpts, recipeArg, itemURL, ru
 			sandboxName = warm.GetName()
 		}
 	case it.IsRepo():
-		if session == "" {
-			session = runName
-		}
-		if session == "" {
-			session = fmt.Sprintf("%s-%s-%04x", rec.Name, time.Now().Format("20060102-150405"), rand.Intn(1<<16))
-		}
-		fmt.Printf("Ensuring the sandbox for %s/%s, session %s...\n", it.Owner, it.Repo, session)
+		fmt.Printf("Ensuring the research sandbox %s for %s/%s...\n", sandboxKey, it.Owner, it.Repo)
 		// Sized as the recipe's sandbox: says, factory's defaults for the
 		// rest (factorysandbox.ResearchSize): nothing the caller passes.
 		var size factorysandbox.ResearchSize
@@ -539,7 +553,7 @@ func runRecipeIn(ctx context.Context, opts recipeRunOpts, recipeArg, itemURL, ru
 			size = factorysandbox.ResearchSize{Disk: sb.Disk, EphemeralStorage: sb.EphemeralStorage,
 				CPURequest: sb.CPURequest, CPULimit: sb.CPULimit, MemoryRequest: sb.MemoryRequest, MemoryLimit: sb.MemoryLimit}
 		}
-		sandboxName, err = factorysandbox.EnsureResearchSandbox(ctx, kubeClient, rootFlags.Namespace, it.Repo, session, cloneURL, htmlURL, rootFlags.Image, rootFlags.StorageClass, size, rootFlags.ResolvedSecrets, rootFlags.ResolvedEnvs, user)
+		sandboxName, err = factorysandbox.EnsureResearchSandbox(ctx, kubeClient, rootFlags.Namespace, it.Repo, rec.Sandbox.Prefix, sandboxKey, cloneURL, htmlURL, rootFlags.Image, rootFlags.StorageClass, size, rootFlags.ResolvedSecrets, rootFlags.ResolvedEnvs, user)
 	case it.IsPR:
 		fmt.Printf("Ensuring the sandbox for #%d...\n", it.Number)
 		if rec.Credentials == recipe.CredentialsClone {
@@ -621,10 +635,9 @@ func runRecipeIn(ctx context.Context, opts recipeRunOpts, recipeArg, itemURL, ru
 	if apply.on {
 		fmt.Println("Interrupting stops the waiting, not the task: run the same command again to wait for it and apply its result.")
 	}
-	// A repository's run is a research session's, in a sandbox that is
-	// the conversation's, unless the caller made it one of its own (an
-	// agent's, a run's) or it warms the workspace.
-	research := it.IsRepo() && opts.ensure == nil && rec.Sandbox == nil && rec.Name != recipe.WarmRecipe
+	// A research sandbox's run is a session's: it carries the
+	// research-ready receipt.
+	research := it.IsRepo() && opts.ensure == nil && rec.Sandbox.Kind == recipe.SandboxResearch
 	if done, err := startRecipeTask(ctx, kubeClient, sb, it, rec, task, recipeBytes, inputs, envMap, secrets, opts.usage, research); err != nil || !done {
 		return err
 	}
@@ -1072,7 +1085,7 @@ func taskRecipe(ctx context.Context, sb taskapi.Sandbox, e spool.Entry) ([]byte,
 				return b, r, nil
 			}
 		}
-		rec, err := recipe.Parse(data)
+		rec, err := recipe.ParseKept(data)
 		if err != nil {
 			return nil, nil, fmt.Errorf("task %s's recipe: %w", e.ID, err)
 		}

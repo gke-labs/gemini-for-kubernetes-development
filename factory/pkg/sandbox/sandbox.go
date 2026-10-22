@@ -75,30 +75,14 @@ func fillEnvResources(opts *DevSandboxOptions) {
 	}
 }
 
-// RunSandboxName is a run's own sandbox: run-<repo>-<run>. One sandbox
-// per run, whose phases all run there — the PVC holds the deployment's
-// state (kubeconfig, built artifacts, the serving process), so the
-// sandbox is the handle to the deployment. It is never another item's
-// (a PR's): a run outlives what it deploys until it is torn down.
-func RunSandboxName(repo, run string) string {
-	slugify := func(s string) string {
-		s = strings.ToLower(s)
-		var b strings.Builder
-		for _, r := range s {
-			if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' {
-				b.WriteRune(r)
-			} else {
-				b.WriteRune('-')
-			}
-		}
-		return strings.Trim(b.String(), "-")
-	}
-	suffix := slugify(run)
-	slug := slugify(repo)
-	if budget := 60 - len("run-") - len(suffix) - 1; len(slug) > budget {
-		slug = strings.Trim(slug[:budget], "-")
-	}
-	return "run-" + slug + "-" + suffix
+// RunSandboxName is a run's own sandbox, run-<repo>-<hash of its key>
+// (KeyedSandboxName). One sandbox per run, whose phases all run there —
+// the PVC holds the deployment's state (kubeconfig, built artifacts, the
+// serving process), so the sandbox is the handle to the deployment. It is
+// never another item's (a PR's): a run outlives what it deploys until it
+// is torn down.
+func RunSandboxName(repo, key string) string {
+	return KeyedSandboxName("run", repo, key)
 }
 
 // DeployerServiceAccount is the per-namespace KSA the research and
@@ -137,8 +121,13 @@ const (
 // EnsureRunSandbox creates (or finds) a run's own sandbox (RunSandboxName),
 // as the deployer service account, whose Workload Identity reaches the
 // member's project.
-func EnsureRunSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, repoName, run, cloneURL, htmlURL, image, diskSize, storageClass, ephemeralStorage string, secrets []SecretMount, envs []EnvVar, user string) (string, error) {
+//
+// prefix starts its name ("" for run's own).
+func EnsureRunSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, repoName, prefix, run, cloneURL, htmlURL, image, diskSize, storageClass, ephemeralStorage string, secrets []SecretMount, envs []EnvVar, user string) (string, error) {
 	name := RunSandboxName(repoName, run)
+	if prefix != "" {
+		name = KeyedSandboxName(prefix, repoName, run)
+	}
 
 	sb, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
 	switch {

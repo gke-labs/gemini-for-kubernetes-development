@@ -160,9 +160,9 @@ func TestStartRunInvokesTheRunRecipe(t *testing.T) {
 		mode string
 		want string
 	}{
-		{"plan", "recipe run-plan --url https://github.com/o/r --namespace alice --timeout 1h0m0s --abort-on-cancel=false --run r1 --intent 3 nodes --runbook gke --target-pr 42"},
-		{"deploy", "recipe run-deploy --url https://github.com/o/r --namespace alice --timeout 1h0m0s --abort-on-cancel=false --run r1"},
-		{"teardown", "recipe run-teardown --url https://github.com/o/r --namespace alice --timeout 1h0m0s --abort-on-cancel=false --run r1 --intent 3 nodes"},
+		{"plan", "recipe run-plan --url https://github.com/o/r --namespace alice --timeout 1h0m0s --abort-on-cancel=false --run r1 --sandbox-key r1 --intent 3 nodes --runbook gke --target-pr 42"},
+		{"deploy", "recipe run-deploy --url https://github.com/o/r --namespace alice --timeout 1h0m0s --abort-on-cancel=false --run r1 --sandbox-key r1"},
+		{"teardown", "recipe run-teardown --url https://github.com/o/r --namespace alice --timeout 1h0m0s --abort-on-cancel=false --run r1 --sandbox-key r1 --intent 3 nodes"},
 	} {
 		r := &Runner{Binary: bin, Prober: &fakeProber{probe: TaskProbe{State: ProbeNone}},
 			running: map[string]context.CancelFunc{}, results: map[string]Result{}}
@@ -179,7 +179,8 @@ func TestStartRunInvokesTheRunRecipe(t *testing.T) {
 			t.Errorf("%s: factory %s\nwant %s", tc.mode, got, tc.want)
 		}
 	}
-	if got := RunSandboxName("k8s-config-connector", "gke-std"); got != "run-k8s-config-connector-gke-std" {
+	// factory's sandbox.KeyedSandboxName: run-<repo>-<short hash of the key>.
+	if got := RunSandboxName("k8s-config-connector", "gke-std"); got != KeyedSandboxName("run", "k8s-config-connector", "gke-std") || !strings.HasPrefix(got, "run-k8s-config-connector-") || strings.Contains(got, "gke-std") {
 		t.Errorf("RunSandboxName = %s", got)
 	}
 }

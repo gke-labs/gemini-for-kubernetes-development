@@ -96,14 +96,14 @@ func builtinRecipeInfos() ([]RecipeInfo, error) {
 	var infos []RecipeInfo
 	var recs []*recipe.Recipe
 	for _, name := range recipe.BuiltinNames() {
-		if name == recipe.WarmRecipe {
-			// The watch runs it (design/warm-workspace.md); a board has
-			// no button for it.
-			continue
-		}
 		_, rec, err := recipe.Builtin(name)
 		if err != nil {
 			return nil, err
+		}
+		if sb := rec.Sandbox; sb != nil && (sb.Kind == recipe.SandboxWarm || sb.Kind == recipe.SandboxAgent) {
+			// The watch runs warm (design/warm-workspace.md), factory
+			// agent create runs agent: a board has no button for either.
+			continue
 		}
 		recs = append(recs, rec)
 		info := recipeInfo(rec)
