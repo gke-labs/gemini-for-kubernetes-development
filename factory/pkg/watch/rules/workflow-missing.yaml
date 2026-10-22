@@ -2,9 +2,9 @@
 # issue whose body names a workflow definition that cannot be loaded -
 # missing, or not a workflow it can run - would only fail, and fail again
 # after every cooldown, with nothing on the issue to say so. It is stopped
-# instead, with a comment saying which definition and why (the scanner
-# writes the definition's path and error; the comment here is the rule's
-# own). Before workflow: the stop ends the walk, so neither workflow nor
+# instead, with a comment saying which definition and why: the comment
+# below, then the definition's path and load error, which the scanner adds
+# (issues/scanner.go unavailableWorkflowComment). Before workflow: the stop ends the walk, so neither workflow nor
 # fix runs. A definition that cannot be fetched at all (an API error) is
 # not missing: the scanner looks again next cycle (a gate, not a rule).
 name: workflow-missing
@@ -23,4 +23,4 @@ when:
   workflow: missing
 run:
   stop:
-    comment: This issue names a workflow definition that cannot be loaded, so its workflow cannot run. Fix the path or the definition, then remove the stop label.
+    comment: This issue names a workflow definition that cannot be loaded, so no workflow run was started.
