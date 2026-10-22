@@ -136,6 +136,10 @@ type QueueTask struct {
 	CommitSHA    string   `yaml:"commitSHA,omitempty"`
 	RetryCount   int      `yaml:"retryCount,omitempty"`
 	Instructions []string `yaml:"instructions,omitempty"`
+	// RunName is the run's name (factory --run-name), stamped when the task
+	// is queued (RunNameOf): a recovered task follows the run it started,
+	// whatever a later watch would name it.
+	RunName string `yaml:"runName,omitempty"`
 	// Recovered marks a task that startup recovery is moving back from processing to
 	// incoming, which is what allows Enqueue to overwrite a processing entry rather
 	// than treating it as a duplicate. It is cleared once the task starts again.

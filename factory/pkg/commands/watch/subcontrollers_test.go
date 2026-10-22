@@ -125,7 +125,7 @@ func TestWatcher_DispatchOnce_DropsAnUnstampedTaskItCannotDecide(t *testing.T) {
 func TestWatcherSandboxes_ResolveName_IssueSandbox(t *testing.T) {
 	w := newTestWatcher(t, t.TempDir())
 
-	if got := w.sandboxes.ResolveName(context.Background(), api.TypeIssueFix, 42); got != "fix-test-repo-42" {
+	if got := w.sandboxes.ResolveName(context.Background(), api.TypeIssueFix, "fix", 42); got != "fix-test-repo-42" {
 		t.Errorf("ResolveName = %q, want %q", got, "fix-test-repo-42")
 	}
 }

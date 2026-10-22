@@ -13,6 +13,7 @@ task:
     status: Pending
     commitSHA: 0123456789abcdef
     retryCount: 2
+    runName: comments-10-0123456-<enqueued>
     rule: comments
     recipe: care-comments
     apply: post-replies

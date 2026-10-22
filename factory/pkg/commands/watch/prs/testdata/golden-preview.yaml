@@ -12,6 +12,7 @@ task:
     assignee: bot1
     status: Pending
     commitSHA: 0123456789abcdef
+    runName: preview-10-0123456-<enqueued>
     rule: preview
     recipe: summarize
     apply: comment

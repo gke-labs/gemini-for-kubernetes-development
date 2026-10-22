@@ -335,6 +335,9 @@ func (m *TaskQueueManager) Enqueue(filename string, task *api.QueueTask) error {
 	if taskCopy.EnqueuedAt.IsZero() {
 		taskCopy.EnqueuedAt = time.Now()
 	}
+	if taskCopy.RunName == "" {
+		taskCopy.RunName = api.RunNameOf(&taskCopy)
+	}
 	if taskCopy.Priority == "" {
 		taskCopy.Priority = api.PriorityMedium
 	}

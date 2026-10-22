@@ -19,6 +19,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/common"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/api"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/k8s"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/recipe"
 	factorysandbox "github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/sandbox"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/spool"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/taskapi"
@@ -101,7 +102,7 @@ func (s *Service) Namespace() string {
 // number: agent-<repo>-<agent>, or a workflow's wf-issue-<n>.
 func (s *Service) ResolveTaskName(ctx context.Context, task *api.QueueTask) string {
 	if task.Type != api.TypeAgentChore {
-		return s.ResolveName(ctx, task.Type, task.Number)
+		return s.ResolveName(ctx, task.Type, task.Recipe, task.Number)
 	}
 	name := task.AgentName
 	if name == "" && task.SessionID == "" {
@@ -125,7 +126,7 @@ func (s *Service) ResolveTaskName(ctx context.Context, task *api.QueueTask) stri
 // PR closes (which is aliased to the PR as a side effect), and finally
 // fall back to the name `factory recipe` creates: fix-<repo>-<pr>
 // (EnsurePRSandbox).
-func (s *Service) ResolveName(ctx context.Context, taskType api.TaskType, num int) string {
+func (s *Service) ResolveName(ctx context.Context, taskType api.TaskType, recipeName string, num int) string {
 	if taskType == api.TypeIssueFix || taskType == api.TypeIssueRule {
 		wfName := fmt.Sprintf("wf-issue-%d", num)
 		if s.kube != nil {
@@ -137,9 +138,11 @@ func (s *Service) ResolveName(ctx context.Context, taskType api.TaskType, num in
 	}
 
 	// A credentials: clone recipe (review) holds no credentials, so it
-	// shares no sandbox with the PR's other tasks.
-	if rt, ok := api.RecipeTaskOf(taskType); ok && rt.Sandbox != "" {
-		return factorysandbox.RecipeSandboxName(s.repo, num, rt.Sandbox)
+	// shares no sandbox with the PR's other tasks: one of its own, named
+	// after it, as factory recipe makes it (EnsureRecipeSandbox). A
+	// repository's recipe is not read here, and goes by the PR's.
+	if _, rec, err := recipe.Builtin(recipeName); err == nil && rec.Credentials == recipe.CredentialsClone {
+		return factorysandbox.RecipeSandboxName(s.repo, num, recipeName)
 	}
 
 	prURL := fmt.Sprintf("https://github.com/%s/%s/pull/%d", s.owner, s.repo, num)

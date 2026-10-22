@@ -59,7 +59,7 @@ func NewCLIRunner(cfg CLIRunnerConfig) *CLIRunner {
 // task type is unknown or, for a recipe task, no rule decided it (no recipe).
 func (r *CLIRunner) BuildArgs(t *api.QueueTask, selectedUser string) []string {
 	var args []string
-	if rt, ok := api.RecipeTaskOf(t.Type); ok {
+	if _, ok := api.RecipeTaskOf(t.Type); ok {
 		// The recipe the rule that decided t names, its result applied
 		// by the CLI as the user picked (--user); none without one. The
 		// run name is this enqueue's: a restarted watcher's recovered
@@ -68,10 +68,10 @@ func (r *CLIRunner) BuildArgs(t *api.QueueTask, selectedUser string) []string {
 		if t.Recipe == "" {
 			return nil
 		}
-		args = []string{"recipe", t.Recipe, "--url", t.URL, "--run-name", rt.RunName(t)}
+		args = []string{"recipe", t.Recipe, "--url", t.URL, "--run-name", api.RunNameOf(t)}
 		if _, _, err := recipe.Builtin(t.Recipe); err != nil {
 			// A repository's recipe has no command of its name.
-			args = []string{"recipe", "run", "--recipe", t.Recipe, "--url", t.URL, "--run-name", rt.RunName(t)}
+			args = []string{"recipe", "run", "--recipe", t.Recipe, "--url", t.URL, "--run-name", api.RunNameOf(t)}
 		}
 		args = append(args, api.RecipeArgs(t)...)
 		for _, inst := range t.Instructions {
@@ -83,7 +83,7 @@ func (r *CLIRunner) BuildArgs(t *api.QueueTask, selectedUser string) []string {
 	case api.TypeAgentChore:
 		// Named as a recipe task's run is: a restarted watcher's
 		// recovered chore follows its run, or applies its result.
-		args = []string{"agent", "create", "--url", t.URL, "--agent", t.AgentFile, "--run-name", api.ChoreRunName(t)}
+		args = []string{"agent", "create", "--url", t.URL, "--agent", t.AgentFile, "--run-name", api.RunNameOf(t)}
 		if t.SessionID != "" {
 			args = append(args, "--session-id", t.SessionID)
 		}

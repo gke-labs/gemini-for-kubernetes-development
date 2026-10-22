@@ -39,7 +39,8 @@ type prContext struct {
 // prRuleTask is how a PR rule's task is queued: its file
 // (task-pr-<n>-<suffix>.yaml) and type, what the logs call it, whether the
 // DRY_RUN environment skips it, and its trigger - the rest of the task the
-// rule's decision does not say (phase, assignee, when and why). Factory's
+// rule's decision does not say (assignee, when and why; the phase is the
+// rule's policy.phase). Factory's
 // four pr-care rules have their own (prRuleTasks); any other rule's is a
 // rule task (ruleTaskOf).
 type prRuleTask struct {
@@ -80,6 +81,7 @@ func ruleTaskOf(rule string) prRuleTask {
 		rule: rule, suffix: "rule-" + rule, typ: api.TypePRRule, what: "the " + rule + " rule's", envDryRun: true,
 		trigger: func(_ context.Context, _ *Scanner, pc *prContext, _ string) taskOptions {
 			return taskOptions{
+				// Where the rule's policy sets no phase.
 				Phase:         api.PhaseComments,
 				Assignee:      pc.taskAssignee,
 				TriggerReason: api.TriggerReasonRuleDecided,
@@ -111,7 +113,7 @@ func (s *Scanner) queueRuleTask(ctx context.Context, pc *prContext, rule string)
 		return true
 	}
 
-	sandboxName := s.sandboxes.ResolveName(ctx, t.typ, num)
+	sandboxName := s.sandboxes.ResolveName(ctx, t.typ, s.rules.Set().Named(rule).Run.Recipe, num)
 	running, err := s.sandboxes.IsTaskRunning(ctx, sandboxName)
 	if err != nil {
 		klog.Errorf("Failed to check if sandbox %s is running: %v", sandboxName, err)
@@ -151,7 +153,6 @@ func conflictTrigger(_ context.Context, _ *Scanner, pc *prContext, _ string) tas
 		baseRef = pc.pr.GetBase().GetRef()
 	}
 	return taskOptions{
-		Phase:            api.PhaseRebase,
 		Assignee:         pc.taskAssignee,
 		TriggerEventTime: pc.lastCommitTime,
 		TriggerReason:    api.TriggerReasonPRMergeConflict,
@@ -175,7 +176,6 @@ func ciTrigger(_ context.Context, _ *Scanner, pc *prContext, _ string) taskOptio
 		failConclusion = "failed"
 	}
 	return taskOptions{
-		Phase:            api.PhaseInvestigate,
 		Assignee:         pc.taskAssignee,
 		TriggerEventTime: eventTime,
 		TriggerReason:    api.TriggerReasonPRCheckFailed,
@@ -217,7 +217,6 @@ func commentsTrigger(_ context.Context, s *Scanner, pc *prContext, filename stri
 		notes = fmt.Sprintf("Retrying the failed address-comments task (retry %d) on commit %s", max(retryCount, 1), pc.shortSHA)
 	}
 	return taskOptions{
-		Phase:            api.PhaseComments,
 		Assignee:         pc.taskAssignee,
 		RetryCount:       retryCount,
 		TriggerEventTime: eventTime,
@@ -256,7 +255,6 @@ func reviewTrigger(ctx context.Context, _ *Scanner, pc *prContext, _ string) tas
 		notes = fmt.Sprintf("Automated review triggered for commit %s at %s", pc.shortSHA, eventTime.Format(time.RFC3339))
 	}
 	return taskOptions{
-		Phase:            api.PhaseComments,
 		TriggerEventTime: eventTime,
 		TriggerReason:    api.TriggerReasonPRReadyForReview,
 		TriggerNotes:     notes,

@@ -1116,3 +1116,22 @@ func TestTaskQueueManager_HasActiveIssueTask(t *testing.T) {
 		t.Errorf("the running task for #%d is not active", task.Number)
 	}
 }
+
+// A task is queued with its run name stamped, as the runner would name it
+// from its type; a name it carries already (a recovered task's) stands.
+func TestEnqueueStampsTheRunName(t *testing.T) {
+	mgr, _ := setupTestQueueManager(t)
+	at := time.Unix(1700000000, 0)
+	if err := mgr.Enqueue("task-pr-7-investigate.yaml", &api.QueueTask{Type: api.TypePRInvestigate, Number: 7, CommitSHA: "abcdef123", EnqueuedAt: at}); err != nil {
+		t.Fatal(err)
+	}
+	if err := mgr.Enqueue("task-pr-8-review.yaml", &api.QueueTask{Type: api.TypePRReview, Number: 8, EnqueuedAt: at, RunName: "kept-8"}); err != nil {
+		t.Fatal(err)
+	}
+	for fn, want := range map[string]string{"task-pr-7-investigate.yaml": "investigate-7-abcdef1-1700000000", "task-pr-8-review.yaml": "kept-8"} {
+		task, ok := mgr.incoming.Get(fn)
+		if !ok || task.RunName != want || api.RunNameOf(task) != want {
+			t.Errorf("%s: run name %v, want %s", fn, task, want)
+		}
+	}
+}
