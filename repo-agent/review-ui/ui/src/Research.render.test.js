@@ -2,7 +2,7 @@ import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { act as domAct } from 'react-dom/test-utils';
 
-import { ResearchConversation, markdownComponents } from './Research';
+import { ResearchConversation, markdownComponents, FORCE_STOP_AFTER_MS } from './Research';
 
 // React.act landed in 18.3 and deprecated the react-dom copy; the
 // package range still admits 18.2, so take whichever this install has.
@@ -322,9 +322,9 @@ describe('ResearchConversation', () => {
     });
 
     // Stop only asks the engine; one that never ends its turn leaves the
-    // session working for good. Restart is the way out: the sandbox card's
-    // restart, confirmed first, then the session reconnects.
-    test('a live turn offers Restart, which restarts the sandbox once confirmed', async () => {
+    // session working for good. Once Stop has had its time, it becomes
+    // Force stop, which ends the turn on acpd's side once confirmed.
+    test('Stop becomes Force stop when the engine does not stop', async () => {
         global.fetch = jest.fn(() => reply(200, { sessionId: 's1', repo: 'repo-agent' }));
         await act(async () => { root.render(<ResearchConversation sessionId="s1" task={taskOf('s1')} />); });
         await flush();
@@ -333,24 +333,41 @@ describe('ResearchConversation', () => {
             ws.deliver({ type: 'open', session: { busy: false, offset: 0 } });
             ws.deliver({ type: 'event', offset: 30, event: { seq: 1, kind: 'user_prompt', data: { text: 'go' } } });
         });
-        const restart = [...container.querySelectorAll('button')].find(b => b.textContent === 'Restart');
-        expect(restart).toBeTruthy();
+        const button = name => [...container.querySelectorAll('button')].find(b => b.textContent === name);
+        expect(button('Restart')).toBeUndefined();
 
-        const confirm = jest.spyOn(window, 'confirm').mockReturnValueOnce(false);
-        global.fetch.mockClear();
-        await act(async () => { restart.click(); });
-        expect(global.fetch).not.toHaveBeenCalled();
+        jest.useFakeTimers();
+        try {
+            global.fetch.mockClear();
+            global.fetch.mockImplementation(() => reply(204, {}));
+            await act(async () => { button('Stop').click(); });
+            await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+            expect(global.fetch).toHaveBeenCalledWith(sessionAt('s1') + '/cancel', { method: 'POST' });
+            expect(button('Stopping…').disabled).toBe(true);
+            expect(button('Force stop')).toBeUndefined();
 
-        confirm.mockReturnValueOnce(true);
-        global.fetch.mockImplementation(() => reply(200, {}));
-        await act(async () => { restart.click(); });
-        await flush();
-        expect(global.fetch).toHaveBeenCalledWith('/api/sandbox-card/rsch-s1/lifecycle', expect.objectContaining({
-            method: 'POST', body: JSON.stringify({ action: 'restart' }),
-        }));
-        // The session reconnects, as after a wake.
-        expect(container.textContent).toContain('sandbox starting');
-        confirm.mockRestore();
+            await act(async () => { jest.advanceTimersByTime(FORCE_STOP_AFTER_MS); });
+            expect(button('Force stop')).toBeTruthy();
+            expect(container.querySelector('[aria-label="Composer state"]').textContent).toContain('Force stop ends the turn');
+
+            const confirm = jest.spyOn(window, 'confirm').mockReturnValueOnce(false);
+            global.fetch.mockClear();
+            await act(async () => { button('Force stop').click(); });
+            expect(global.fetch).not.toHaveBeenCalled();
+            confirm.mockReturnValueOnce(true);
+            await act(async () => { button('Force stop').click(); });
+            expect(global.fetch).toHaveBeenCalledWith(sessionAt('s1') + '/stop', { method: 'POST' });
+            confirm.mockRestore();
+        } finally {
+            jest.useRealTimers();
+        }
+
+        // The forced turn_end ends the turn: back to ready, and to Stop.
+        await act(async () => {
+            ws.deliver({ type: 'event', offset: 60, event: { seq: 2, kind: 'turn_end', data: { stopReason: 'cancelled', forced: true } } });
+        });
+        expect(container.textContent).toContain('ready');
+        expect(button('Force stop')).toBeUndefined();
     });
 
     test('a pending permission is rendered with its options', async () => {

@@ -296,4 +296,7 @@ func (t *Transcript) Close() error {
 type TurnEnd struct {
 	StopReason string       `json:"stopReason"`
 	Usage      []ModelUsage `json:"usage,omitempty"`
+	// Forced marks a turn acpd ended itself (Session.ForceStop): the
+	// engine never answered session/prompt, not even after a cancel.
+	Forced bool `json:"forced,omitempty"`
 }

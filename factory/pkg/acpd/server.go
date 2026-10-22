@@ -85,6 +85,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /sessions/{id}/events", s.handleEvents)
 	mux.HandleFunc("POST /sessions/{id}/permission", s.handlePermission)
 	mux.HandleFunc("POST /sessions/{id}/cancel", s.handleCancel)
+	mux.HandleFunc("POST /sessions/{id}/stop", s.handleForceStop)
 	mux.HandleFunc("POST /sessions/{id}/mode", s.handleSetMode)
 	return mux
 }
@@ -496,6 +497,35 @@ func (s *Server) handleCancel(w http.ResponseWriter, r *http.Request) {
 	if err := sess.Cancel(); err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("cancelling: %v", err))
 		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleForceStop ends a turn the engine will not end (Session.ForceStop)
+// and closes the session, stopping the engine. The transcript stays: the
+// next create (opening the session again) loads the conversation into a
+// new engine, which starts idle. 409 when no turn is in flight.
+func (s *Server) handleForceStop(w http.ResponseWriter, r *http.Request) {
+	sess, ok := s.lookupToDrive(w, r)
+	if !ok {
+		return
+	}
+	stopped, err := sess.ForceStop()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("ending the turn: %v", err))
+		return
+	}
+	if !stopped {
+		writeError(w, http.StatusConflict, fmt.Sprintf("session %s has no turn in flight", sess.ID))
+		return
+	}
+	s.mu.Lock()
+	if s.sessions[sess.ID] == sess {
+		delete(s.sessions, sess.ID)
+	}
+	s.mu.Unlock()
+	if err := sess.Close(); err != nil {
+		klog.FromContext(r.Context()).Error(err, "closing a force-stopped session", "session", sess.ID)
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

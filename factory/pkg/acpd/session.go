@@ -246,6 +246,9 @@ type Session struct {
 	// follows is the close, not the engine failing, and is not recorded
 	// as an error.
 	closing bool
+	// forced is set by ForceStop: the turn in flight is over, whatever its
+	// session/prompt call returns once the engine is stopped.
+	forced bool
 	// retry is the last model call the engine logged retrying, until it
 	// is heard from again; parseRetry recognises those lines, and retries
 	// counts them all, written to RetriesFile in dir.
@@ -863,6 +866,15 @@ func (s *Session) Prompt(text string) error {
 			SessionID: s.acpSessionID,
 			Prompt:    []acp.ContentBlock{{Type: "text", Text: text}},
 		})
+		// A turn ForceStop ended is over in the transcript already: the
+		// call returns only because its engine was stopped, and what it
+		// says (an error, mostly) is not the turn's.
+		s.mu.Lock()
+		forced := s.forced
+		s.mu.Unlock()
+		if forced {
+			return
+		}
 		if err != nil {
 			_ = s.transcript.AppendValue(KindError, map[string]string{
 				"message": fmt.Sprintf("prompt failed: %v", err),
@@ -886,6 +898,24 @@ func (s *Session) Prompt(text string) error {
 // failing.
 func (s *Session) Cancel() error {
 	return s.client.Notify("session/cancel", map[string]string{"sessionId": s.acpSessionID})
+}
+
+// ForceStop ends the turn in flight from acpd's side, for an engine that
+// will not end it: ACP has no way for a client to end a turn, only to ask
+// (Cancel), and an engine that ignores the ask leaves the session busy
+// for good. The turn ends in the transcript as cancelled and forced; the
+// caller then closes the session, which stops the engine, and the next
+// create loads the conversation into a new one (session/load). It reports
+// false when no turn is in flight.
+func (s *Session) ForceStop() (bool, error) {
+	s.mu.Lock()
+	if !s.busy || s.forced {
+		s.mu.Unlock()
+		return false, nil
+	}
+	s.forced = true
+	s.mu.Unlock()
+	return true, s.transcript.AppendValue(KindTurnEnd, TurnEnd{StopReason: "cancelled", Forced: true})
 }
 
 // Busy reports whether a turn is in flight.

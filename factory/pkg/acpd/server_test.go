@@ -161,6 +161,15 @@ for line in sys.stdin:
                            "content": {"type": "text", "text": "permission:%s" % answer}}}})
             send({"jsonrpc": "2.0", "id": mid, "result": {"stopReason": "end_turn"}})
             continue
+        if prompt.startswith("!hang"):
+            # An engine that writes its reply and then never answers
+            # session/prompt, cancel or no cancel (a notification, which
+            # the loop below ignores).
+            send({"jsonrpc": "2.0", "method": "session/update", "params": {
+                "sessionId": "agent-side-id",
+                "update": {"sessionUpdate": "agent_message_chunk",
+                           "content": {"type": "text", "text": "a reply, and then nothing"}}}})
+            continue
         remembered = ""
         if load:
             remembered = " sid:%s history:%s" % (sid, ",".join(history(sid)))

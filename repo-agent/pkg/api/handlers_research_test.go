@@ -65,6 +65,8 @@ var fakeModes = []acpd.SessionMode{
 // handler's intentions.
 type fakeSessions struct {
 	mu sync.Mutex
+	// idle makes POST /stop answer as acpd does with no turn in flight.
+	idle bool
 	// calls is "METHOD /path", in order.
 	calls []string
 	// headers is the key header seen on the last session create.
@@ -235,6 +237,15 @@ func (f *fakeSessions) handler() http.Handler {
 		f.record(r.Method, "/sessions/"+r.PathValue("id")+"/cancel")
 		w.WriteHeader(http.StatusNoContent)
 	})
+	mux.HandleFunc("POST /sessions/{id}/stop", func(w http.ResponseWriter, r *http.Request) {
+		f.record(r.Method, "/sessions/"+r.PathValue("id")+"/stop")
+		if f.idle {
+			w.WriteHeader(http.StatusConflict)
+			_, _ = w.Write([]byte(`{"error":"session has no turn in flight"}`))
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
 	mux.HandleFunc("GET /sessions/{id}/events", func(w http.ResponseWriter, r *http.Request) {
 		f.record(r.Method, "/sessions/"+r.PathValue("id")+"/events?"+r.URL.RawQuery)
 		f.mu.Lock()
@@ -369,6 +380,7 @@ func researchTestServer(t *testing.T, daemon *fakeSessions, sandboxes []*unstruc
 	r.POST("/api/task-sessions/:sandbox/:task/prompt", server.promptTaskSession)
 	r.POST("/api/task-sessions/:sandbox/:task/permission", server.resolveTaskSessionPermission)
 	r.POST("/api/task-sessions/:sandbox/:task/cancel", server.cancelTaskSession)
+	r.POST("/api/task-sessions/:sandbox/:task/stop", server.forceStopTaskSession)
 	r.POST("/api/task-sessions/:sandbox/:task/mode", server.setTaskSessionMode)
 	r.POST("/api/task-sessions/:sandbox/:task/recipe", server.taskSessionRecipe)
 	r.POST("/api/task-sessions/:sandbox/:task/draft/:verb", server.taskSessionDraftAction)
@@ -820,6 +832,26 @@ func TestResearchPermissionAndCancelReachTheEngine(t *testing.T) {
 	}
 	if !daemon.sawCall("POST /sessions/" + researchTaskOf(researchSession) + "/cancel") {
 		t.Errorf("cancel did not reach acpd; calls: %v", daemon.calls)
+	}
+}
+
+// Force stop reaches acpd's stop, for a turn the engine never ended; with
+// no turn in flight, acpd's 409 is passed on.
+func TestResearchForceStopReachesTheEngine(t *testing.T) {
+	sb := researchSandboxCR("alice", researchSession, researchRepo, false)
+	daemon := &fakeSessions{sessionExists: true}
+	r, _ := researchTestServer(t, daemon, []*unstructured.Unstructured{sb},
+		researchPod("alice", sb.GetName(), "10.1.2.3", corev1.PodRunning))
+
+	if w := doJSON(t, r, http.MethodPost, researchConversation(researchSession)+"/stop", ""); w.Code != http.StatusNoContent {
+		t.Fatalf("stop status = %d: %s", w.Code, w.Body.String())
+	}
+	if !daemon.sawCall("POST /sessions/" + researchTaskOf(researchSession) + "/stop") {
+		t.Errorf("stop did not reach acpd; calls: %v", daemon.calls)
+	}
+	daemon.idle = true
+	if w := doJSON(t, r, http.MethodPost, researchConversation(researchSession)+"/stop", ""); w.Code != http.StatusConflict {
+		t.Errorf("stop with no turn: %d, want 409: %s", w.Code, w.Body.String())
 	}
 }
 

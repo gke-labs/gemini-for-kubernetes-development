@@ -207,6 +207,14 @@ func (c *Client) Cancel(ctx context.Context, id string) error {
 	return c.do(ctx, http.MethodPost, "/sessions/"+url.PathEscape(id)+"/cancel", nil, nil, "")
 }
 
+// ForceStop ends a turn the engine will not end, not even after Cancel:
+// acpd records it as cancelled and forced and closes the session, and the
+// next create (opening it again) loads the conversation into a new
+// engine. acpd answers 409 when no turn is in flight.
+func (c *Client) ForceStop(ctx context.Context, id string) error {
+	return c.do(ctx, http.MethodPost, "/sessions/"+url.PathEscape(id)+"/stop", nil, nil, "")
+}
+
 // do issues one short request. A nil out discards the body.
 // maxTaskFile bounds ReadTaskFile: a task's result is a YAML document of
 // a few kilobytes, and an unbounded read would let a runaway file consume

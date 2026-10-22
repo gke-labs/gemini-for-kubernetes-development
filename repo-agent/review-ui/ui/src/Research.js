@@ -652,6 +652,9 @@ function PlanPanel({ entries }) {
 // is minutes of polling — slow enough not to hammer the API, fast enough
 // that the conversation opens on its own when the pod lands.
 const PROBE_INTERVAL_MS = 5000;
+// How long Stop waits for the engine to end the turn before offering
+// Force stop.
+export const FORCE_STOP_AFTER_MS = 5000;
 
 // Where the reading choice is remembered.
 const RESEARCH_VIEW_KEY = 'repoboard.research.view';
@@ -814,6 +817,10 @@ export function ResearchConversation({
   const [resolving, setResolving] = useState(false);
   const [error, setError] = useState('');
   const [waking, setWaking] = useState(false);
+  // Stop asked the engine to end the turn (stopAsked); once it has had
+  // FORCE_STOP_AFTER_MS to do so and has not, Force stop is offered.
+  const [stopAsked, setStopAsked] = useState(false);
+  const [forceable, setForceable] = useState(false);
   // The approval mode the session is in, and the set the engine will
   // accept. Seeded from whichever of the probe and the open frame
   // answers first; the transcript takes over once it is caught up,
@@ -923,6 +930,14 @@ export function ResearchConversation({
   // frame's session.busy is the live answer; the fold only takes over
   // once something new has actually happened.
   const busy = caughtUp ? transcript.busy : openBusy;
+  useEffect(() => {
+    if (!busy) { setStopAsked(false); setForceable(false); }
+  }, [busy]);
+  useEffect(() => {
+    if (!stopAsked) return undefined;
+    const t = setTimeout(() => setForceable(true), FORCE_STOP_AFTER_MS);
+    return () => clearTimeout(t);
+  }, [stopAsked]);
   const retrying = busy ? (caughtUp ? transcript.retrying : openRetrying) : null;
 
   // Probe, then attach. Split in two because the websocket cannot report
@@ -1290,11 +1305,27 @@ export function ResearchConversation({
   const cancel = () => {
     fetch(`${api}/cancel`, { method: 'POST' })
       .then(async res => {
-        if (res.ok) return;
+        if (res.ok) { setStopAsked(true); return; }
         const body = await res.json().catch(() => ({}));
         setError(body.error || `cancel failed: HTTP ${res.status}`);
       })
       .catch(err => setError(`cancel failed: ${err}`));
+  };
+
+  // Force stop is for an engine that ignored the cancel: ACP gives a
+  // client no way to end a turn, only to ask, so acpd ends it on its side
+  // (a forced turn_end) and closes the session; the stream closing sends
+  // the view back to probing, and reopening it loads the conversation
+  // into a new engine, idle. A 409 means the turn ended meanwhile.
+  const forceStop = () => {
+    if (!window.confirm('Force stop?\n\nThe agent did not stop when asked. This ends the turn here and starts the agent again on this conversation: whatever it was doing in this turn stops. The conversation and the checkout stay.')) return;
+    fetch(`${api}/stop`, { method: 'POST' })
+      .then(async res => {
+        if (res.ok || res.status === 409) return;
+        const body = await res.json().catch(() => ({}));
+        setError(body.error || `force stop failed: HTTP ${res.status}`);
+      })
+      .catch(err => setError(`force stop failed: ${err}`));
   };
 
   // The session's group's recipes (care's): each runs into this
@@ -1461,28 +1492,6 @@ export function ResearchConversation({
       .finally(() => setWaking(false));
   };
 
-  // Restarting is the sandbox card's restart: its pod is made again on
-  // the same disk and the daemon resumes the conversation. It is what
-  // ends a turn the engine never ended — Stop only asks the engine, and
-  // an engine that ignores it leaves the session "working" for good.
-  // The probe reconnects once acpd answers again, as after a wake.
-  const restart = () => {
-    if (!window.confirm('Restart the agent?\n\nThe sandbox\'s pod starts again: the turn in flight ends, and anything running in the sandbox stops (builds, tests the agent started). The conversation and the checkout stay.')) return;
-    setWaking(true);
-    setError('');
-    fetch(`${apiBase}/sandbox-card/${encodeURIComponent(task.sandbox)}/lifecycle`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'restart' }),
-    })
-      .then(res => {
-        if (!res.ok) return res.text().then(t => setError(`restart failed: ${t || `HTTP ${res.status}`}`));
-        setPhase('starting');
-        setDetail('restarting the agent');
-      })
-      .catch(err => setError(`restart failed: ${err}`))
-      .finally(() => setWaking(false));
-  };
-
   const composerDisabled = phase !== 'live' || busy || sending || taskState.held;
 
   // Why the composer will not send, as a line beside the Send button.
@@ -1496,6 +1505,7 @@ export function ResearchConversation({
     : taskState.held ? { text: 'The task is still running — watch it here, and continue once it ends', urgent: false }
     : waiting ? { text: 'Waiting for you to answer the permission above', urgent: true }
       : retrying ? { text: `The agent's ${retryText(retrying)} — Stop to interrupt`, urgent: true }
+      : busy && forceable ? { text: 'The agent did not stop — Force stop ends the turn', urgent: true }
       : busy ? { text: 'The agent is working — Stop to interrupt', urgent: false }
         : null;
 
@@ -1652,13 +1662,15 @@ export function ResearchConversation({
               ⚠ not applied
             </span>
           )}
-          {phase === 'live' && busy && !taskState.held && (
-            <button className="btn btn-sm" onClick={cancel} title="Interrupt the turn in flight">Stop</button>
-          )}
-          {phase === 'live' && busy && !taskState.held && (
-            <button className="btn btn-sm" onClick={restart} disabled={waking}
-              title="Stop not working? Restart the sandbox's pod: the turn ends, the conversation and the checkout stay">Restart</button>
-          )}
+          {phase === 'live' && busy && !taskState.held && (forceable
+            ? (
+              <button className="btn btn-sm" onClick={forceStop}
+                style={{ color: 'var(--danger, #d33)', borderColor: 'var(--danger, #d33)' }}
+                title="The agent did not stop when asked: end the turn here and start the agent again on this conversation">Force stop</button>
+            ) : (
+              <button className="btn btn-sm" onClick={cancel} disabled={stopAsked}
+                title="Interrupt the turn in flight">{stopAsked ? 'Stopping…' : 'Stop'}</button>
+            ))}
           {/* A research conversation's notes are what the agent writes
               when asked: this asks, as a turn of the member's. */}
           {researchId && phase === 'live' && (
