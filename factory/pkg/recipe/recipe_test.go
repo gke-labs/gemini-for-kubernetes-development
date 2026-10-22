@@ -964,8 +964,15 @@ func TestBuiltinResearch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rec.Credentials != CredentialsClone || rec.TaskType != "research" {
+	// The member works as themselves: their credentials, a fork to push to.
+	if credentialsOf(rec) != CredentialsFull || rec.TaskType != "research" {
 		t.Fatalf("research = credentials %q, task-type %q", rec.Credentials, rec.TaskType)
+	}
+	if got := []string{rec.Start.Steps[0].Uses, rec.Start.Steps[1].Uses}; got[0] != "setup-git" || got[1] != "setup-repo" {
+		t.Errorf("research starts with %v, want setup-git, setup-repo", got)
+	}
+	if strings.Contains(rec.Context, "must not change anything") || strings.Contains(rec.Context, "no GitHub credentials") {
+		t.Errorf("research's context still forbids changes:\n%s", rec.Context)
 	}
 	// The notes are there once someone asks for them, in the conversation.
 	if d := rec.OutputDecl(); d == nil || d.Kind != "Notes" || !d.Optional || d.From != "notes.md" {
@@ -986,13 +993,8 @@ func TestBuiltinResearch(t *testing.T) {
 	if _, err := rec.ResolveInputs(repo, nil); err == nil {
 		t.Error("resolved without a topic")
 	}
-	// The runner enforces credentials, so it reaches the sandbox.
-	out, err := ForSandbox(data)
-	if err != nil {
+	if _, err := ForSandbox(data); err != nil {
 		t.Fatal(err)
-	}
-	if got, err := Parse(out); err != nil || got.Credentials != CredentialsClone {
-		t.Errorf("sandbox recipe = %+v, %v; want credentials kept", got, err)
 	}
 	// An issue's recipe on a repository fails before anything runs.
 	_, plan, err := Builtin("plan")

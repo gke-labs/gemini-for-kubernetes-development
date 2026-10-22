@@ -230,7 +230,7 @@ func TestTakeSecrets(t *testing.T) {
 
 func TestRecipeExecRefusesACloneRecipeWithATokenInItsEnvironment(t *testing.T) {
 	dir := t.TempDir()
-	data, _, err := recipe.Builtin("research")
+	data, _, err := recipe.Builtin("review")
 	if err != nil {
 		t.Fatal(err)
 	}
