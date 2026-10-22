@@ -34,6 +34,8 @@ import (
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/acpd"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/taskoutput"
+
+	"k8s.io/apimachinery/pkg/api/resource"
 )
 
 // WarmRecipe is the built-in recipe that warms a workspace disk for
@@ -108,8 +110,10 @@ type Recipe struct {
 	// ApplicableWhen narrows the items on: names to those the recipe
 	// applies to. Unset, all of them. Like TaskOutput it is factory's.
 	ApplicableWhen *ApplicableWhen `yaml:"applicable-when,omitempty"`
-	// Sandbox gives a repository's recipe a sandbox of its own rather
-	// than a session's. Like TaskOutput it is factory's.
+	// Sandbox is the sandbox a recipe on a repository runs in: kind run, a
+	// run's own (the run recipes); no kind, the conversation's, at the size
+	// it declares (factory's defaults for what it does not). Like
+	// TaskOutput it is factory's.
 	Sandbox *SandboxDecl `yaml:"sandbox,omitempty"`
 	// Timeout is how long a run may take (a Go duration: 3h), for
 	// whoever runs the recipe for a board; unset, its own default. Like
@@ -119,16 +123,24 @@ type Recipe struct {
 
 // SandboxRun is the one kind of sandbox a recipe may declare: a run's own,
 // run-<repo>-<run>, one per value of the recipe's run input, kept for
-// every phase of the run (the run recipes).
+// every phase of the run (the run recipes). With no kind, a recipe on a
+// repository runs in its conversation's sandbox (a research session's),
+// at the size it declares.
 const SandboxRun = "run"
 
-// SandboxDecl is the sandbox a recipe's tasks run in, and the size it is
-// made at when the caller chose none (--workspace-disk-size,
-// --ephemeral-storage, or a factory config's).
+// SandboxDecl is the sandbox a recipe's tasks run in, and its size. A run
+// sandbox's disk and ephemeral storage are its defaults when the caller
+// chose none (--workspace-disk-size, --ephemeral-storage, or a factory
+// config's); a conversation's sandbox is the size it declares, and
+// factory's defaults for the rest, whatever the caller passes.
 type SandboxDecl struct {
-	Kind             string `yaml:"kind"`
+	Kind             string `yaml:"kind,omitempty"`
 	Disk             string `yaml:"disk,omitempty"`
 	EphemeralStorage string `yaml:"ephemeral-storage,omitempty"`
+	CPURequest       string `yaml:"cpu-request,omitempty"`
+	CPULimit         string `yaml:"cpu-limit,omitempty"`
+	MemoryRequest    string `yaml:"memory-request,omitempty"`
+	MemoryLimit      string `yaml:"memory-limit,omitempty"`
 }
 
 // ApplicableWhen is which items a recipe applies to: factory refuses to
@@ -352,7 +364,19 @@ func (r *Recipe) Validate() error {
 	if r.Name == "" {
 		return fmt.Errorf("recipe has no name")
 	}
-	if sb := r.Sandbox; sb != nil {
+	if sb := r.Sandbox; sb != nil && sb.Kind == "" {
+		if len(r.On) != 1 || r.On[0] != OnRepo {
+			return fmt.Errorf("recipe %s: a sandbox: without a kind sizes a conversation's sandbox, for a recipe on: [repo]", r.Name)
+		}
+		for field, v := range map[string]string{"disk": sb.Disk, "ephemeral-storage": sb.EphemeralStorage, "cpu-request": sb.CPURequest, "cpu-limit": sb.CPULimit, "memory-request": sb.MemoryRequest, "memory-limit": sb.MemoryLimit} {
+			if v == "" {
+				continue
+			}
+			if _, err := resource.ParseQuantity(v); err != nil {
+				return fmt.Errorf("recipe %s: sandbox %s %q: %w", r.Name, field, v, err)
+			}
+		}
+	} else if sb != nil {
 		if sb.Kind != SandboxRun {
 			return fmt.Errorf("recipe %s: sandbox kind %q is not one of: %s", r.Name, sb.Kind, SandboxRun)
 		}

@@ -10,15 +10,15 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
-// A research sandbox nobody sized gets a conversation's size, which
-// builds and tests the repository; what the caller chose, by flag or
-// SANDBOX_* env, stands.
+// A conversation's sandbox is the size its recipe's sandbox: declares, and
+// factory's defaults for the rest, which build and test a repository; the
+// SANDBOX_* environment the caller's flags set does not size it.
 func TestResearchSandboxSize(t *testing.T) {
-	size := func(t *testing.T, disk, ephemeral string) map[string]string {
+	size := func(t *testing.T, want sandbox.ResearchSize) map[string]string {
 		t.Helper()
 		ns := "u"
 		kc := prClients(t, ns)
-		name, err := sandbox.EnsureResearchSandbox(context.Background(), kc, ns, "k8s-config-connector", "s1", "", "", "", disk, "", ephemeral, nil, nil, "")
+		name, err := sandbox.EnsureResearchSandbox(context.Background(), kc, ns, "k8s-config-connector", "s1", "", "", "", "", want, nil, nil, "")
 		if err != nil {
 			t.Fatalf("EnsureResearchSandbox: %v", err)
 		}
@@ -42,28 +42,23 @@ func TestResearchSandboxSize(t *testing.T) {
 			"pvc": pvc,
 		}
 	}
-	for _, k := range []string{"SANDBOX_CPU_REQUEST", "SANDBOX_CPU_LIMIT", "SANDBOX_MEMORY_REQUEST", "SANDBOX_MEMORY_LIMIT"} {
-		t.Setenv(k, "")
-	}
-	got := size(t, "", "")
-	want := map[string]string{"cpu": "4/8", "mem": "12Gi/16Gi", "eph": "10Gi", "pvc": "40Gi"}
-	for k, v := range want {
-		if got[k] != v {
-			t.Errorf("default %s = %s, want %s", k, got[k], v)
-		}
+	// What a caller's --cpu-request and the like would set: ignored.
+	t.Setenv("SANDBOX_CPU_REQUEST", "500m")
+	t.Setenv("SANDBOX_MEMORY_LIMIT", "2Gi")
+
+	got := size(t, sandbox.ResearchSize{})
+	if got["cpu"] != "4/8" || got["mem"] != "12Gi/16Gi" || got["eph"] != "10Gi" || got["pvc"] != "40Gi" {
+		t.Errorf("no sandbox: in the recipe = %v, want factory's defaults", got)
 	}
 
-	t.Setenv("SANDBOX_CPU_REQUEST", "2")
-	t.Setenv("SANDBOX_MEMORY_LIMIT", "8Gi")
-	got = size(t, "20Gi", "8Gi")
-	// A chosen limit below the default request caps it; a chosen request
-	// above the default limit raises it.
-	if got["cpu"] != "2/8" || got["mem"] != "8Gi/8Gi" || got["eph"] != "8Gi" || got["pvc"] != "20Gi" {
-		t.Errorf("chosen sizes not kept: %v", got)
+	got = size(t, sandbox.ResearchSize{Disk: "100Gi", CPURequest: "8", CPULimit: "16", MemoryRequest: "32Gi", MemoryLimit: "48Gi", EphemeralStorage: "8Gi"})
+	if got["cpu"] != "8/16" || got["mem"] != "32Gi/48Gi" || got["eph"] != "8Gi" || got["pvc"] != "100Gi" {
+		t.Errorf("the recipe's sandbox: = %v", got)
 	}
-	t.Setenv("SANDBOX_CPU_REQUEST", "10")
-	t.Setenv("SANDBOX_MEMORY_LIMIT", "")
-	if got = size(t, "", ""); got["cpu"] != "10/10" || got["mem"] != "12Gi/16Gi" {
-		t.Errorf("a request above the default limit: %v", got)
+
+	// A recipe that sets one of a pair keeps the pair valid.
+	got = size(t, sandbox.ResearchSize{CPULimit: "2", MemoryRequest: "20Gi"})
+	if got["cpu"] != "2/2" || got["mem"] != "20Gi/20Gi" || got["pvc"] != "40Gi" {
+		t.Errorf("half pairs = %v", got)
 	}
 }

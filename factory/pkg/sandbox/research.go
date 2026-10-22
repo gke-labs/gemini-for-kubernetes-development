@@ -238,7 +238,9 @@ func slugifyName(s string) string {
 // One per conversation rather than one per repo: the transcript lives
 // on the PVC and dies with the sandbox, so sharing one between sessions
 // would mean sharing a transcript.
-func EnsureResearchSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, repoName, sessionID, cloneURL, htmlURL, image, diskSize, storageClass, ephemeralStorage string, secrets []SecretMount, envs []EnvVar, user string) (string, error) {
+// size is what the recipe's sandbox: declares; factory's Research*
+// defaults fill in the rest. Nothing the caller passes sizes it.
+func EnsureResearchSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, repoName, sessionID, cloneURL, htmlURL, image, storageClass string, size ResearchSize, secrets []SecretMount, envs []EnvVar, user string) (string, error) {
 	if sessionID == "" {
 		return "", fmt.Errorf("research sandbox needs a session id")
 	}
@@ -285,12 +287,7 @@ func EnsureResearchSandbox(ctx context.Context, kubeClient *clients.KubernetesCl
 		return "", fmt.Errorf("checking sandbox existence: %w", err)
 	}
 
-	if diskSize == "" {
-		diskSize = ResearchDiskSize
-	}
-	if ephemeralStorage == "" {
-		ephemeralStorage = ResearchEphemeralStorage
-	}
+	size = size.withDefaults()
 
 	opt := AgentSandboxOptions{
 		DevSandboxOptions: DevSandboxOptions{
@@ -300,30 +297,47 @@ func EnsureResearchSandbox(ctx context.Context, kubeClient *clients.KubernetesCl
 			Annotations:           researchAnnotations(repoName, sessionID, cloneURL, htmlURL),
 			Image:                 image,
 			Replicas:              1,
-			WorkspaceDiskSize:     diskSize,
+			WorkspaceDiskSize:     size.Disk,
 			WorkspaceStorageClass: storageClass,
-			EphemeralStorage:      ephemeralStorage,
+			EphemeralStorage:      size.EphemeralStorage,
+			CPURequest:            size.CPURequest,
+			CPULimit:              size.CPULimit,
+			MemoryRequest:         size.MemoryRequest,
+			MemoryLimit:           size.MemoryLimit,
 			Secrets:               secrets,
 			Env:                   envs,
 			ServiceAccountName:    DeployerServiceAccount,
 		},
 	}
 
-	fillEnvResources(&opt.DevSandboxOptions)
-	// A conversation reads, builds and tests the whole repository, as a
-	// fix does, and a big one (KCC) was evicted at the code tasks'
-	// 500m/2Gi and 6Gi of scratch. Raised only where neither flags,
-	// config, nor SANDBOX_* env chose a value, and kept a valid pair: a
-	// default request no more than the limit chosen, a default limit no
-	// less than the request chosen.
-	opt.CPURequest, opt.CPULimit = defaultPair(opt.CPURequest, opt.CPULimit, ResearchCPURequest, ResearchCPULimit)
-	opt.MemoryRequest, opt.MemoryLimit = defaultPair(opt.MemoryRequest, opt.MemoryLimit, ResearchMemoryRequest, ResearchMemoryLimit)
 	sbObj, svc := NewAgentSandbox(opt)
 
 	if err := createSandbox(ctx, kubeClient, namespace, sbObj, svc); err != nil {
 		return "", err
 	}
 	return name, nil
+}
+
+// ResearchSize is a conversation's sandbox size, as its recipe's sandbox:
+// declares it; unset fields take factory's Research* defaults.
+type ResearchSize struct {
+	Disk, EphemeralStorage                           string
+	CPURequest, CPULimit, MemoryRequest, MemoryLimit string
+}
+
+// withDefaults is s with factory's Research* defaults for what it does not
+// set, kept a valid pair: a default request no more than the limit the
+// recipe set, a default limit no less than the request it set.
+func (s ResearchSize) withDefaults() ResearchSize {
+	if s.Disk == "" {
+		s.Disk = ResearchDiskSize
+	}
+	if s.EphemeralStorage == "" {
+		s.EphemeralStorage = ResearchEphemeralStorage
+	}
+	s.CPURequest, s.CPULimit = defaultPair(s.CPURequest, s.CPULimit, ResearchCPURequest, ResearchCPULimit)
+	s.MemoryRequest, s.MemoryLimit = defaultPair(s.MemoryRequest, s.MemoryLimit, ResearchMemoryRequest, ResearchMemoryLimit)
+	return s
 }
 
 // defaultPair fills an unset request or limit with its default, keeping
@@ -346,8 +360,9 @@ func defaultPair(req, lim, defReq, defLim string) (string, string) {
 	return req, lim
 }
 
-// A research sandbox's size when the caller chooses none: a conversation
-// builds and tests the repository as a fix does. 10Gi of ephemeral
+// A conversation's sandbox size where its recipe declares none: it builds
+// and tests the repository as a fix does, and a big one (KCC) was evicted
+// at the code tasks' 500m/2Gi and 6Gi of scratch. 10Gi of ephemeral
 // storage is GKE Autopilot's most.
 const (
 	ResearchCPURequest       = "4"

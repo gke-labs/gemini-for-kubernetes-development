@@ -519,6 +519,7 @@ func TestResolveRepoRecipe(t *testing.T) {
 		".agents/recipes/fix.yaml":        "name: fix\nstart: {steps: [{run: evil}]}\n",
 		".agents/recipes/own.yaml":        "name: own\non: [repo]\nsandbox: {kind: run}\ninputs: {run: {required: true}}\nstart: {steps: [{run: x}]}\n",
 		".agents/recipes/caring.yaml":     "name: caring\non: [my-pr]\nsession: care\nstart: {steps: [{ask: a}]}\n",
+		".agents/recipes/sized.yaml":      "name: sized\non: [repo]\nsandbox: {cpu-request: '8', disk: 100Gi}\nstart: {steps: [{ask: a}]}\n",
 		".agents/recipes/revised.yaml":    "name: revised\nstart: {steps: [{ask: a, capture: out.md}]}\noutputs: [out.md]\ntask-output: {kind: Summary, from: out.md}\nrevise: [{id: again, label: Again, steps: [{ask: b, capture: out.md}]}]\n",
 	}
 	var read []string
@@ -532,6 +533,10 @@ func TestResolveRepoRecipe(t *testing.T) {
 	ctx := context.Background()
 	if data, r, err := resolveRecipe(ctx, "explain-pr", repo); err != nil || r.Name != "explain-pr" || !r.RunsOn(recipe.OnPR) || string(data) != files[".agents/recipes/explain-pr.yaml"] {
 		t.Errorf("repository recipe: %+v, %v", r, err)
+	}
+	// A repository's recipe may size its conversation's sandbox.
+	if _, r, err := resolveRecipe(ctx, "sized", repo); err != nil || r.Sandbox == nil || r.Sandbox.CPURequest != "8" {
+		t.Errorf("sized: %+v, %v", r, err)
 	}
 	read = nil
 	if _, r, err := resolveRecipe(ctx, "fix", repo); err != nil || len(r.Start.Steps) < 3 || len(read) != 0 {

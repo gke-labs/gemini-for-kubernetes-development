@@ -291,10 +291,10 @@ func TestResearchClaimLaunchesOnTheBoardImage(t *testing.T) {
 	g.Expect(launches[0].ResearchOpts.Image).To(gomega.Equal("registry.example/factory-golang:abc"))
 }
 
-// A research sandbox is sized as the board's other sandboxes are: its
-// disk, ephemeral storage, CPU and memory, each at least a
-// conversation's (researchMinSize).
-func TestResearchClaimLaunchesWithTheBoardSandboxSize(t *testing.T) {
+// A research sandbox is not sized by the board: the research recipe's
+// sandbox: and factory's defaults size it. Only the storage class, where
+// the disk goes, is the board's.
+func TestResearchClaimLaunchesWithoutTheBoardSandboxSize(t *testing.T) {
 	g := gomega.NewWithT(t)
 	req := researchRequest(testSession, time.Now().Add(-time.Minute), aQuestion)
 	board := testBoard(nil)
@@ -311,33 +311,8 @@ func TestResearchClaimLaunchesWithTheBoardSandboxSize(t *testing.T) {
 
 	launches := researchLaunches(fake)
 	g.Expect(launches).To(gomega.HaveLen(1))
-	g.Expect(launches[0].ResearchOpts.WorkspaceDiskSize).To(gomega.Equal("50Gi"))
-	// The board's bigger values stand; its smaller ones are raised.
-	g.Expect(launches[0].ResearchOpts.Sandbox).To(gomega.Equal(factorycli.SandboxSize{
-		StorageClass: "premium-rwo", EphemeralStorage: "20Gi",
-		CPURequest: "4", CPULimit: "8", MemoryRequest: "12Gi", MemoryLimit: "16Gi",
-	}))
-}
-
-// A board that sizes nothing (its disk the CRD's 10Gi default) still
-// gives a research session a conversation's size.
-func TestResearchClaimLaunchesAtLeastAConversationsSize(t *testing.T) {
-	g := gomega.NewWithT(t)
-	req := researchRequest(testSession, time.Now().Add(-time.Minute), aQuestion)
-	board := testBoard(nil)
-	board.Spec.Sandbox.DiskSize = "10Gi"
-	fake := newFakeLauncher()
-	r := newTestReconciler(fake, testGithubClient(`[]`), board, githubSecret(), req)
-
-	_, err := r.Reconcile(context.Background(), boardRequest())
-	g.Expect(err).NotTo(gomega.HaveOccurred())
-
-	launches := researchLaunches(fake)
-	g.Expect(launches).To(gomega.HaveLen(1))
-	g.Expect(launches[0].ResearchOpts.WorkspaceDiskSize).To(gomega.Equal("40Gi"))
-	g.Expect(launches[0].ResearchOpts.Sandbox).To(gomega.Equal(factorycli.SandboxSize{
-		EphemeralStorage: "10Gi", CPURequest: "4", CPULimit: "8", MemoryRequest: "12Gi", MemoryLimit: "16Gi",
-	}))
+	g.Expect(launches[0].ResearchOpts.WorkspaceDiskSize).To(gomega.BeEmpty())
+	g.Expect(launches[0].ResearchOpts.Sandbox).To(gomega.Equal(factorycli.SandboxSize{StorageClass: "premium-rwo"}))
 }
 
 // The finished sandbox is the receipt. This is the anti-loop property:
