@@ -1,0 +1,17 @@
+file: task-pr-10-comments.yaml
+task:
+    type: pr-comments
+    url: https://github.com/test-owner/test-repo/pull/10
+    number: 10
+    priority: medium
+    phase: 1
+    createdAt: 2026-10-20T10:00:00Z
+    triggerEventTime: 2026-10-20T10:30:00Z
+    triggerReason: PRCommentsAdded
+    triggerNotes: Oldest unaddressed review comment by alice added at 2026-10-20T10:30:00Z (ID 42) since last commit 0123456 (committer date 2026-10-20T10:00:00Z)
+    assignee: bot1
+    status: Pending
+    commitSHA: 0123456789abcdef
+    rule: comments
+    recipe: care-comments
+    apply: post-replies

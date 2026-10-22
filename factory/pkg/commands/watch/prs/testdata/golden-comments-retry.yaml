@@ -1,0 +1,18 @@
+file: task-pr-10-comments.yaml
+task:
+    type: pr-comments
+    url: https://github.com/test-owner/test-repo/pull/10
+    number: 10
+    priority: medium
+    phase: 1
+    createdAt: 2026-10-20T10:00:00Z
+    triggerEventTime: 2026-10-20T10:10:00Z
+    triggerReason: PRCommentsAdded
+    triggerNotes: Retrying the failed address-comments task (retry 2) on commit 0123456
+    assignee: bot1
+    status: Pending
+    commitSHA: 0123456789abcdef
+    retryCount: 2
+    rule: comments
+    recipe: care-comments
+    apply: post-replies

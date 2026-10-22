@@ -1,0 +1,18 @@
+file: task-pr-10-review.yaml
+task:
+    type: pr-review
+    url: https://github.com/test-owner/test-repo/pull/10
+    number: 10
+    priority: medium
+    phase: 1
+    createdAt: 2026-10-20T10:00:00Z
+    triggerEventTime: 2026-10-20T10:20:00Z
+    triggerReason: PRReadyForReview
+    triggerNotes: Automated review triggered; all CI checks passed at 2026-10-20T10:20:00Z for commit 0123456 (committer date 2026-10-20T10:00:00Z)
+    status: Pending
+    commitSHA: 0123456789abcdef
+    instructions:
+        - check the docs
+    rule: review
+    recipe: review
+    apply: submit-review
