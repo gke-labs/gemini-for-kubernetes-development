@@ -140,10 +140,6 @@ type Config struct {
 	InactivityTimeout time.Duration
 	// DryRun reports what would be queued without touching the queue or GitHub.
 	DryRun bool
-	// Attempts counts the CI give-up's attempts from the runs in the queue's
-	// journal rather than from the watcher's comments alone
-	// (investigationAttempts).
-	Attempts bool
 	// GraphQLPRDetails reads what an evaluation needs of each pull request -
 	// the pull request, its merge queue entry, commits, comments, reviews and
 	// their inline comments - in one GraphQL query per batch of pull

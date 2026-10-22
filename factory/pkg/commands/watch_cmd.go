@@ -91,7 +91,6 @@ func NewWatchCommand(ctx context.Context) *cobra.Command {
 	cmd.Flags().StringVar(&flags.ScanState, "scan-state", os.Getenv("WATCH_SCAN_STATE"), "File the shared scan's snapshot persists in (defaults to the WATCH_SCAN_STATE env, else scan_state.json in the queue directory)")
 	cmd.Flags().BoolVar(&flags.SharedScan, "shared-scan", envBool("WATCH_SHARED_SCAN"), "Have the issue and PR scanners read one shared set of GitHub listings, refreshed incrementally (since the last pass) and kept in the queue directory across restarts, instead of each listing for itself; what they decide is unchanged (defaults to the WATCH_SHARED_SCAN env)")
 	cmd.Flags().BoolVar(&flags.GraphQLPRDetails, "graphql-pr-details", envBool("WATCH_GRAPHQL_PR_DETAILS"), "Have the PR scanner read the pull requests it evaluates (the PR, its merge queue entry, commits, comments, reviews and inline comments) in one GraphQL query per batch rather than six REST calls each; CI stays REST (defaults to the WATCH_GRAPHQL_PR_DETAILS env)")
-	cmd.Flags().BoolVar(&flags.Attempts, "attempts", envBool("WATCH_ATTEMPTS"), "Count the CI give-up's attempts from the queue's journal of runs, which survives restarts and skips dropped tasks, rather than from the watcher's comments alone (defaults to the WATCH_ATTEMPTS env)")
 	cmd.Flags().DurationVar(&flags.PRInactivityTimeout, "pr-inactivity-timeout", common.GetEnvDuration("PR_INACTIVITY_TIMEOUT", 0), "Time of inactivity with no human comments before pausing automated processing on a PR (e.g. '24h', '168h')")
 
 	cmd.AddCommand(newWatchFanoutCommand(ctx))

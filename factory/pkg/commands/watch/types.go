@@ -71,9 +71,6 @@ type Flags struct {
 	SandboxEvictionAge  string
 	SandboxIdleTimeout  time.Duration
 	PRInactivityTimeout time.Duration
-	// Attempts counts a give-up's attempts from the queue's journal of runs
-	// rather than from the watcher's comments (prs.Config.Attempts).
-	Attempts bool
 	// SharedScan makes the issue and pull request scanners read one shared,
 	// incremental set of listings, persisted in the queue directory
 	// (package scan), instead of each listing for itself.

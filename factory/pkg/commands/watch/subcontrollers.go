@@ -321,7 +321,6 @@ func (w *Watcher) prScannerConfig() prs.Config {
 		MinNumber:         w.minIssueNumber(),
 		InactivityTimeout: w.PRInactivityTimeout,
 		DryRun:            w.loopDryRun(w.PRMode),
-		Attempts:          w.Attempts,
 		GraphQLPRDetails:  w.GraphQLPRDetails,
 	}
 }

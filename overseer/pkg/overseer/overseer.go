@@ -351,12 +351,6 @@ func newOverseerSandboxFromOverseer(o *overseerv1alpha1.Overseer, name, namespac
 			"value": o.Spec.TaskTimeout.Duration.String(),
 		})
 	}
-	if o.Spec.Attempts {
-		env = append(env, map[string]interface{}{
-			"name":  "WATCH_ATTEMPTS",
-			"value": "true",
-		})
-	}
 	if o.Spec.SharedScan {
 		env = append(env, map[string]interface{}{
 			"name":  "WATCH_SHARED_SCAN",
