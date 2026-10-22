@@ -85,6 +85,7 @@ func (s *Server) RegisterRoutes(router *gin.Engine) {
 		api.POST("/task-sessions/:sandbox/:task/prompt", s.promptTaskSession)
 		api.POST("/task-sessions/:sandbox/:task/permission", s.resolveTaskSessionPermission)
 		api.POST("/task-sessions/:sandbox/:task/cancel", s.cancelTaskSession)
+		api.POST("/task-sessions/:sandbox/:task/stop", s.forceStopTaskSession)
 		api.POST("/task-sessions/:sandbox/:task/mode", s.setTaskSessionMode)
 		// The session's group's recipes and its draft's actions. The
 		// server files the Request on the issue's or PR's row, or on the
@@ -126,6 +127,7 @@ func (s *Server) RegisterRoutes(router *gin.Engine) {
 			scoped.POST("/task-sessions/:sandbox/:task/prompt", s.promptTaskSession)
 			scoped.POST("/task-sessions/:sandbox/:task/permission", s.resolveTaskSessionPermission)
 			scoped.POST("/task-sessions/:sandbox/:task/cancel", s.cancelTaskSession)
+			scoped.POST("/task-sessions/:sandbox/:task/stop", s.forceStopTaskSession)
 			scoped.POST("/task-sessions/:sandbox/:task/mode", s.setTaskSessionMode)
 			scoped.GET("/sandbox-card/:sandbox", s.getSandboxCard)
 			scoped.GET("/sandbox-card/:sandbox/log", s.getSandboxTaskLog)

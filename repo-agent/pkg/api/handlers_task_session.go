@@ -357,6 +357,21 @@ func (s *Server) cancelTaskSession(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
+// forceStopTaskSession ends a turn the engine never ended, which Stop
+// (cancel) cannot: the daemon closes the session, and the event stream's
+// next open loads the conversation into a new engine (ensureTaskSession).
+func (s *Server) forceStopTaskSession(c *gin.Context) {
+	conn, ok := s.resolveTaskSession(c)
+	if !ok {
+		return
+	}
+	if err := conn.client.ForceStop(c.Request.Context(), conn.task); err != nil {
+		researchError(c, err)
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
 func (s *Server) setTaskSessionMode(c *gin.Context) {
 	conn, ok := s.resolveTaskSession(c)
 	if !ok {
