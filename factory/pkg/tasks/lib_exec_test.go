@@ -520,6 +520,23 @@ GITHUB_USER_TOKEN=CODER_TOKEN setGitHubURLRewrite coder-bot`, "set -x\nensureFor
 		}
 	})
 
+	t.Run("a workspace another identity forked", func(t *testing.T) {
+		// The agent's sandbox is reused and the pool picked another bot:
+		// origin is that bot's fork and upstream is already there, which
+		// gh repo fork --remote's rename trips over on every attempt.
+		out, _, err := runLib(t, []string{"GITHUB_BOT_LOGIN=coder-bot", "CLONE_URL=https://github.com/upstream-org/repo.git"}, ghStub+`
+git remote rename origin upstream
+git remote add origin https://github.com/other-bot/repo.git`, "ensureForkRemote"+report+`
+echo "UPSTREAM=$(git remote get-url upstream)"`)
+		if err != nil {
+			t.Fatalf("ensureForkRemote failed: %v\n%s", err, out)
+		}
+		if !strings.Contains(out, "ORIGIN=https://github.com/Coder-Bot/repo.git") || !strings.Contains(out, "CALLS=1") ||
+			!strings.Contains(out, "UPSTREAM=https://github.com/upstream-org/repo.git") {
+			t.Errorf("want origin the task identity's fork and upstream the repository after one call:\n%s", out)
+		}
+	})
+
 	t.Run("origin already the fork", func(t *testing.T) {
 		out, _, err := runLib(t, []string{"GITHUB_BOT_LOGIN=coder-bot"}, ghStub+`
 git remote set-url origin https://github.com/coder-bot/repo.git`, "ensureForkRemote"+report)

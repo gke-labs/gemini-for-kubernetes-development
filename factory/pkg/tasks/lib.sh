@@ -288,6 +288,7 @@ function forkRemote {
         if originIsForkOf "${owner}"; then
             return 0
         fi
+        resetForkRemotes
         echo "running gh repo fork --remote (attempt ${attempt})"
         if out="$(cd "/workspaces/${REPO_NAME}" && gh repo fork --remote 2>&1)" && originIsForkOf "${owner}"; then
             echo "${out}"
@@ -302,6 +303,27 @@ function forkRemote {
         fi
     done
     return 1
+}
+
+# resetForkRemotes points origin back at the repository and removes
+# upstream, before each fork call. gh repo fork --remote renames origin to
+# upstream, so in a workspace an earlier task left with both - another
+# identity's fork as origin (the pool picks a bot per run, and an agent's
+# sandbox is reused), or a fork call that failed halfway - it fails every
+# time with "remote upstream already exists". From the repository it makes
+# both anew; a call that fails leaves origin at the repository, which
+# ensureForkRemote refuses to push to. Without CLONE_URL it changes nothing.
+function resetForkRemotes {
+    [ -n "${CLONE_URL:-}" ] || return 0
+    (
+        cd "/workspaces/${REPO_NAME}" || exit 1
+        git remote remove upstream 2>/dev/null || true
+        if git remote get-url origin >/dev/null 2>&1; then
+            git remote set-url origin "${CLONE_URL}"
+        else
+            git remote add origin "${CLONE_URL}"
+        fi
+    )
 }
 
 # ensureForkRemote is forkRemote for tasks that cannot do without the fork:
