@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
@@ -358,7 +359,7 @@ func newOverseerSandboxFromOverseer(o *overseerv1alpha1.Overseer, name, namespac
 		})
 	}
 	env = append(env, rulesEnv(o.Spec.Rules)...)
-	env = append(env, repoRecipeEnv(o.Spec.RepoRecipe)...)
+	env = append(env, repoRecipeEnv(o.Spec.RepoRecipe, o.Spec.RepoURL)...)
 	if o.Spec.RulesRecord {
 		// Beside the scan's snapshot, on the volume: it outlives restarts
 		// and stays out of the queue directory run.sh pushes.
@@ -611,9 +612,12 @@ func rulesEnv(r *overseerv1alpha1.OverseerRules) []interface{} {
 }
 
 // repoRecipeEnv is spec.repoRecipe for the watcher and the factory
-// commands it runs: FACTORY_REPO_RECIPE_MODE (augment or replace) and
-// FACTORY_REPO_RECIPE_COMMIT (a SHA, or latest), when the mode is not off.
-func repoRecipeEnv(r *overseerv1alpha1.OverseerRepoRecipe) []interface{} {
+// commands it runs: FACTORY_REPO_RECIPE_MODE (augment or replace),
+// FACTORY_REPO_RECIPE_COMMIT (a SHA, or latest) and FACTORY_REPO_RECIPE_DIR
+// (the pod's clone of the repository, /workspaces/<repo>, which run.sh
+// keeps, so the recipes are read from its git objects), when the mode is
+// not off.
+func repoRecipeEnv(r *overseerv1alpha1.OverseerRepoRecipe, repoURL string) []interface{} {
 	if r == nil || r.Mode == "" || r.Mode == "off" {
 		return nil
 	}
@@ -624,5 +628,6 @@ func repoRecipeEnv(r *overseerv1alpha1.OverseerRepoRecipe) []interface{} {
 	return []interface{}{
 		map[string]interface{}{"name": "FACTORY_REPO_RECIPE_MODE", "value": r.Mode},
 		map[string]interface{}{"name": "FACTORY_REPO_RECIPE_COMMIT", "value": commit},
+		map[string]interface{}{"name": "FACTORY_REPO_RECIPE_DIR", "value": "/workspaces/" + path.Base(strings.TrimSuffix(strings.TrimSuffix(repoURL, "/"), ".git"))},
 	}
 }
