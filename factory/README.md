@@ -129,7 +129,7 @@ Each phase is a recipe on the repository, `factory recipe run-<phase> --url <rep
 - **Container restarts.** If the container restarts, interrupted tasks are marked failed (exit 137) instead of hanging forever.
 
 ### Credential hygiene
-- **No tokens in the engine's environment.** The agent's environment never contains a GitHub token. The task script authenticates git through a URL rewrite, and the engine gets a git config without that rewrite, falling back to `gh auth git-credential`.
+- **No tokens in the engine's environment.** The agent's environment never contains a GitHub token: the sandbox daemon starts the engine with the pod's environment less anything that looks like a credential. The task's own steps authenticate git through a URL rewrite in the global git config, which the engine's shell can still read; scoping that per step is not built yet.
 - **No tokens in logs.** Tokens are kept out of git config files the agent can read and out of `set -x` traces.
 - **Fork check.** Pushes go to the identity's own fork, and a task stops if `origin` is not that fork.
 - **Bot identities.** `--user` runs a task as a bot identity (secret `user-<name>`). `roles` in `.factory.cfg` (`coder`, `reviewer`, `agent`) give each task type a pool of bots.

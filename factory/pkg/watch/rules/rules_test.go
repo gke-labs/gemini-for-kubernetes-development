@@ -13,7 +13,7 @@ func TestBuiltinRulesParseAndValidate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Builtin: %v", err)
 	}
-	want := []string{"adopt-pr", "chore", "ci", "comments", "conflict", "fix", "inactive",
+	want := []string{"chore", "ci", "comments", "conflict", "fix", "inactive",
 		"inherit-labels", "nudge", "ready", "ready-unreview", "review", "workflow", "workflow-missing"}
 	var got []string
 	for _, r := range set {
@@ -50,7 +50,7 @@ func TestBuiltinPROrder(t *testing.T) {
 		}
 		got = append(got, name)
 	}
-	if want := "inherit-labels inactive comments* conflict* ci* review* ready* ready-unreview* adopt-pr"; strings.Join(got, " ") != want {
+	if want := "inherit-labels inactive comments* conflict* ci* review* ready* ready-unreview*"; strings.Join(got, " ") != want {
 		t.Errorf("PR rules = %v, want %s", got, want)
 	}
 }
@@ -68,15 +68,9 @@ func TestBuiltinDefaults(t *testing.T) {
 	if !fix.IsEnabled() || fix.Policy.Cooldown.Success.Duration != 10*time.Minute || fix.Policy.Cooldown.Failure.Duration != 20*time.Minute {
 		t.Errorf("fix = %+v", fix.Policy.Cooldown)
 	}
-	// Off: adopt-pr, a safety net open-pr made idle. inactive is on, and a
-	// no-op without a timeout.
+	// inactive is on, and a no-op without a timeout.
 	if !byName["inactive"].IsEnabled() {
 		t.Error("inactive is off")
-	}
-	for _, name := range []string{"adopt-pr"} {
-		if byName[name].IsEnabled() {
-			t.Errorf("%s is enabled", name)
-		}
 	}
 }
 

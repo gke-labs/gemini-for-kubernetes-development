@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	githubv39 "github.com/google/go-github/v39/github"
 )
@@ -103,6 +104,9 @@ type fakePRs struct {
 	// denyLabels answers a label write 403, as GitHub does a bot that
 	// may not label the repository's issues.
 	denyLabels bool
+	// labelFailures answers that many label writes 502 first; labelCalls
+	// counts the writes.
+	labelFailures, labelCalls int
 	// comments are o/r#5's, the PR an adopting Change adopts; closed is
 	// whether it was closed.
 	comments []string
@@ -138,6 +142,12 @@ func (f *fakePRs) client(t *testing.T) *githubv39.Client {
 		_ = json.NewEncoder(w).Encode(prs)
 	})
 	mux.HandleFunc("/repos/o/r/issues/12/labels", func(w http.ResponseWriter, r *http.Request) {
+		f.labelCalls++
+		if f.labelCalls <= f.labelFailures {
+			w.WriteHeader(http.StatusBadGateway)
+			fmt.Fprint(w, `{"message":"Server Error"}`)
+			return
+		}
 		if f.denyLabels {
 			w.WriteHeader(http.StatusForbidden)
 			fmt.Fprint(w, `{"message":"Must have admin rights to Repository."}`)
@@ -247,6 +257,41 @@ func TestOpenPR(t *testing.T) {
 		out.Reset()
 		if err := ApplyAction(ctx, opener.client(t), changeDoc(t), "open-pr", false, &out); err != nil || !strings.Contains(out.String(), "Warning: could not label") {
 			t.Errorf("no labeler: %v\n%s", err, out.String())
+		}
+	})
+
+	// A label write GitHub failed on its side is tried again: a PR left
+	// without its labels is one the watch's listings never find. One it
+	// refused is not, and labels that never land are a warning.
+	t.Run("labels are tried again on a 5xx, not on a 4xx", func(t *testing.T) {
+		defer func(r []time.Duration) { labelRetries = r }(labelRetries)
+		labelRetries = []time.Duration{time.Millisecond, time.Millisecond, time.Millisecond}
+
+		f := &fakePRs{labelFailures: 2}
+		var out bytes.Buffer
+		if err := ApplyAction(ctx, f.client(t), changeDoc(t), "open-pr", false, &out); err != nil {
+			t.Fatal(err)
+		}
+		if f.labelCalls != 3 || strings.Join(f.labels, ",") != "bug" || strings.Contains(out.String(), "Warning") {
+			t.Errorf("502 twice: %d calls, labels %v:\n%s", f.labelCalls, f.labels, out.String())
+		}
+
+		f = &fakePRs{denyLabels: true}
+		out.Reset()
+		if err := ApplyAction(ctx, f.client(t), changeDoc(t), "open-pr", false, &out); err != nil {
+			t.Fatal(err)
+		}
+		if f.labelCalls != 1 || !strings.Contains(out.String(), "Warning: could not label") {
+			t.Errorf("403: %d calls:\n%s", f.labelCalls, out.String())
+		}
+
+		f = &fakePRs{labelFailures: 99}
+		out.Reset()
+		if err := ApplyAction(ctx, f.client(t), changeDoc(t), "open-pr", false, &out); err != nil {
+			t.Fatal(err)
+		}
+		if f.labelCalls != 4 || len(f.labels) != 0 || !strings.Contains(out.String(), "Warning: could not label") {
+			t.Errorf("502 always: %d calls, labels %v:\n%s", f.labelCalls, f.labels, out.String())
 		}
 	})
 

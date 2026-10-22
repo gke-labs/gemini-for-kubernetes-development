@@ -30,8 +30,8 @@ func GetAvailableModelsForKey(key string) string {
 // the MODELS env passthrough; no key-tier probing in v1.
 var DefaultClaudeModels = []string{"opus", "sonnet"}
 
-// DefaultAntigravityModels is a single "default": runEngine then passes no
-// --model and agy picks. Its slugs (gemini-3.5-flash-medium, …) are not
+// DefaultAntigravityModels is a single "default": no --model is passed
+// and agy picks. Its slugs (gemini-3.5-flash-medium, …) are not
 // the gemini-cli names, and which ones an API key can reach is agy's
 // call, so a hard-coded list would rot.
 var DefaultAntigravityModels = []string{"default"}
@@ -52,8 +52,7 @@ func ModelsForEngine(engine, geminiKey string) string {
 // getScriptWithDefaults renders a task script: the shared lib.sh prelude
 // (setupGit, configureGemini, record_gemini_usage, …) is prepended, the
 // task script follows — bash keeps the last definition, so a script that
-// needs different behavior simply redefines the function — and the
-// __DEFAULT_MODELS__ placeholder is replaced with the default model list.
+// needs different behavior simply redefines the function.
 func getScriptWithDefaults(name string) ([]byte, error) {
 	lib, err := scriptsFS.ReadFile("lib.sh")
 	if err != nil {
@@ -63,7 +62,5 @@ func getScriptWithDefaults(name string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	content := string(lib) + "\n" + string(data)
-	content = strings.ReplaceAll(content, "__DEFAULT_MODELS__", DefaultModelsString())
-	return []byte(content), nil
+	return []byte(string(lib) + "\n" + string(data)), nil
 }

@@ -19,7 +19,7 @@ var taskScripts = map[string]func() ([]byte, error){
 
 // Functions that live only in lib.sh — every rendered script must define
 // them exactly once (a duplicate means a script kept a stale copy).
-var libOnly = []string{"setupGit", "setGitHubURLRewrite", "configureGemini", "record_gemini_usage", "record_claude_usage", "record_engine_usage", "runEngine"}
+var libOnly = []string{"setupGit", "setGitHubURLRewrite", "configureGemini", "record_gemini_usage"}
 
 // Scripts whose setupGitRepos deliberately shadows lib.sh's default
 // (bash: last definition wins, and lib.sh is prepended).

@@ -16,7 +16,7 @@ func TestDefaultModels(t *testing.T) {
 }
 
 func TestGetScriptWithDefaults(t *testing.T) {
-	// getScriptWithDefaults replaces the __DEFAULT_MODELS__ placeholder.
+	// No placeholder is left in a rendered script.
 	scriptBytes, err := GetRecipeStepScript()
 	if err != nil {
 		t.Fatalf("Failed to get run script: %v", err)
@@ -25,11 +25,6 @@ func TestGetScriptWithDefaults(t *testing.T) {
 	scriptContent := string(scriptBytes)
 	if strings.Contains(scriptContent, "__DEFAULT_MODELS__") {
 		t.Error("Expected script to not contain '__DEFAULT_MODELS__' placeholder")
-	}
-
-	expectedString := DefaultModelsString()
-	if !strings.Contains(scriptContent, expectedString) {
-		t.Errorf("Expected script to contain default models list string: %s", expectedString)
 	}
 }
 

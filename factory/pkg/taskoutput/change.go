@@ -5,12 +5,14 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 
 	githubv39 "github.com/google/go-github/v39/github"
 	"gopkg.in/yaml.v3"
@@ -502,7 +504,11 @@ func WithLabeler(ctx context.Context, gh *githubv39.Client) context.Context {
 
 // addPRLabels adds labels to pr, with the client WithLabeler set, else
 // gh. The PR is open either way; a label missing from the repository, or
-// a client that may not label, is a warning, not a failure.
+// a client that may not label, is a warning, not a failure. A failure
+// GitHub may not repeat - a 5xx, a rate limit, the connection - is tried
+// again (labelRetries): an overseer's PR left without its labels is one
+// no listing of the watch finds. Adding a label it has is a no-op, so a
+// retry after a write that landed does no harm.
 func addPRLabels(ctx context.Context, gh *githubv39.Client, owner, repo string, pr *githubv39.PullRequest, labels []string, out io.Writer) {
 	if len(labels) == 0 {
 		return
@@ -510,9 +516,44 @@ func addPRLabels(ctx context.Context, gh *githubv39.Client, owner, repo string, 
 	if l, ok := ctx.Value(labelerKey{}).(*githubv39.Client); ok && l != nil {
 		gh = l
 	}
-	if _, _, err := gh.Issues.AddLabelsToIssue(ctx, owner, repo, pr.GetNumber(), labels); err != nil {
-		fmt.Fprintf(out, "Warning: could not label %s: %v\n", pr.GetHTMLURL(), err)
+	var err error
+	for i := 0; ; i++ {
+		if _, _, err = gh.Issues.AddLabelsToIssue(ctx, owner, repo, pr.GetNumber(), labels); err == nil {
+			return
+		}
+		if i == len(labelRetries) || !transient(err) {
+			break
+		}
+		fmt.Fprintf(out, "Labelling %s failed (%v); trying again in %s\n", pr.GetHTMLURL(), err, labelRetries[i])
+		select {
+		case <-ctx.Done():
+			fmt.Fprintf(out, "Warning: could not label %s: %v\n", pr.GetHTMLURL(), ctx.Err())
+			return
+		case <-time.After(labelRetries[i]):
+		}
 	}
+	fmt.Fprintf(out, "Warning: could not label %s: %v\n", pr.GetHTMLURL(), err)
+}
+
+// labelRetries are the waits before each new try of a PR's labels.
+var labelRetries = []time.Duration{2 * time.Second, 5 * time.Second, 15 * time.Second}
+
+// transient reports whether a GitHub call's failure may not happen again:
+// a rate limit, a 429 or 5xx, or no answer at all. A 4xx GitHub gave - a
+// client that may not write, a label that does not exist - would.
+func transient(err error) bool {
+	var rate *githubv39.RateLimitError
+	var abuse *githubv39.AbuseRateLimitError
+	var resp *githubv39.ErrorResponse
+	switch {
+	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+		return false
+	case errors.As(err, &rate), errors.As(err, &abuse):
+		return true
+	case errors.As(err, &resp):
+		return resp.Response != nil && (resp.Response.StatusCode == http.StatusTooManyRequests || resp.Response.StatusCode >= 500)
+	}
+	return true
 }
 
 // applyPostReplies posts a Change's replies and report on its PR, with
