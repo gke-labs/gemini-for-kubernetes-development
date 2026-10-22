@@ -2,12 +2,12 @@
 
 | Metadata | Details |
 | :--- | :--- |
-| **Status** | Proposal |
+| **Status** | Proposal; not built. No `IssuePipeline` schema, reconciler or `factory pipeline` command exists (2026-10-21); only this note (#1841). Since it was written, the watch's decisions moved to the rules engine ([watch-rules.md](watch-rules.md)) and [fan-out](fanout.md) shipped, so a pipeline reconciler would sit beside `watch/fanouts`, and parents would be kept from `fix`/`workflow` by a fact, as `fanout: false` does for fan-out parents. |
 | **Author(s)** | Sam Dowell (`sdowell@google.com`) |
 | **Created** | 2026-09-29 |
-| **Last Updated** | 2026-10-20 |
+| **Last Updated** | 2026-10-21 |
 | **Replaces** | [`.agents/workflows/kcc-greenfield.txt`](../../.agents/workflows/kcc-greenfield.txt) (LLM-driven `mode: workflow`) |
-| **Related** | [workflow-orchestration-and-session-reconciliation.md](workflow-orchestration-and-session-reconciliation.md), [watch-subcontrollers-architecture.md](watch-subcontrollers-architecture.md), [task-recipes-and-outputs.md](task-recipes-and-outputs.md), [fanout.md](fanout.md) |
+| **Related** | [workflow-orchestration-and-session-reconciliation.md](workflow-orchestration-and-session-reconciliation.md), [watch-subcontrollers-architecture.md](watch-subcontrollers-architecture.md), [task-recipes-and-outputs.md](task-recipes-and-outputs.md), [fanout.md](fanout.md), [watch-rules.md](watch-rules.md) |
 | **Scope** | `factory watch`, `factory` CLI |
 
 ---
@@ -21,7 +21,7 @@ Add a declarative, YAML-defined **`IssuePipeline`**: an ordered list of steps, e
 3. Opens step N+1.
 4. Closes the parent after the last step.
 
-Orchestration needs no sandbox, LLM session, journal branch or precondition script. Child issues are ordinary trigger-labelled issues, and they go through the existing fix → PR → PR-watch flow.
+Orchestration needs no sandbox, LLM session, journal branch or precondition script. Child issues are ordinary trigger-labelled issues, and they go through the existing flow: the `fix` rule, then the PR rules (`comments`, `conflict`, `ci`, `review`, `ready`).
 
 Pipelines are defined **only in the repository they run against**, and the latest definition on the default branch is always used.
 
@@ -41,7 +41,7 @@ Pipelines are defined **only in the repository they run against**, and the lates
 | Safety | Long "do NOT…" guardrail list | Guardrails only work if the LLM follows them |
 | Cost | Sandbox + LLM tokens on every run, including "still waiting" | Wasted compute and tokens |
 
-Latency is no longer the main problem: the Nudger already re-runs a workflow when an issue it waits on closes. What remains is determinism, idempotency and cost. The orchestration needs no judgement. It is a fixed state machine over GitHub issue state, so it should be code.
+Latency is no longer the main problem: the `nudge` rule already steps a workflow when an issue it links closes. What remains is determinism, idempotency and cost. The orchestration needs no judgement. It is a fixed state machine over GitHub issue state, so it should be code.
 
 ---
 
@@ -288,13 +288,13 @@ The reconciler is a new subcontroller in the [subcontroller architecture](watch-
 ```mermaid
 flowchart LR
     IS["Issue scanner"] -- "parent with pipeline block:<br/>label it, don't queue a task" --> GH[(GitHub)]
-    NU["Nudger / merged-PR handling"] -- "child closed,<br/>or bot PR merged" --> PR
+    NU["linked-issue-closed event / merged-PR handling"] -- "child closed,<br/>or bot PR merged" --> PR
     PR["Pipeline reconciler<br/>(startup, nudges, periodic resync)"] -- "observe, reconcile, apply" --> GH
     GH -- "children: trigger label,<br/>assigned to the bot" --> IS
     IS -- "normal fix task" --> Q["Task queue"]
 ```
 
-* **Issue scanner.** An issue with a `factory-pipeline` block is routed to the pipeline reconciler and is never queued as a task or treated as a workflow. `factory fix --url` makes the same distinction.
+* **Issue scanner and rules.** An issue with a `factory-pipeline` block is routed to the pipeline reconciler and is never queued as a task or treated as a workflow: the scanner records it as a fact, and the `fix` and `workflow` rules exclude it, as they exclude fan-out parents with `fanout: false`.
 * **Pipeline reconciler.** It reconciles at startup, on nudges and on a periodic resync. Each pass covers open pipeline parents, plus recently closed ones so that accidental closes are caught. It never touches the task queue or sandboxes.
 * **Children.** Children are ordinary issues with the trigger label, assigned to the bot, so the existing fast issue scan picks them up.
 * **Single writer.** Only one reconciler per repository writes. Others run in dry-run mode. The mechanism (for example, a Kubernetes `Lease`) is an implementation choice. Pipelines are behind a flag during rollout.
@@ -302,7 +302,7 @@ flowchart LR
 
 ### 7.2 Nudges
 
-When a pipeline child closes, the Nudger triggers the reconciler for the child's parent instead of re-running a workflow. Nudges can be missed, so the periodic resync stays as the backstop.
+When a pipeline child closes, the sandbox GC's closed-issue hook (the `linked-issue-closed` event the `nudge` rule acts on, and that already wakes a fan-out parent) triggers the reconciler for the child's parent instead of stepping a workflow. Nudges can be missed, so the periodic resync stays as the backstop.
 
 ### 7.3 Identity
 
@@ -346,7 +346,7 @@ A single comment on the parent, edited in place, replaces the hand-written progr
 | Command | Purpose |
 | :--- | :--- |
 | `factory pipeline validate <file>` | Static checks (§4.4); CI-friendly. Writes nothing. |
-| `factory pipeline reconcile --url <parent> [--dry-run]` | One-shot reconcile. `factory fix --url <parent>` routes here. |
+| `factory pipeline reconcile --url <parent> [--dry-run]` | One-shot reconcile. (`factory fix` is gone, #1884; `factory recipe fix` on a parent would route here.) |
 | `factory pipeline adopt --url <parent> --step <id> --issue <n> [--dry-run]` | Bind an existing issue to a step: add the marker and link it as a sub-issue. |
 
 **Dry-run mode.** Every command that writes to GitHub accepts `--dry-run`. It runs the same observe and reconcile code as a real run, then prints the rendered status and the actions the executor would apply, instead of applying them. Its output is therefore exactly what a real run would do at that moment, which makes it the way to preview a new or edited definition against a real parent. `factory watch` has the same mode (§13).
@@ -430,7 +430,7 @@ Existing kcc-greenfield parents are **not** migrated. New parents use the pipeli
 
 ## 14. Future extensions
 
-* **Fan-out.** Repeat a step once per value of a list param, with one sub-issue per value and a cap on how many are open at once. This overlaps with the separate [fan-out design](fanout.md) (sub-issues under a parent, a progress comment, `overseer/stop` to hold), and issue pipelines could be extended to supersede it. v1 leaves room for this:
+* **Fan-out.** Repeat a step once per value of a list param, with one sub-issue per value and a cap on how many are open at once. This overlaps with the separate, implemented [fan-out](fanout.md) (sub-issues under a parent, a progress comment, `overseer/stop` to hold), and issue pipelines could be extended to supersede it. v1 leaves room for this:
   * steps are identified by `id`, not position;
   * the child marker can carry an extra per-value key;
   * params can gain a list type;

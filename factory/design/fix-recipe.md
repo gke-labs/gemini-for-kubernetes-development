@@ -1,6 +1,9 @@
 # Fix as a recipe
 
-**Status:** Steps 1–3 are built; the PR revises and the PR mode moved to the `care` recipe ([care-recipe.md](care-recipe.md)), which deleted the PR mode; see [As built](#as-built). Step 1 is the `fix` recipe's start, `setup-fork` and `push`, the Change kind, `open-pr`/`edit`/`reject`, and `run:fix` on the recipe. Step 2 is the revises, `post-replies`, revise inputs and `factory pr watch` revising a fix run. Step 3 is the board's fix, follow-ups and UI. The in-cluster verification (step 4) has not been done.
+**Status:** Steps 1–3 are built: step 1 (#1771) is the `fix` recipe's start, `setup-fork` and `push`, the Change kind, `open-pr`/`edit`/`reject`, and `run:fix` on the recipe; step 2 (#1772) the revises, `post-replies`, revise inputs and `factory pr watch` revising a fix run; step 3 (#1773) the board's fix, follow-ups and UI. Step 4 (in-cluster verification) is not recorded in this repo. Much has changed since; see [As built](#as-built):
+- The PR mode (#1784) and the PR revises (`address-comments`, `fix-ci`, `rebase`) moved to the `care` recipes ([care-recipe.md](care-recipe.md), #1805; split in five by [recipe-sessions.md](recipe-sessions.md), #1834). `iterate` went with revise itself (#1938, [repo-recipes.md](repo-recipes.md#results-are-files-the-agent-writes)); care-iterate changes an open PR. fix is `on: [issue]`, with no revises.
+- The overseer fixes issues with this recipe (#1883, its PR opened ready with `--draft false`), and `factory fix` with its scripts is deleted (#1884).
+- The board runs fix like any recipe (#1950, #1954): `open-pr` is fix's `task-output.on-finish` (#1946), applied by the runner when the run ends; `ensureFix`, `fix-harvested-at` and `fix-error` are gone, and `policy.draftPR` is removed (#1965).
 
 The board's fix is the last of its agent work on the old mechanism, and the busiest. `factory fix` runs `fix_issue.sh` with the member's token; the agent pushes, runs `gh pr create`, and writes the PR's URL to `agent-output.txt`, which factory reads to alias the sandbox to the PR. Every follow-up is a separate command in the same sandbox, resuming the engine CLI's last chat:
 
@@ -20,7 +23,7 @@ Triage, plan, research and review already run as recipes: a task session in the 
 2. **The task pushes, from inside the sandbox, always to the member's fork.** A factory-owned step ends the task: it pushes the branch to the member's fork and nowhere else. The agent's commits arrive as it made them.
 3. **Opening the PR is an apply.** `factory apply --action open-pr` opens it from the fork's branch, with the caller's token, as a draft. GitHub is the draft, as for review.
 4. **The follow-ups are revises** of the fix, asked into its session. Each ends with the same push, to the same branch, so the PR follows.
-5. **The overseer is left as it is.** `factory fix`, every `factory pr` subcommand, their scripts and prompts, and the watch's dispatcher keep working exactly as they do today.
+5. **The overseer is left as it is.** `factory fix`, every `factory pr` subcommand, their scripts and prompts, and the watch's dispatcher keep working exactly as they do today. (Superseded: the overseer runs this recipe since #1883, and the classic commands are deleted, #1884.)
 
 ## The design
 
@@ -38,9 +41,9 @@ Triage, plan, research and review already run as recipes: a task session in the 
   - An ask that fixes the issue and commits, with `fix_issue.txt`'s rules minus the push and `gh pr create`.
   - An ask that writes the PR's title and body (with `Fixes #<n>`), captured to `change.yaml`.
   - **`push`** (new): see below.
-- **The task output is a `Change`** (below), with actions `open-pr`, `post-replies`, `reject`, and one per revise.
+- **The task output is a `Change`** (below), with actions `open-pr`, `post-replies`, `reject`, and one per revise. (Today: `edit`, `open-pr`, `reject`; `post-replies` is care's.)
 
-`fix_issue.txt`, `iterate.txt`, `address_feedback.txt` and `investigate_failures.txt` stay for the overseer. The recipe's prompts are copies, cut down to what a turn in a running conversation needs.
+`fix_issue.txt`, `iterate.txt`, `address_feedback.txt` and `investigate_failures.txt` stay for the overseer (deleted since, with the classic tasks). The recipe's prompts are copies, cut down to what a turn in a running conversation needs.
 
 ### `push`, a named step
 
@@ -87,6 +90,8 @@ The runner fills `target.commit`, `fork`, `branch` and `base` from what `push` r
 
 ### The revises
 
+Superseded: the last three moved to care (#1805, now `care-comments`, `care-ci`, `care-rebase`), and `iterate` was deleted with revise (#1938; `care-iterate` on the open PR).
+
 Each is asked into the fix's session, after a *Continue session* or without one, and ends with `push` and a new `Change`:
 
 | Revise | Label | Replaces | The ask |
@@ -102,6 +107,8 @@ Each is asked into the fix's session, after a *Continue session* or without one,
 
 ### A PR factory did not open
 
+Superseded: care's recipes are `on: [my-pr]` and run in the PR's fix sandbox ([care-recipe.md](care-recipe.md)); fix is `on: [issue]`.
+
 `factory recipe fix --url <PR>` starts a fix on an existing PR, for a PR the member opened by hand.
 
 - It runs in the PR's labelled sandbox, or else in `fix-<repo>-pr-<n>`, labelled with the PR.
@@ -109,6 +116,8 @@ Each is asked into the fix's session, after a *Continue session* or without one,
 - The ask is the instruction, as `iterate`'s. There is nothing to open, so the Change has no `open-pr`.
 
 ### `factory pr watch`
+
+Superseded: the watch runs `care-ci` and `care-comments` ([care-recipe.md](care-recipe.md#auto-on-any-pr-of-yours), [recipe-sessions.md](recipe-sessions.md)).
 
 It stays, and the board keeps launching it for Auto. It learns one thing. When the PR's sandbox records a fix run (`fix-run`), it does not run `pr investigate` or `pr address-comments`. Instead:
 
@@ -122,6 +131,8 @@ Its triggers (a new head with failures, 30 minutes since the last attempt, comme
 The Plan kind's *Fix with this plan* (`factory apply --action run:fix`) starts the `fix` recipe with the plan, as edited, as its `plan` input. The hand-off is declared by the consumer: fix's input `plan: {from: Plan}` says it takes a Plan's result; the producer's action `run: fix` only names the follow-up, and a recipe refuses a `run:` of a recipe with no input from its kind. No file in the sandbox carries the plan to the fix. The overseer does not use `run:fix`.
 
 ## Board (repo-agent)
+
+As built in #1773. Since #1950 and #1954 a Fix click, Fix with this plan and auto-fix are ordinary recipe Requests on the generic path (`ensureRecipe`/`settleRecipe`, run name `request/<uid>`), and the PR row's follow-ups are care's recipes.
 
 - **Fix.**
   - `ensureFix` runs `factory recipe fix --run-name fix/<board>/<n>/<unix>`, with the board's image, disk size, engine, disclose, and the draft-PR policy. It is recorded under `fix-run`, and a restarted controller follows the recorded run by name, as for plan and review.
@@ -176,16 +187,16 @@ Step 2 deviates where:
 
 Step 3 (repo-agent) deviates where:
 
-- **The draft-PR policy is not passed.** `open-pr` always opens a draft. The board's `policy.draftPR: false` is ignored for now: the PR is opened as a draft and the member promotes it. The draft-PR instruction the board used to append is gone.
-- **The fix's result is kept on the sandbox.** `fix-harvested-at` is when the controller last read a fix's result, and `fix-error` is why it failed. A recorded `fix/<board>/<n>/…` run that started after both `fix-harvested-at` and the last Fix again has not been read. A restarted controller follows it by name, so the runner applies `open-pr` to it. A revise recorded under `fix-run` is never followed as a fix: its name is `revise/…`.
-- **Follow-ups are sandbox-keyed `revise` Requests** (`spec.sandbox`, `spec.revise`, with Iterate's `spec.instruction` as `--input instruction=…`), filed through `POST /api/task-sessions/:sandbox/:task/revise {revise, inputs}`.
+- **The draft-PR policy is not passed.** `open-pr` always opens a draft. The board's `policy.draftPR: false` is ignored for now: the PR is opened as a draft and the member promotes it. The draft-PR instruction the board used to append is gone. (`policy.draftPR` was removed in #1965.)
+- **The fix's result is kept on the sandbox** (until #1954, which deleted `fix-harvested-at` and `fix-error`; a run's output and failure are any recipe run's now). `fix-harvested-at` is when the controller last read a fix's result, and `fix-error` is why it failed. A recorded `fix/<board>/<n>/…` run that started after both `fix-harvested-at` and the last Fix again has not been read. A restarted controller follows it by name, so the runner applies `open-pr` to it. A revise recorded under `fix-run` is never followed as a fix: its name is `revise/…`.
+- **Follow-ups are sandbox-keyed `revise` Requests** (gone since #1940; care's recipes replace them) (`spec.sandbox`, `spec.revise`, with Iterate's `spec.instruction` as `--input instruction=…`), filed through `POST /api/task-sessions/:sandbox/:task/revise {revise, inputs}`.
   - They are offered once the fix has a PR (the sandbox's `htmlURL` is a `/pull/` URL) and while the sandbox is idle.
   - Only one stands at a time per sandbox, since they all push to one branch.
   - factory does not record a revise's inputs, so the board knows Iterate's (`WorkAction.inputs`).
   - The session view prompts for inputs. The PR row's drawer has a text box for them.
 - **The `iterate`, `address` and `investigate` verbs are gone** from the Request CRD, along with `/prs/:id/{iterate,address-comments,investigate}`, the `*-requested-at` annotations, `ensurePRTaskClaims`/`ensurePRTaskClicks`, and factorycli's `StartIterate`/`StartAddressComments`/`StartInvestigate`.
 - **A PR with no fix run gets no follow-up buttons.** On a PR of yours, factory can run a revise with no fix run (the PR mode, below), but the board does not offer it yet; `recipe list`'s `revisesOn` is what it will read. Auto (`factory pr watch`) still works on it as before.
-- **The PR row's stage comes from the recorded run.** A board revise is named by its id: `address-comments` → addressing, `fix-ci` → investigating, anything else → iterating. The watch's revises carry no run name and read as iterating. The fix itself reads as fixing.
+- **The PR row's stage comes from the recorded run** (stages were removed by [recipe-driven-board.md](recipe-driven-board.md), #1792). A board revise is named by its id: `address-comments` → addressing, `fix-ci` → investigating, anything else → iterating. The watch's revises carry no run name and read as iterating. The fix itself reads as fixing.
 - **A fix session has no draft panel.** Its draft is the PR. *Continue session* is on the PR row's drawer and on a failed fix's error.
 
 The PR mode (deleted by [care-recipe.md](care-recipe.md)) deviated where:
@@ -210,7 +221,7 @@ The PR mode (deleted by [care-recipe.md](care-recipe.md)) deviated where:
 
 ## Not planned here
 
-- **The overseer.** Per the decision above, it stays on `factory fix` and `factory pr *`.
+- **The overseer.** Per the decision above, it stays on `factory fix` and `factory pr *`. (Done later anyway: #1883, #1884.)
 - **A token-free issue sandbox.** Triage, plan and fix share `fix-<repo>-<n>`, and all hold the token. Making the agent token-free there needs all three moved together:
   - plan and triage on `credentials: clone`;
   - the revises' GitHub context fetched by factory and handed in;

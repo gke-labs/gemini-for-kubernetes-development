@@ -51,14 +51,26 @@
 - **Workflows.** A definition with `mode: workflow` runs as a long-lived, multi-step process on an issue, as the `workflow` recipe in a `wf-issue-<n>` sandbox, advancing one step per cycle; its journal lives on the fork's `factory-<n>` branch, and its precondition and the agent's shell get `SESSION_ID` and `RELATED_ISSUES`. It is triggered when an issue body references the definition, or with `agent create --url <issue>`.
 
 ### Autonomous watch loop (`factory watch`)
-- **Issue intake.** It picks up issues carrying the trigger label (`triggerLabel`, default `factory`; the Overseer image sets `overseer`) and issues assigned to a bot identity, adding the label to the latter. It skips an issue that already has a linked open PR or carries the stop label. It fixes one with `recipe fix --apply --action open-pr --pr-labels --input draft=false`: the PR opens ready for review, labelled with the trigger label, the config's `additionalLabels` and the issue's labels; an issue that references a workflow runs that instead.
-- **PR reactions.** For each bot PR it dispatches, in priority order:
-  1. unaddressed feedback → `recipe care-comments`
-  2. merge conflict → `recipe care-rebase`
-  3. failing CI → `recipe care-ci`
-  4. green and labelled for review → `recipe review`
+- **Rules decide, the scanners carry out.** What the loop does on an issue or PR is decided by its rules: YAML files, prebaked in factory ([`pkg/watch/rules/`](pkg/watch/rules/)), each saying which items it takes (`when:`), what it runs or writes (`run:`) and how it is paced (`policy:` cooldowns, once per head, give-ups). The issue and PR scanners read each item's facts and carry out the engine's decisions; every task carries the rule, recipe, apply and inputs that decided it, and the dispatcher runs exactly that. `factory watch rules` lists them, `--flow` draws how a kind's rules apply, and the [watch rules guide](docs/watch-rules.md) describes the fields.
+- **Gates first.** Before any rule, an item that carries the stop label, is closed, is numbered below `MIN_NUMBER` (the Overseer's `spec.minNumber`) or is in the merge queue is left alone.
+- **Issue rules**, in order:
+  1. `workflow-missing`: an issue that names a workflow definition that cannot be loaded is stopped, with a comment saying which and why.
+  2. `workflow`: an issue whose body names a workflow runs its next step (the `workflow` recipe).
+  3. `fix`: an issue the overseer is pointed at (the trigger label - `triggerLabel`, default `factory`; the Overseer image sets `overseer` - a pool assignee, or opened by the watcher) with no linked open PR is fixed with `recipe fix --apply --action open-pr --pr-labels --input draft=false`: the PR opens ready for review, labelled with the trigger label, the config's `additionalLabels` and the issue's labels.
 
-  A PR that passes review is labelled `<trigger>/ready-for-human` and handed to the human assignees. `--pr-inactivity-timeout` pauses PRs that no human has touched for that long.
+  An issue has one task at a time; after 3 failed fixes since a human spoke or the last pause, `fix` gives up with the stop label.
+- **PR rules**, in order, on the bot's PRs:
+  1. `inherit-labels`: the PR takes the labels of the issues it closes.
+  2. `inactive`: a PR no human has touched for `--pr-inactivity-timeout` is paused.
+  3. `comments`: new trusted feedback → `recipe care-comments`; the feedback is acknowledged (👀) when the task starts and resolved (👍/😕) when it ends; after 3 failed runs since the head, a human or a pause, it gives up.
+  4. `conflict`: a merge conflict → `recipe care-rebase`, once per head.
+  5. `ci`: failing checks → `recipe care-ci`; after 3 attempts since the head, a human or a pause, it gives up with the stop label.
+  6. `review`: green and wanting a review → `recipe review`, once per head.
+  7. `ready`: a PR that passed is labelled `<trigger>/ready-for-human` and handed to the human assignees; `ready-unreview` takes `*/review` off it.
+
+  The first of comments, conflict, ci and review that decides to run takes the PR.
+- **Decided again at start.** Just before a queued task starts, the engine decides its rule again on the item's facts read then. A gate that now holds, a head that moved, or a rule that no longer decides (feedback gone, checks green, an earlier rule took the item) drops it, with the reason.
+- **Watching the rules.** The queue API (`GET /api/v1/queue`, field `rules`) and the overseer page show what each rule ran, gave up on and dropped since the watch started, and a consistency check of every recorded decision. `--rules-disabled review,ci` (the Overseer's `spec.rules.disabled`) is the emergency switch: those rules decide nothing and their queued tasks are dropped. `--rules-record` (the Overseer's `spec.rulesRecord`) writes each decision with its facts to a file, for `watch rules replay` (run a rule change against what the watch saw) and `watch rules explain --record` (why it acted, or did not, on one item).
 - **Chores.** Agent definitions under `.agents/` that have a cron `schedule` run as `agent-chore` tasks (`--chores-mode`).
 - **Filesystem queue.**
   - Work is queued as task files that move `incoming/ → processing/ → processed/` under `--queue-dir`. A `journal.jsonl` sits alongside.
@@ -231,7 +243,9 @@ factory sandbox chat factory-issue-917 -r latest  # resume the Gemini session
 | `recipe research` | Start a research conversation in a sandbox; its notes are written when asked |
 | `watch fanout` | One fan-out pass over a parent issue: create, rewrite and label children in a slow start |
 | `watch rules` | List the watch's prebaked rules (what each looks at, runs, and as whom; `-o yaml\|json` for the whole rules; `--dir` lays a checkout's `.agents/rules/` over them); see [design/watch-rules.md](design/watch-rules.md) |
-| `watch rules replay <decisions.jsonl>` | Replay what the scanners recorded (`watch --rules-record`, the Overseer's `spec.rulesRecord`) through the rules and list where they decide differently |
+| `watch rules replay <decisions.jsonl>` | Replay the decisions the watch recorded (`watch --rules-record`, the Overseer's `spec.rulesRecord`) through the rules and list where they decide differently |
+| `watch rules explain <PR or issue URL>` | Walk one item through the rules, read live or from a record (`--record`), and say what each rule decides and why |
+| `watch rules decide -f <scenario.yaml>` | Decide items written by hand and check what was expected |
 | `apply` | Apply a task output (`factory sandbox task output`) to GitHub |
 | `recipe care-ci` | Fix the CI failures of a PR of yours; `--apply --action post-replies` posts the report and reruns flakes |
 | `recipe care-comments` | Answer the review feedback on a PR of yours (trusted authors' only); `--apply --action post-replies` posts the replies |
@@ -242,7 +256,6 @@ factory sandbox chat factory-issue-917 -r latest  # resume the Gemini session
 | `watch` | The autonomous scan / dispatch / GC loop |
 | `sandbox list\|inspect\|logs\|exec\|cp\|connect\|chat\|suspend\|resume\|delete` | Manage individual sandboxes |
 | `cleanup` | Delete sandboxes older than `--older-than` (default 24h) |
-| `acpd` | Agent Client Protocol server (runs inside research sandboxes) |
 | `sshd` | Embedded SSH server over stdin/stdout for terminal forwarding |
 | `daemon`, `token-daemon` (hidden) | Sandbox entrypoint (spool, task server, agent sessions); token-usage collector |
 
@@ -255,7 +268,7 @@ Global flags (`--engine`, `--user`, `--namespace`, `--timeout`, `--disclose`, re
 - [Overseer and factory architecture](../overseer/docs/architecture-overseer-factory.md)
 - [Configuration guide (`.factory.cfg`)](docs/configuration.md)
 - [Watch rules guide](docs/watch-rules.md): the rule files' fields, and how the watch's rules decide
-- Watch internals: [design note](design/watch-design-note.md), [subcontroller architecture](design/watch-subcontrollers-architecture.md)
+- Watch internals: [watch rules design](design/watch-rules.md), [design note](design/watch-design-note.md), [subcontroller architecture](design/watch-subcontrollers-architecture.md)
 - [Resilient and reconnectable task execution](design/resilient-task-execution.md)
 - [Multi-engine sandboxes](design/multi-engine.md)
 - [Automated PR review](design/pr-automated-review.md) · [PR adoption](design/pr-adopt.md)

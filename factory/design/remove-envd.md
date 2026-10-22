@@ -1,8 +1,15 @@
 # Removing envd from the sandbox
 
-Status: proposed.
+Status: done (design #1902). Step 0 #1903; step 1 #1904 (usage), #1905
+(the watch), #1906 (`sandbox exec`/`logs`); step 2 #1908, folded into one
+`adopt` recipe by #1911 (#1912 its output); step 3 #1914 (`agent` and
+`workflow` recipes) and #1924 (the watch requeues chores by run name,
+adoption deleted); step 4 #1925; step 5 #1929. Later: #1928 moved a run's
+files to a branch of its own ([run-branches.md](run-branches.md)), and
+#1932 deleted `factory run`. The sections below describe the sandbox as
+it was before this work.
 
-A sandbox runs two servers today. The **task server** (`factory daemon`,
+A sandbox ran two servers. The **task server** (`factory daemon`,
 [recipe-task-server.md](recipe-task-server.md)) claims recipe tasks from
 the spool, runs them, hosts their acpd sessions and serves them on
 127.0.0.1:49990, reached over a port-forward. **envd** (e2b's, started by
@@ -18,9 +25,9 @@ one. What still needs envd is the classic commands and a few readers.
 This note moves each onto the task server, as a recipe or a read, and
 then removes envd from the image, the pod and the Service.
 
-## What uses envd
+## What used envd
 
-Every `envd.Connect` on main:
+Every `envd.Connect` on main before step 1:
 
 | User | What it does with envd | Callers |
 |---|---|---|
@@ -40,7 +47,12 @@ task up. Recipes can (run names).
 
 One PR per step, each leaving everything working.
 
-### 0. acpd records token usage
+### 0. acpd records token usage (done, #1903)
+
+Built: acpd puts the turn's usage, per model, on its `turn_end` event
+(ACP's usage field, or gemini's `_meta` quota), and the recipe runner
+adds each ask's to `token-usage.json`. antigravity's ACP server reports
+no tokens, so its asks record nothing.
 
 Recipe `ask:` steps record no usage. The recipe runner harvests
 `token-usage.json` from the task directory (`HarvestTaskFiles`), but
@@ -56,7 +68,10 @@ sends it, else the engine's own session record. Which engine reports what
 over ACP is measured first (gemini, claude, antigravity), as the
 multi-engine work did.
 
-### 1. Reads through the task server
+### 1. Reads through the task server (done, #1904-#1906)
+
+`AliasToTaskPR` was later deleted with adoption (#1924), and the pod
+lookup is `k8s.SandboxPod` (#1929).
 
 The task server already serves what these read: `GET /v1/tasks` lists a
 sandbox's task directories newest first, marking a dead process's 137,
@@ -75,7 +90,11 @@ every task directory, not just the spool's.
   server. `GetSandboxPodName`, which wakes a suspended sandbox, moves
   from shelling out to kubectl to client-go, keeping the wake.
 
-### 2. `pr adopt` as a recipe
+### 2. `pr adopt` as a recipe (done, #1908, #1911)
+
+#1908 built it as two recipes, `adopt` and `adopt-reimplement`; #1911
+made it one `adopt` recipe with a `strategy` input, using the steps'
+`if:`. `reuse` runs no agent.
 
 The pilot for turning a script into a recipe: small, and the CLI is its
 only caller. Recipe `adopt`, `on: [pr]`, input `strategy`
@@ -86,7 +105,16 @@ committing. Its result is a Change whose `open-pr` opens the adopted PR,
 with an action that comments on the original (and closes it, for
 `close`).
 
-### 3. Agent chores and workflows as a recipe
+### 3. Agent chores and workflows as a recipe (done, #1914, #1924)
+
+Built as two recipes, `agent` (modes `chore` and `none`, for skipPR) and
+`workflow`; `factory agent create` picks one from the definition. The
+agent commits (the LLM commit-message call is gone), a chore's task
+output is optional, and a chore's precondition is ignored (only a
+workflow has one). #1924 gave chores a run name, so recovery requeues
+every task and adoption, `IsTaskCompleted`, `AliasToTaskPR` and
+`agent-output.txt` are deleted.
+Since then the dispatcher's recipe table keeps only the run-name prefix and sandbox; which recipe a task runs is its rule's ([watch-rules.md](watch-rules.md), #2044, #2059).
 
 The overseer's last classic path. Recipe `agent`, `on: [repo, issue,
 pr]`. factory fetches the `.agents/` definition as today and hands the
@@ -112,7 +140,14 @@ recipe its parts as inputs: the prompt, the precondition script, the mode
 A workflow's state is in git, its branch's journal, so recreating its
 sandbox loses nothing but the clone.
 
-### 4. Runs as recipes
+### 4. Runs as recipes (done, #1925)
+
+Superseded in part since: #1928 keeps a run's files on a branch of its
+own, `runs/<run>`, in a worktree at `.factory-run`, not on
+`research/runs` ([run-branches.md](run-branches.md)); #1932 deleted
+`factory run`: repo-agent runs `factory recipe run-<phase> --run <name>`,
+and a recipe's `sandbox: {kind: run}` names the sandbox `run-<repo>-<run>`
+(was `runbook-<repo>-<run>`).
 
 There are three recipes, one per phase: `run-plan`, `run-deploy` and `run-teardown`, all with `task-type: run`. Each phase's prompt is the recipe's ask, rendered from its inputs, so the `run_*.txt` templates and their renderer go. Each recipe declares only its own phase's inputs: plan takes `intent`, `runbook` and `target_pr`; deploy takes none of them, since it executes what was approved; teardown takes `intent`. `factory run plan|deploy|teardown` stays the entry point (repo-agent calls it unchanged) and runs `run-<phase>` in the run's sandbox, whose naming, labels, disk, ephemeral storage and GCP environment are unchanged.
 
@@ -127,7 +162,7 @@ Each step is a process of its own: `run-prepare` reads local-only from the check
 
 **repo-agent:** liveness (`runLivenessScript`) and the launch preflight keep reading task directories and their `pid` / `start_time` / `exit_code` files, which the spool writes as envd did. They now look under the recipes' prefix, `recipe-run-*` (`factorycli.RunTaskDir`), while the recorded task type stays `run`. Reading a local-only run's files (`git show research/runs:…` over kube exec) stays.
 
-### 5. Removing envd (done)
+### 5. Removing envd (done, #1929)
 
 - Delete `taskapi.EnvdSandbox`, the spool client's envd functions,
   recipe.go's `RunTaskResilient` fallback and `FACTORY_TASK_TRANSPORT`;
@@ -150,9 +185,10 @@ other and of 0. Step 0 comes before 3 and 4, which would otherwise lose
 usage reporting. Steps 3 and 4 can swap: 3 finishes the overseer's
 classic paths, 4 is mostly repo-agent's.
 
-## Open questions
+## Open questions (settled)
 
-- Runbooks: one recipe with a `phase` input (proposed), or one per phase.
-- Usage over ACP: what each engine reports, measured in step 0.
+- Runbooks: one recipe per phase (#1925).
+- Usage over ACP: gemini reports it in the reply's `_meta`; antigravity
+  reports none (#1903).
 - Workflow sandboxes made before step 3 are recreated with it: their
-  state is in git (proposed: yes).
+  state is in git.

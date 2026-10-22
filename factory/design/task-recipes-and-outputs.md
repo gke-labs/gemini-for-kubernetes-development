@@ -1,8 +1,8 @@
 # Design Note: Recipes, Task Outputs and Apply
 
-**Status:** Proposal. Triage is built this way end to end (#1707–#1725); plan is built as a recipe with a Plan output (#1727–#1729). Other task kinds are not yet built. Actions (part 5): factory's side is built (phase 1); repo-agent's (phase 2) and extensible verbs (phase 3) are not.
+**Status:** built, except extensible verbs (phase 3) and agent-filled action parameters. Triage (#1707–#1725) and plan (#1727–#1729) came first; every task is now a recipe: review (#1767), fix and care (#1771, #1805), research (#1754), summarize (#1793), fan-out, warm, adopt, agent and workflow, and the run phases ([remove-envd.md](remove-envd.md)). Kinds: Triage, Plan, Notes, Review, Change, Summary, FanOut. Actions: phase 1 #1733, phase 2 #1734–#1737, later reworked by the recipe-driven board (#1786–#1788, [recipe-driven-board.md](recipe-driven-board.md)). Changed since: tasks are submitted to the sandbox's task server ([recipe-task-server.md](recipe-task-server.md), #1739); results are files the agent writes, not captured replies, and revise is gone (#1938, [repo-recipes.md](repo-recipes.md)); the overseer runs recipes too (#1873–#1884), chosen by its rules engine ([watch-rules.md](watch-rules.md)).
 
-This note describes how a factory task should run and how its result should reach GitHub. A **recipe** describes the work. A **spooled task** runs it inside the sandbox, independent of whoever started it. The task leaves a **task output**, a typed document of what it found. **`factory apply`** is the one place that turns that document into GitHub writes, using the caller's identity.
+This note describes how a factory task runs and how its result reaches GitHub. A **recipe** describes the work. A **spooled task** runs it inside the sandbox, independent of whoever started it. The task leaves a **task output**, a typed document of what it found. **`factory apply`** is the one place that turns that document into GitHub writes, using the caller's identity.
 
 ---
 
@@ -18,7 +18,7 @@ This note describes how a factory task should run and how its result should reac
 
 ---
 
-## Proposed Architecture
+## Architecture
 
 ```mermaid
 sequenceDiagram
@@ -33,7 +33,7 @@ sequenceDiagram
     CLI->>CLI: find or create the issue's sandbox (by label)
     CLI->>Spool: a task with this run name already? Follow it or return its result
     CLI->>Spool: otherwise refuse if a task is pending or running
-    CLI->>Spool: write task dir to /workspaces/spool/incoming (recipe, inputs, env, task.json)
+    CLI->>Spool: POST /v1/tasks over a port-forward (recipe, inputs, env, task.json)
     Spool->>Task: claim into /workspaces/tasks/ID, run steps
     CLI-->>Task: attach and tail logs (optional). Ctrl-C detaches or aborts
     Task->>Task: steps: uses, run, ask (one agent session)
@@ -48,22 +48,22 @@ The pattern has five parts and one addressing rule.
 
 ### 1. Recipe: what runs
 
-A recipe is YAML shaped like a GitHub Actions workflow and embedded in the factory binary. Built-in recipes are commands, for example `factory recipe triage`.
+A recipe is YAML shaped like a GitHub Actions workflow. Built-in recipes are embedded in the factory binary and are commands, for example `factory recipe triage`; any other name is the repository's `.agents/recipes/<name>.yaml` (`factory recipe run --recipe <name>`, [repo-recipes.md](repo-recipes.md)). The table lists the core fields; `on`, `applicable-when`, `session`, `sandbox`, `credentials`, `agent-env` and `timeout` are described in the notes that added them.
 
 | Field | Meaning |
 |---|---|
 | `inputs:` | Named inputs with defaults and `required`. `type: instructions` takes repeatable `--instruction` values (a file, a repo path, or text). |
 | `context:` | Rules sent to the agent once, at the start of the session. |
-| `steps:` | `uses:` runs a named `lib.sh` step from a closed set. These are the only steps that get the token. `run:` is inline shell without the token, with inputs as `INPUT_*`. `ask:` is one prompt turn; all asks share one agent session. `capture:` saves a turn's reply to a file. |
+| `start: steps:` | `uses:` runs a named `lib.sh` step from a closed set. These are the only steps that get the token. `run:` is inline shell without the token, with inputs as `INPUT_*`. `ask:` is one prompt turn; all asks share one agent session. `expects:` names the file an ask must leave (the agent writes its result to `{{ output "<file>" }}`); `capture:`, which saved a reply, is no longer used by any built-in (#1938). `if:` and `continue-on-error:` gate steps (#1911). |
 | `outputs:` | Files the task's result consists of. |
-| `task-output:` | `{kind, from, actions, preview}`: the file that becomes the typed result, its kind, what may be done with it (part 5), and the spec field (`spec.assessment`) a glance at it shows, such as a board chip's hover. Without `preview`, a glance shows the `edit` action's field when that is markdown. The runner copies `actions` and `preview` into the document. |
+| `task-output:` | `{kind, from, optional, actions, preview, on-finish}`: the file that becomes the typed result, its kind, what may be done with it (part 5), and the spec field (`spec.assessment`) a glance at it shows, such as a board chip's hover. Without `preview`, a glance shows the `edit` action's field when that is markdown. The runner copies `actions` and `preview` into the document. `optional` lets a run leave none (#1914); `on-finish` names the action a board runs when the run ends (#1946). |
 | `task-type:` | Makes the recipe its sandbox's main task, of that type, as plan and fix are: its state is `last-task-*`, and it lists as that type. Unset, the recipe is a side task, `recipe-<name>`. |
 
 The sandbox runs the recipe with its own `factory recipe exec`. The CLI strips the fields it handles itself, such as `task-output:` and `task-type:`, before uploading (`recipe.ForSandbox`).
 
 ### 2. Spooled task: where and how it runs
 
-- **Submission.** The client writes a task directory into `/workspaces/spool/incoming/`. The sandbox's daemon (PID 1) claims it, moves it to `/workspaces/tasks/<id>`, and runs it as its own child. The task does not depend on the client's connection or process.
+- **Submission.** The client posts the task to the daemon's task server (`POST /v1/tasks`, #1739); the daemon still claims task directories from `/workspaces/spool/incoming/` (#1714). The sandbox's daemon (PID 1) claims it, moves it to `/workspaces/tasks/<id>`, and runs it as its own child. The task does not depend on the client's connection or process.
 - **Identity.** Task IDs are `recipe-<name>-<YYYYMMDD-HHMMSS>-<hex>`, so they sort by time. `task.json` records the ID, `run_name`, recipe, target URL, submission time and the output declaration.
 - **Lifecycle.** A task is Pending, then Claimed, then Running, then Exited with an exit code. A dead PID reads as exited 137.
 - **Tools.** `factory sandbox task list | attach | logs | status | output <sandbox | issue/PR URL>` work with any task. You can pick a task with `--task <id>` or `--run-name <id>`; the newest match wins.
@@ -87,11 +87,11 @@ spec:
   assessment: "…"
 ```
 
-The runner wraps the declared file (`from:`) into this document as `task-output.yaml` in the task directory. When the runner predates task outputs, or doesn't know the kind, it leaves the file as it is, and `sandbox task output` wraps it on the client side. A new kind therefore does not need a new sandbox image. Runners older than this rule fail the task on a kind they don't know. The document is a draft: a person or program can read it, edit it, and keep it. Nothing has happened on GitHub at this point.
+The runner wraps the declared file (`from:`) into this document as `task-output.yaml` in the task directory. When the runner predates task outputs, or doesn't know the kind, it leaves the file as it is, and `sandbox task output` wraps it on the client side. Runners older than this rule fail the task on a kind they don't know. Since #1938 the agent may rewrite the result file later in its session; the task server re-wraps it (`taskoutput.Refresh`) whenever it is newer than `task-output.yaml`. The document is a draft: a person or program can read it, edit it, and keep it. Nothing has happened on GitHub at this point.
 
 ### 4. Apply: the one publisher
 
-`factory apply -f <file|->` parses the document according to its kind and performs that kind's writes using the **caller's** token. Tasks never write to GitHub; the one exception is git push and PR creation inside the sandbox, as before.
+`factory apply -f <file|->` parses the document according to its kind and performs that kind's writes using the **caller's** token. Tasks never write to GitHub through factory; the one exception is git push from the sandbox (PRs are opened by the `open-pr` apply). The token the engine's shell holds under `credentials: full` is not yet scoped (engine GitHub write access is an open item).
 
 - **Dry run.** `--dry-run` prints what it would write and writes nothing.
 - **Idempotent.**
@@ -102,11 +102,16 @@ The runner wraps the declared file (`from:`) into this document as `task-output.
 | Kind | Recipe | Apply |
 |---|---|---|
 | Triage | `triage` | Adds the suggested labels and comments the assessment on the issue. |
-| Plan | `plan` | Comments the plan on the issue. The plan is also left at `/workspaces/plan-issue-<n>.md`, where `fix --with-plan`, repo-agent's plan editor and a continued chat read it. |
+| Plan | `plan` | Comments the plan on the issue. The plan is also linked at `/workspaces/plan-issue-<n>.md`, where the next plan run and a continued chat read it; fix takes it as its `plan` input (`run: fix`). |
+| Review | `review` | `post-review` posts a pending review; `submit-review` submits it. |
+| Change | `fix`, `care`, `adopt`, `agent` | `open-pr` opens (or finds) the PR; `post-replies` answers review comments. |
+| Notes | `research` | `push-notes` saves to the member's `research/notes`. |
+| Summary | `summarize` | Comments the summary. |
+| FanOut | `fanout` | `post-spec` posts the spec. |
 
 ### 5. Actions: what can be done with a result
 
-**Phase 1 built; callers not yet.** Today each caller hard-codes what a result offers: the board knows a triage has Edit, Publish and Reject, and a plan has Edit, Feedback, Approve and Reject. Instead, a task output carries its **actions**, so a UI renders whatever the document declares and a new kind needs no new UI code.
+**Built (phases 1 and 2).** Callers used to hard-code what a result offers: the board knew a triage had Edit, Publish and Reject, and a plan had Edit, Feedback, Approve and Reject. Instead, a task output carries its **actions**, so a UI renders whatever the document declares and a new kind needs no new UI code.
 
 ```yaml
 # recipes/plan.yaml
@@ -118,6 +123,7 @@ task-output:
       field: spec.markdown
       format: markdown
     - verb: comment
+      label: Post plan
     - verb: run
       run: fix
       label: Fix with this plan
@@ -137,11 +143,11 @@ actions:
   - {verb: reject}
 ```
 
-**Verbs come from a registry.** An action names a verb; it never carries code, a command line, or a URL. The registry starts as the built-in verbs in `pkg/taskoutput`; operators can extend it with verbs defined as REST calls (see *Extensible verbs* below), but a task output can only name them. There are three classes of verb:
+**Verbs come from a registry.** An action names a verb; it never carries code, a command line, or a URL. The registry is the built-in verbs in `pkg/taskoutput`; extending it with verbs defined as REST calls (see *Extensible verbs* below) is not built. A task output can only name them. There are three classes of verb:
 
 | Class | Verbs | Who executes it | Meaning |
 |---|---|---|---|
-| Apply | `comment`, `label`; later `review`, `close-duplicate` | `factory apply --action <verb>` | A write to the document's `target`, using the caller's token, idempotent as in part 4. |
+| Apply | `comment`, `label`, `post-review`, `submit-review`, `open-pr`, `post-replies`, `push-notes`, `post-spec`; later `close-duplicate` | `factory apply --action <verb>` | A write to the document's `target`, using the caller's token, idempotent as in part 4. |
 | Follow-up | `run` | `factory apply --action run` | Starts the named recipe on the target, with this document (its markdown, else its spec as YAML) as the recipe's input declared `from:` this kind — fix's `plan: {from: Plan}`. |
 | Draft | `edit`, `reject` | The caller that keeps the draft | `edit` names the field and format to edit (`spec.markdown` as markdown; `spec` as YAML for a Triage). `reject` discards the draft. factory executes neither; from the CLI, editing is editing the file before `apply -f`, and rejecting is not applying. |
 
@@ -159,11 +165,11 @@ A UI shows the intersection. A verb it doesn't know is hidden, as the runner ign
 
 **Rules:**
 - **Validated twice.** `recipe` validation rejects a recipe whose actions name an unknown verb, or a verb its kind doesn't accept. `apply --action` refuses a verb the document doesn't offer, or one the registry doesn't accept for its kind.
-- **Defaults.** A document without `actions:` (from an older runner, or written by hand) gets its kind's defaults from the registry: Triage `edit, label, comment, reject`; Plan `edit, comment, run fix, reject`.
+- **Defaults.** A document without `actions:` (from an older runner, or written by hand) gets its kind's defaults from the registry: Triage `edit, label, comment, reject`; Plan `edit, comment, run fix, reject`; every other kind its own (`actions.go`).
 - **`factory apply -f` without `--action`** runs the document's apply-class actions, which is today's behaviour: a Triage still gets labels and a comment.
 - **Agent-filled parameters are later.** An agent may eventually fill in a declared verb's parameters, for example `close-duplicate: {of: 123}`. It may never add a verb the recipe didn't declare; the runner enforces that when it writes `task-output.yaml`.
 
-**Extensible verbs (follow-up).** A verb is, at bottom, a REST call against the target: which endpoint to call, with which parameters. Rather than adding Go code for each new verb, the registry accepts verb definitions of that shape:
+**Extensible verbs (follow-up, not built).** A verb is, at bottom, a REST call against the target: which endpoint to call, with which parameters. Rather than adding Go code for each new verb, the registry accepts verb definitions of that shape:
 
 ```yaml
 # A verb definition: in factory's config, or a recipe's verbs:. Never in a task output.
@@ -197,6 +203,8 @@ verbs:
 
 An issue's triage, plan, fix and recipes all run in one sandbox.
 
+Other targets have their own: a PR you opened shares its fix sandbox (`fix-<repo>-<n>`), a review of someone else's PR runs in `review-<repo>-<n>`, a run in `run-<repo>-<run>`, a chore in its agent's sandbox, a workflow in `wf-issue-<n>`, and a repository session in one of its own.
+
 - **Finding it.** factory labels the sandbox `factory.gemini.google.com/repo` and `/issue`, and callers find it by those labels rather than by name.
 - **State.** A side task records its state in `sandbox.gemini.google.com/<type>-task-state`, for example `recipe-triage-task-state`. It never touches `last-task-*`, which stays the plan's or fix's. A recipe with `task-type:`, such as plan, is the main task and records its state in `last-task-*`.
 - **One at a time.** A sandbox with a pending or running task refuses another, because two agents in one checkout would get in each other's way.
@@ -210,7 +218,7 @@ An issue's triage, plan, fix and recipes all run in one sandbox.
 | Foreground | `factory recipe triage --url U` | Aborts the task (`--abort-on-cancel`, the default) | New task; with `--run-name`, the same task |
 | Detached | `… --detached`, later `sandbox task status`, then `output` | Nothing to interrupt | Read by `--run-name`, or rerun with it |
 | Wait and apply | `… --apply [--dry-run]` | Stops waiting; the task keeps running | Picks up the newest run of this recipe and URL: waits if it's running, applies if it exited 0 and isn't yet applied (`task-output.applied`) |
-| Program (repo-agent) | `… --run-name NAME --abort-on-cancel=false`, then `sandbox task output --run-name NAME` | The task survives; the prober adopts its `task-output.yaml` | Same run name finds the same task |
+| Program (repo-agent, the overseer) | `… --run-name NAME --abort-on-cancel=false`, then `sandbox task output --run-name NAME` | The task survives; a restarted caller reruns under the recorded run name and finds it (#1741, #1924) | Same run name finds the same task |
 
 **Run names** are chosen by the caller and opaque to factory. They contain identifiers only, because anyone in the sandbox can read them. They are recorded in the task's `task.json` (`run_name`). The task directory keeps its generated, time-sorted name, because a run name may contain `/`.
 
@@ -254,13 +262,9 @@ A run name takes precedence over `--apply`'s "newest run of this recipe and URL"
 3. **Pin the target to what the task saw.** For example, add `target.commit` for a Review, so that applying a stale review to newer code is refused or flagged.
 4. **Update callers.** Start the task with a run name and read the output by that name. Leave publishing to `apply`, and never publish from inside the task.
 
-Plan is built: `factory recipe plan` (`task-type: plan`) revises the plan it finds in the sandbox, and `fix --with-plan` follows it. repo-agent runs it (#1728), and `factory plan`, its script and prompt are gone.
+Plan is built: `factory recipe plan` (`task-type: plan`) revises the plan it finds in the sandbox, and fix takes it as its `plan` input. repo-agent runs it (#1728), and `factory plan`, its script and prompt are gone.
 
-Planned kinds, in order:
-- **Review.** Pin `target.commit`; submit as a pending review or a comment.
-- **PullRequest.** Link and alias an existing PR, and add labels.
-
-After those, repo-agent's drafts become the documents themselves, published through the same applier. Review should be the first kind declared with actions from the start.
+Since built: Review (#1767, a pending review at the PR's head), Change (#1771; fix's PR and replies, which took the place of the planned PullRequest kind), Notes (#1753), Summary (#1793), FanOut. repo-agent's drafts are the documents themselves, one stored output per run, applied through the same applier (#1786–#1788).
 
 ---
 
@@ -274,14 +278,14 @@ Factory first, then repo-agent. The factory phase stands alone: `apply --action`
 3. Add `factory apply --action <verb>` with the apply and follow-up verbs. Split Triage's apply into `label` and `comment`. Plain `apply -f` stays as it is.
 4. Declare actions in `triage.yaml` and `plan.yaml`, and print them in `sandbox task output`.
 
-**Phase 2: repo-agent.**
+**Phase 2: repo-agent** (#1734–#1737). Reworked since by the recipe-driven board: each run's output is stored whole with one applied stamp per run (#1786), an apply Request names `{sandbox, run, action}` for any kind (#1787, #1788), and the per-kind `triageActions`/`planActions` and stamps below gave way to that.
 1. **Built.** Keep the task output document next to the draft: the harvest stores it without its spec (`board.gemini.google.com/triage-output`, `…/plan-output`), since the draft is the spec and edits change the draft. A draft stored before documents were kept, or a document that declares no actions, offers the kind's defaults. `apply` (step 3) reassembles the document from the two.
 2. **Built.** Return `triageActions` and `planActions: [{verb, run, label, field, format, enabled, reason}]` on each issue row (a row can carry both drafts): the document's actions the board executes, with what the board's state says of each (labels added, posted, being revised, a task running).
 3. One endpoint, `POST /board/:board/issues/:id/actions/:verb` with `{kind, run, text}`. **Built:** it refuses an action that is not offered (400) or not enabled (409), and runs the handler the board's buttons already call; plan `comment` is new and marks its comment as `factory apply` does, so neither posts it twice. **Built, then:** `label` and `comment` file an `apply` Request (`{kind, action}`; 202), which the controller executes with `factory apply -f <doc> --action <verb>` and the clicker's token: the document is reassembled from the stored one and the draft as it is at that moment, so an edit made before the click is what gets written (a draft from before documents were kept gets a fresh one, whose source task is named for the draft so that factory's comment dedup holds). Success stamps the sandbox (`triage-labeled-at`, `triage-published-at`, `plan-commented-at`). While the write stands the action reads `posting`; a failed one carries its error and stays clickable. The review-api image does not carry the factory binary, which is why this runs in the controller. `run:fix` stays the board's fix Request: `factory apply --action run:fix` would start the fix outside the board's launcher (limits, executor, sandbox resume).
 4. **Built.** The UI renders buttons and the editor from `actions`, replacing the hard-coded triage and plan controls: the document's label (or the verb's default), disabled with the reason when the board's state or the viewer's access rules it out. Access is per action, not the board's role: `label` needs triage access on the repo (else disabled, "needs triage access on the repo"), while `comment` needs none, since anyone may comment on a public issue. The feed is cached per board, so the API applies this to the viewer's copy as it serves the feed, and the action endpoint holds to it (409). Board-only steps that are not about the result, such as plan feedback (a rerun with `--feedback`), stay board verbs.
 5. **Built.** The board's own GitHub writes for triage and plan are gone (`publish-triage`, its label and comment calls, the plan comment): every write to an issue a task output makes is `factory apply`'s.
 
-**Phase 3: extensible verbs (follow-up).**
+**Phase 3: extensible verbs (follow-up, not built).**
 1. In factory: the verb definition schema, loading definitions from config and from a recipe's `verbs:`, the template and parameter validation, the host and credential rules, and `apply --action` executing defined verbs (with `--dry-run` printing the resolved calls).
 2. Describe the built-in verbs in the same shape, so `sandbox task output` and callers list every verb the same way.
 3. In repo-agent: a board's verb set (which defined verbs its documents may offer), and the work item's `actions` carrying each verb's label and parameters, so the UI can prompt for a parameter such as `of`.
@@ -292,7 +296,7 @@ Factory first, then repo-agent. The factory phase stands alone: `apply --action`
 
 | Pitfall | Mitigation |
 |---|---|
-| **Image skew.** A reused sandbox keeps the image it was created with. An image without `factory recipe exec`, or with an older recipe schema, fails the task. | Decided: recreate the sandbox. There is no fallback to old task scripts, and recipes are not stripped down for old runners. The spool falls back to envd only for sandboxes whose daemon doesn't claim tasks. |
+| **Image skew.** A reused sandbox keeps the image it was created with. An image without `factory recipe exec`, or with an older recipe schema, fails the task. | Decided: recreate the sandbox. There is no fallback to old task scripts, and recipes are not stripped down for old runners. The envd fallback is gone too (#1929). |
 | **The applied marker is best-effort.** `task-output.applied` is written after apply. If writing it fails, a rerun applies again. | Apply is idempotent through the comment marker and label semantics, so applying twice is harmless. |
 | **Agent output is untrusted.** | Apply acts only on the parsed fields of a known kind, against the document's `target`, using the caller's token. A dry run shows exactly what would be written. |
 | **Actions in an untrusted document.** An agent, or an injected issue, could try to offer a destructive action. | Actions name verbs from the registry and carry no code. A document can only narrow what its recipe declares, `apply --action` re-checks the verb against the kind, and the caller still decides what is available. |
@@ -304,6 +308,6 @@ Factory first, then repo-agent. The factory phase stands alone: `apply --action`
 
 ## Non-goals
 
-- **No change to overseer or `factory watch`.** They keep the classic task model, and none of this is required for them.
+- ~~No change to overseer or `factory watch`.~~ Dropped: the overseer migrated to recipes (#1873–#1884); its rules engine names the recipe each task runs ([watch-rules.md](watch-rules.md)).
 - **No caller-chosen task IDs.** Task IDs stay generated and timestamped; the run name is the caller's handle, and it makes launching idempotent.
-- **No GitHub writes from tasks.** Git push and PR creation by fix-type tasks remain the only exception.
+- **No GitHub writes from tasks.** Git push from the sandbox remains the only exception; PRs are opened by `open-pr`. Agent and workflow chores keep the engine's token on purpose (`credentials: full`).

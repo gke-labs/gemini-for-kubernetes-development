@@ -1,11 +1,15 @@
 # Design Note: Resilient & Reconnectable Task Execution
 
+**Status:** built over envd (d9135944, no PR number), then superseded. The task server in `factory daemon` ([recipe-task-server.md](recipe-task-server.md), #1739) starts every task detached in its own process group and serves its log as one resumable stream; envd, `RunTaskResilient` and the `nohup`/`tail`/`kill` scripts are gone (#1929, [remove-envd.md](remove-envd.md)). What still holds: a task directory's `pid`, `start_time`, `execution.log` and `exit_code` files (`taskfiles.TaskFiles`, written by the daemon and the spool), the `--detached`, `--background` and `--abort-on-cancel` flags (for `factory recipe` and `factory agent create`), and the watch passing `--abort-on-cancel=false`. `factory fix` is gone (#1884); its examples below are now `factory recipe`.
+
 This design note outlines the plan for implementing a resilient task execution wrapper in `factory` to protect execution inside sandbox pods against network dropouts, `kubectl port-forward` timeouts, and local connection flakes, while preserving interactive terminal control.
 
 ## Background & Problem Statement
-Currently, `factory` runs commands inside sandbox pods using synchronous Connect-RPC streams. If the connection drops (e.g. idle timeout, VPN flake), the RPC context is cancelled, which immediately kills the running process in the pod, aborting the task and leaving the sandbox in an incomplete/dirty state.
+Before this, `factory` ran commands inside sandbox pods using synchronous Connect-RPC streams. If the connection dropped (e.g. idle timeout, VPN flake), the RPC context was cancelled, which immediately killed the running process in the pod, aborting the task and leaving the sandbox in an incomplete/dirty state.
 
-## Proposed Architecture: Detached Run & Log Polling
+## Architecture: Detached Run & Log Polling
+
+As built over envd; since #1739 the task server does the launch, and attach is one `GET /v1/tasks/{id}/log?offset=N` stream rather than polling.
 
 Rather than modifying the underlying `envd` server binary, we wrap execution logic inside the `factory` CLI client utilizing standard POSIX commands (`nohup`, `tail`, `cat`) present in the sandbox container.
 
@@ -60,6 +64,7 @@ This command:
 5. Exits immediately, allowing the Connect-RPC request to finish with code `0`.
 
 ### 2. Client Tailing Loop (Interactive Mode)
+Replaced by the task server's log stream, which the client resumes from its byte offset after a dropped port-forward (`ServerSandbox.Attach`).
 In interactive (default) mode, the client performs the following loop:
 1. Calls `client.Exec` to run `tail -c +<offset> {taskDir}/execution.log` (initially `offset = 0`).
 2. Appends any received bytes to local stdout/stderr, and increases the `offset` by the number of bytes read.
@@ -72,7 +77,9 @@ In interactive (default) mode, the client performs the following loop:
 
 ### 3. Concurrency & Execution Modes
 
-* **Interactive Mode (Default)**: Developer runs `factory fix`. It tails logs and supports **Ctrl+C abort**.
+Cancellation is now `POST /v1/tasks/{id}/cancel`, which ends the task's process group.
+
+* **Interactive Mode (Default)**: Developer runs `factory fix` (now `factory recipe`). It tails logs and supports **Ctrl+C abort**.
   - **Ctrl+C Handling**: If the developer presses Ctrl+C, the local CLI process catches the interrupt signal and sends a termination command to the pod before exiting:
     ```bash
     kill $(cat {taskDir}/pid)
@@ -109,5 +116,5 @@ Below is a comparison of how `--background`, `--detached`, and `--abort-on-cance
 To prevent restarts of the `overseer-kcc` container/pod from disrupting active subagent tasks while keeping execution state updated in Kubernetes:
 1. `factory watch` runs child commands synchronously on the host container to stream logs and monitor completion.
 2. It passes `--abort-on-cancel=false` to these child commands. If `factory watch` exits or restarts, the child processes terminate without killing the background tasks in the sandbox pods.
-3. On restart, `factory watch` dynamically reconciles any sandboxes in a `Running` task state by executing a lightweight check inside the pod for the task's `exit_code` file, updating the metadata annotations to `Completed`/`Failed` retroactively.
+3. On restart, `factory watch` requeues every task in processing by its run name, and the rerun follows its run, applies its result, or finds it applied (#1924); nothing is adopted. The reconciler's `IsTaskRunning`/`RefreshTaskState` read the newest task's status through the task server (#1905). Before #1924: it dynamically reconciled any sandboxes in a `Running` task state by executing a lightweight check inside the pod for the task's `exit_code` file, updating the metadata annotations to `Completed`/`Failed` retroactively.
 

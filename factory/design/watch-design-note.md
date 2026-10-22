@@ -2,6 +2,8 @@
 
 This document details the unified design, architecture, and behavior of the `factory watch` background loop, which serves as the core scanning and orchestration daemon of the AI Factory.
 
+**Status:** the queue, dispatch, identity and recovery described here are current. *What* the loop decides on each issue and PR - which task, when, and when to give up - is no longer the scanners' code: since Phase 4 of [watch-rules.md](watch-rules.md) (October 2026) the rule files in `factory/pkg/watch/rules/` decide it, the scanners carry the decisions out, and the dispatcher re-decides each task just before it starts. Sections 4 and 6 say where each decision lives now; the rules themselves are described in the [watch rules guide](../docs/watch-rules.md).
+
 ---
 
 ## 1. Overview & Goals
@@ -57,29 +59,31 @@ The watcher fetches open Pull Requests matching:
 
 ## 4. Task Dispatch Matrix
 
-Once the watcher has consolidated the active issues and PRs, it performs check-status queries to map them to specific task types:
+Once the watcher has consolidated the active issues and PRs, the rules engine decides each in its rules' order, and the scanner queues the task the deciding rule names. The task carries the rule's recipe, apply and inputs, and the dispatcher runs exactly that (`api.RecipeArgs`); the task type only names the run and picks the sandbox.
 
-| Item Type | Condition | Task Type | Spawned Command | Identity Selection |
+| Item Type | Rule (file) | Task Type | Spawned Command (from the rule's `run:`) | Identity Selection |
 | :--- | :--- | :--- | :--- | :--- |
-| **Issue** | Open issue assigned/labeled | `issue-fix` | `factory recipe fix --apply --action open-pr --pr-labels --input draft=false` | Mapped pool bot / Load-balanced coder |
-| **PR** | CI check runs failed (Phase 3) | `pr-investigate` | `factory recipe care-ci --apply --action post-replies` | Match PR author (must be in `coder` pool) |
-| **PR** | New comment or review (Phase 2) | `pr-comments` | `factory recipe care-comments --apply --action post-replies` | Match PR author (must be in `coder` pool) |
-| **PR** | Merge conflicts / out-of-date (Phase 1) | `pr-iterate` | `factory recipe care-rebase --apply --action post-replies` | Match PR author (must be in `coder` pool) |
-| **PR** | Opened by third-party bot on allowlist | `pr-review` | `factory recipe review --apply --action submit-review` | Random user from `reviewer` pool |
-| **PR** | Markdown workflow checklist file reference | `agent-chore` | `factory agent create` | Default fallback or mapped role |
+| **Issue** | `fix`: pointed at (trigger label, pool assignee, or opened by the watcher), no linked PR, no workflow named | `issue-fix` | `factory recipe fix --apply --action open-pr --pr-labels --input draft=false` | Mapped pool bot / Load-balanced coder |
+| **Issue** | `workflow`: the body names a workflow definition | `agent-chore` | `factory agent create` (the `workflow` recipe) | Default fallback or mapped role |
+| **PR** | `comments`: new trusted feedback | `pr-comments` | `factory recipe care-comments --apply --action post-replies` | Match PR author (must be in `coder` pool) |
+| **PR** | `conflict`: merge conflict | `pr-iterate` | `factory recipe care-rebase --apply --action post-replies` | Match PR author (must be in `coder` pool) |
+| **PR** | `ci`: failing checks | `pr-investigate` | `factory recipe care-ci --apply --action post-replies` | Match PR author (must be in `coder` pool) |
+| **PR** | `review`: green, wants a review (`*/review`), not reviewed at its head | `pr-review` | `factory recipe review --apply --action submit-review` | Random user from `reviewer` pool |
+
+The PR rules `inherit-labels`, `inactive`, `ready` and `ready-unreview`, and every give-up, queue nothing: their writes (labels, assignees, a stop label and comment) are made by `act.ApplyWrites`.
 
 ---
 
 ## 5. Queueing & Concurrency Control
 
-To ensure robustness, isolation, and low-latency API response times, the watcher operates through `TaskQueueManager` using thread-safe in-memory maps backed by write-through disk persistence to directory queues (`incoming/`, `processing/`, `processed/`) and append-only journal event logging (`queue/journal.log`):
+To ensure robustness, isolation, and low-latency API response times, the watcher operates through `TaskQueueManager` using thread-safe in-memory maps backed by write-through disk persistence to directory queues (`incoming/`, `processing/`, `processed/`) and append-only journal event logging (`journal.jsonl`):
 
 1. **Scan Mode (`--mode=scan`)**: Performs GitHub and local queries, builds task specifications, and writes them atomically into `incoming/<task-id>.yaml` (ingested by the in-memory manager).
 2. **Run Mode (`--mode=run`)**: Periodically drains the queue using an atomic candidate-claiming primitive (`ClaimNextCandidate`) rather than static batch snapshots:
    * **Priority Queue Scheduling**: Incoming tasks are maintained in a persistent in-memory min-heap (`TaskPriorityQueue`) ordered by priority tier (`critical` > `urgent` > `important` > `high` > `medium` > `low`), phase execution order (1 to 4), and arrival timestamp (`enqueuedAt` FIFO), eliminating the need to re-sort on every claim.
    * **Two-Phase Validation & Deferred Cycle Release**:
      - *Phase 1 (Lock Acquired)*: `ClaimNextCandidate` atomically reserves the top unblocked candidate task from `incoming/` in memory while leaving the file in `incoming/` on disk and `Status: Pending`.
-     - *Phase 2 (Lock Released)*: The runner verifies external preconditions (Kubernetes sandbox pod status and GitHub stop labels/closed state) completely outside the mutex lock.
+     - *Phase 2 (Lock Released)*: The runner verifies external preconditions (Kubernetes sandbox pod status and GitHub stop labels/closed state) completely outside the mutex lock, then has the rules engine decide the task's rule again on the item's facts read now (`Redecide`): a gate, a moved head or a rule that no longer decides drops the task, not counted as an attempt.
      - *Resource Conflict Handling*: If the target sandbox pod is currently busy or Kubernetes is temporarily unreachable, the runner collects the candidate in a cycle-scoped list of released tasks. A deferred function in `runTasks` invokes `ReleaseTask(filename)` upon function exit to restore all skipped tasks back to the ready heap. This eliminates **Head-of-Line (HoL) blocking**, prevents intra-cycle busy-spin thrashing, and avoids unnecessary disk I/O.
      - *Permanent Pruning*: If GitHub checks reveal an issue/PR is closed or labeled with `overseer/stop`, `RemoveTask` deletes it from memory and disk.
      - *Execution Start*: Once all checks pass, `StartTask` transitions the task to `processing/` (marks `Running`, sets `StartedAt`, moves file, logs journal event) right before launching execution in the sandbox.
@@ -91,34 +95,14 @@ To ensure robustness, isolation, and low-latency API response times, the watcher
 
 ## 6. PR Processing Event Phases & Retry Logic
 
-When processing a PR, the scan evaluates conditions and queues tasks in three phases:
+The PR scanner's own phases, retry limits and circuit breakers described here before October 2026 are gone. The same behaviour is in the PR rules, in order (each rule's file says exactly when it runs and how it is paced):
 
-### Phase 1: Rebase / Merge Conflicts (`pr-iterate`)
-* **Trigger**: The PR is in a conflicting merge state (`Mergeable == false`).
-* **Assignment**: The bot user stays assigned to the PR on GitHub while the rebase task is executing.
+* **`comments`** (queue phase 1): new feedback from a trusted human or an allowlisted review bot since the last commit and since `lastCommentAddressedTime` (or a pool bot assigned as an override). The feedback is acknowledged with 👀 when the task starts and resolved with 👍/😕 when it ends. Gives up after 3 failed runs since the head, a human or a pause.
+* **`conflict`** (phase 2): the PR does not merge; once per head.
+* **`ci`** (phase 3): checks failing at the head (check runs deduplicated by name, latest kept). Runs again on a new head, after a failed run, or 2h after the last. After 3 attempts since the last commit, trusted human comment or pause, it gives up: the `<trigger>/stop` label and a pause comment. Removing the label resumes it; the pause comment is the new boundary the count starts from.
+* **`review`** (phase 1): opted in via `<trigger>/review` on the PR or, until it is handed to the humans, on an issue it closes; green, not approved, no new feedback, and its head not yet reviewed by the reviewer identity. The PR's and the closing issues' `## Review Instructions` are passed as instructions. It runs in a sandbox of its own (`review-<repo>-<n>`); see [pr-automated-review.md](pr-automated-review.md).
 
-### Phase 2: Review Feedback / Comments (`pr-comments`)
-* **Trigger**: A new comment or review is posted after the PR's last commit time and after `lastCommentAddressedTime`. Or, a pool bot is manually assigned to the PR as an override trigger.
-* **Bot Filtering (`shouldIgnoreUser`)**:
-  * Own watcher bot (`githubLogin`) and PR author comments are ignored.
-  * System bots (matching `prow`, `-bot`, `-robot`, or `[bot]`) are ignored by default.
-  * Allowlisted review bots (e.g. `reviewbot-robot` in `allowlistedBots`) are NOT ignored.
-* **Assignment**: The bot user stays assigned to the PR on GitHub while addressing comments.
-
-### Phase 3: CI Check Failures (`pr-investigate`)
-* **Trigger**: Check runs or status checks for the head commit have failed.
-* **Check Run Deduplication**: Check runs are deduplicated by name, keeping only the latest run (highest ID), ensuring older cancelled/failed runs do not block the PR if a newer run succeeded.
-* **Automated Circuit Breaker (`overseer/stop`)**: If the bot attempts to investigate/fix CI failures (`started investigating CI check failures`) 3 times since the latest git commit OR latest human comment without success, it triggers an automated circuit breaker:
-  * It attaches the `overseer/stop` label (`or <triggerLabel>/stop`) to the pull request and posts an informative comment explaining that automated investigation is paused.
-  * **Effortless Retries (Unlabeling)**: To retry or resume automated investigation, a human maintainer simply removes the `overseer/stop` label (no comment or commit required). When un-labeled, the bot's pause comment (`pausing automated investigation`) acts as a new reset boundary, clearing the retry count (`investigationCount = 0`) and queueing a fresh investigation.
-* **Halting Processing (`overseer/stop`)**: To manually halt bot processing on any pull request or issue at any time, attach the `overseer/stop` label. Overseer immediately skips processing any PR with this label.
-* **Retry on Recovery**: If the previous investigation task is in `processed/` but has status `"Failed"` or if 6 hours have passed since the last investigation (`time.Since(lastInvestigatedTime) > 6*time.Hour`), the watcher queues a retry for `pr-investigate`.
-* **Assignment**: The bot user remains assigned to the PR while tasks are executing or pending.
-
-### Phase 4: Automated Code Review (`pr-review`)
-* **Trigger**: Opted in via the `overseer/review` label (or `<triggerLabel>/review`) on the PR or its referenced parent Issue (`shouldAutoReviewPR`), CI checks are passing (`!hasFailure && !isConflicting`), PR is not yet approved (`!isApproved`), no new unaddressed comments exist (`!hasNewComments`), and the current `HEAD SHA` has not yet been reviewed by the Reviewer Bot identity (`state.lastReviewedSHA != headSHA`).
-* **Contextual Instructions**: Parses the PR description and any referenced parent Issue body for a `## Review Instructions` section (`ExtractReviewInstructions`) and passes them via `--instruction <path>`.
-* **Identity Selection**: Routes to a user in the `reviewer` pool (e.g., `reviewbot-robot`), executing inside a dedicated Sandbox Pod (`factory-pr-<num>-review`). See detailed architecture in [pr-automated-review.md](file:///usr/local/google/home/barni/workspace/src/github.com/barney-s/gemini-for-kubernetes-development/factory/design/pr-automated-review.md).
+The first of these that decides to run takes the PR. The stop label (`overseer/stop`, or `<triggerLabel>/stop`) halts all processing of an item at any time: it is a gate, checked before any rule.
 
 ---
 
@@ -134,7 +118,6 @@ When queueing tasks, the daemon resolves which bot identity should run the task:
 
 ---
 
-## 8. Crash Recovery & Git Sync
+## 8. Crash Recovery
 
-* **Crash Recovery**: On watch daemon startup, any tasks found in the `processing/` directory are moved back to `incoming/`. The daemon reads their specifications (including the resolved `assignee`) and executes them.
-* **Git State Sync**: At the end of every watch loop cycle, if any changes were made to `/overseer/queues`, the daemon automatically adds, commits, and pushes them back to the state branch (e.g. `overseer`) to keep the remote repository synced.
+* **Crash Recovery**: On watch daemon startup, any tasks found in the `processing/` directory are moved back to `incoming/`. Each task's command names its run (`--run-name`), so run again it follows the run if it is still going, applies the result of one that finished, or finds it already applied.

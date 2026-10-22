@@ -7,7 +7,7 @@ Running one agent on one issue is easy. Running dozens against a busy repository
 | | What it is | Use it when |
 |---|---|---|
 | **[factory](factory/)** | The engine. A CLI that runs one agent task in a Kubernetes sandbox: `recipe fix`, `recipe plan`, `recipe triage`, `recipe review`, `recipe care-ci / care-comments / care-rebase`, `pr watch`, runbook deployments (`run plan / deploy / teardown`), research conversations, plus `factory watch`, the autonomous loop. | You want to run agent tasks yourself, from a terminal or a script. |
-| **[overseer](overseer/)** | Unattended operation. An `Overseer` custom resource runs `factory watch` against one repository, in its own namespace with a bot account pool. It picks up labelled issues, opens PRs, works them until CI is green and comments are addressed, labels them ready for a human, runs scheduled chores, and garbage-collects sandboxes. | A repository should have agents working its backlog around the clock, steered from GitHub labels. |
+| **[overseer](overseer/)** | Unattended operation. An `Overseer` custom resource runs `factory watch` against one repository, in its own namespace with a bot account pool. It picks up labelled issues, opens PRs, works them until CI is green and comments are addressed, labels them ready for a human, runs scheduled chores, and garbage-collects sandboxes. What it does on each issue and PR is decided by rule files ([watch rules](factory/docs/watch-rules.md)), with a per-rule off switch on the `Overseer`. | A repository should have agents working its backlog around the clock, steered from GitHub labels. |
 | **[repo-agent](repo-agent/)** | The human in the loop. A multi-user web app (UI, API, controller) with a board per repository: what needs you next, one click to triage, plan, fix, review, deploy or research, and every GitHub write made as *you*, after you have seen it. | People want agents to do the legwork while staying the author of everything GitHub sees. |
 
 ```
@@ -16,7 +16,7 @@ Running one agent on one issue is easy. Running dozens against a busy repository
                           │  runs the factory CLI                      │  runs factory watch
                           ▼                                            ▼
                   ┌──────────────────────────── factory ─────────────────────────────┐
-                  │  one agent-sandbox Sandbox per task: /workspaces PVC, envd, acpd │
+                  │  one agent-sandbox Sandbox per task: /workspaces PVC, its daemon │
                   │  Gemini CLI · Claude Code · Antigravity                          │
                   └──────────────────────────────────────────────────────────────────┘
 ```
@@ -33,8 +33,8 @@ factory has no dependency on the other two. overseer and repo-agent both drive f
 
 | Path | Contents |
 |---|---|
-| [`factory/`](factory/) | The factory CLI, the sandbox daemon (envd, acpd), task scripts and worker images. |
-| [`overseer/`](overseer/) | The `Overseer` CRD and controller, the Overseer pod image and its watch loop. |
+| [`factory/`](factory/) | The factory CLI, the sandbox daemon (task server and agent sessions), the watch loop and its rules, task scripts and worker images. |
+| [`overseer/`](overseer/) | The `Overseer` CRD and controller, and the Overseer pod image that runs `factory watch`. |
 | [`repo-agent/`](repo-agent/) | The web UI, API, RepoBoard controller and their images. |
 | [`docs/`](docs/) | Cross-cutting guides (GKE install, rotating bot secrets). |
 | [`dev/`](dev/) | Build, CI and release tooling shared by the modules. |

@@ -1,10 +1,13 @@
 # Design Note: A Task Server for Recipe Tasks
 
-**Status:**
-- **Phase 1 built:** the task server in `factory daemon`, the client over a port-forward, and recipe commands moved to it with envd as the fallback.
-- **Phase 4 in part:** the daemon serves acpd's sessions under `/v1/sessions`, including sessions that belong to a task, and recipe asks go through them.
-- **Phase 4 clients built:** repo-agent's research and "Continue session" on plan and triage use those sessions over the port-forward.
-- **Proposals:** the other phases.
+**Status:** built.
+- **Phase 1:** the task server in `factory daemon`, the client over a port-forward, recipe commands and `sandbox task` moved to it (#1739); the daemon records each task's status (#1740).
+- **Phase 2:** verified in cluster with #1739.
+- **Phase 3:** superseded. There are no classic tasks left: every task became a recipe ([remove-envd.md](remove-envd.md), #1903-#1929), so every task starts through the server.
+- **Phase 4:** sessions under `/v1/sessions`, task-owned sessions and `session/load` (#1742, #1743); recipe asks through them (#1744); repo-agent over the port-forward (#1745, #1746); the `:49984` listener dropped (#1764).
+- **Phase 5:** done by #1929: envd, the fallback, `EnvdSandbox`, `FACTORY_TASK_TRANSPORT` and the `-lb` Service's envd port are gone. A sandbox without a recent enough server is recreated.
+
+The sections below were written while envd was still the transport; where they describe the fallback, it no longer exists.
 
 Recipe tasks (plan, triage) already run independently of whoever starts them. The daemon claims them from the spool and runs them in their own task directories (see [task-recipes-and-outputs.md](task-recipes-and-outputs.md)). But every client still talks to them through **envd**:
 
@@ -41,7 +44,7 @@ sequenceDiagram
     API->>D: tunnel to 127.0.0.1:49990
     CLI->>D: GET /v1/version
     alt no server, wrong version, or forward refused
-        CLI->>CLI: fall back to envd, as before
+        CLI->>CLI: error: recreate the sandbox (was: fall back to envd)
     end
     CLI->>D: POST /v1/tasks {task, recipe, inputs, env}
     D->>T: start in its own process group, env in memory only
@@ -57,7 +60,7 @@ The server uses REST and JSON on `net/http`, with no code generation. This is th
 
 | Method and path | What it does |
 |---|---|
-| `GET /v1/version` | `{"api":1}`. A client that needs more falls back to envd. |
+| `GET /v1/version` | `{"api":1}`. A client that needs more fails; the sandbox is recreated. |
 | `GET /v1/tasks` | Every task, newest first, using the same entries as `factory sandbox task list`. |
 | `POST /v1/tasks` | Starts a recipe task. Idempotent by id and by run name. |
 | `GET /v1/tasks/{id}` | One task. |
@@ -82,7 +85,7 @@ The daemon holds one acpd session registry.
   - Everyone else can read the session and follow its events. A refused call answers 409.
 - **Once the task has ended,** the session is anybody's. Creating it again loads the recorded conversation (`session/load`), so a member can continue a plan or triage where the task left off.
 - **Cancelling the task** closes its session.
-- **Recipes use it.** A recipe task with `FACTORY_TASK_TOKEN` in its environment creates its session on the daemon (`yolo`, auto-approve) and asks through `/v1/sessions/<task>/prompt` and `/events`. Without the token (a task envd started, or an older daemon), it runs the engine in its own process as before. `run:` steps do not get the token.
+- **Recipes use it.** A recipe task with `FACTORY_TASK_TOKEN` in its environment creates its session on the daemon (`yolo`, auto-approve) and asks through `/v1/sessions/<task>/prompt` and `/events`. Without the token (an older daemon), it runs the engine in its own process. `run:` steps do not get the token.
 
 **Rules the server follows:**
 
@@ -90,50 +93,48 @@ The daemon holds one acpd session registry.
 - **Names are one path element.** Ids and file names must match `^[A-Za-z0-9_][A-Za-z0-9._-]*$`, so no request reaches outside the tasks directory.
 - **POST answers once the task has started,** so the client can follow the log at once.
 - **POST is serialized.** A mutex makes "find by id or run name, then start" one step, so the same task posted twice starts only once. This holds for a retry that lost its answer, and for repo-agent reusing a run name.
-- **A process that is gone without an exit code gets 137.** If a followed log finds the task's process has been gone for 5s with no exit code, the server records 137, as the envd attach does.
-- **Task directories are unchanged.** A task the server started and one envd started look the same, and either transport can read both. During the transition, `factory sandbox task list` sees every task whichever way it was started.
+- **A process that is gone without an exit code gets 137.** If a followed log finds the task's process has been gone for 5s with no exit code, the server records 137, as the envd attach did.
+- **Task directories are plain files** (`taskfiles.TaskFiles`), which the daemon, the server and the spool read alike.
 
 ### Transport: a port-forward to loopback
 
 - **Where it listens:** the server binds `127.0.0.1:49990` only. It has no Service and is not reachable on the pod IP.
 - **How factory reaches it:** through a client-go port-forward. It tries websockets first and falls back to SPDY (`portforward.NewFallbackDialer`), as kubectl does, so no kubectl binary is needed.
 - **Who may call it:** the API server authenticates the caller and checks RBAC `pods/portforward` on the sandbox's pod. That is the authorization: the same principal that may exec in the pod today.
-- **When the forward drops:** it ends when the pod goes. The client then finds the pod again (waking the sandbox, as envd's connect does) and opens a new forward. Every call is safe to repeat.
-- **Attach is one long request.** The client keeps the byte offset, so a stream that breaks resumes where it stopped. The quota watch (`envd.QuotaWatch`) reads the same chunks as before. A fatal quota error cancels the task with `kill`.
+- **When the forward drops:** it ends when the pod goes. The client then finds the pod again (waking the sandbox, `k8s.SandboxPod`) and opens a new forward. Every call is safe to repeat.
+- **Attach is one long request.** The client keeps the byte offset, so a stream that breaks resumes where it stopped. The quota watch (`taskfiles.QuotaWatch`) reads the same chunks. A fatal quota error cancels the task with `kill`.
 
 ### Fallback and version skew
 
-`taskapi.Connect` falls back to envd in these cases:
+Removed by #1929: `taskapi.Connect` is the task server only, and a sandbox without one, or with a lower API version, is recreated. Before that, it fell back to envd in these cases:
 
 - the port-forward fails (the caller lacks `pods/portforward`, or the pod is gone);
 - nothing answers on the port (a sandbox on an image older than the server);
 - the server's API version is lower than the client needs;
 - `FACTORY_TASK_TRANSPORT=envd` is set.
 
-Either way, factory prints which transport it uses. The envd path is unchanged, including `RunTaskResilient` for images that have no daemon at all.
-
-Existing sandboxes keep their image until they are recreated (see the recipe-skew note in the sandbox launcher work). So both transports will be in use for a while, and envd stays until every sandbox runs a server.
+Existing sandboxes keep their image until they are recreated (see the recipe-skew note in the sandbox launcher work).
 
 ### Caller changes
 
-- **`factory recipe plan|triage`** and **`factory sandbox task list|status|output|attach|logs`** go through a `taskapi.Sandbox`, with two implementations: `ServerSandbox` and `EnvdSandbox`.
-- **repo-agent** needs no code change, because it shells out to those commands. Its controller role gains `pods/portforward` (`create`). Without it, the commands fall back to envd.
+- **`factory recipe plan|triage`** and **`factory sandbox task list|status|output|attach|logs`** go through a `taskapi.Sandbox`, `ServerSandbox` (`EnvdSandbox` went with #1929).
+- **repo-agent** needs no code change, because it shells out to those commands. Its controller role has `pods/portforward` (`create`).
 
 ### Known limits
 
 - **Same-pod processes can call the server.** The agent in the sandbox can reach `127.0.0.1:49990`. It already shares the pod with the daemon, its files and its processes, so the server gives it nothing new. A token or a Unix socket could close this later.
-- **Classic tasks are unchanged** (fix, explore, review…). They still run through envd's resilient path.
+- **Classic tasks:** none are left; every task is a recipe (remove-envd.md).
 
 ---
 
 ## Phases
 
-0. **Shared pieces** (done): `envd.QuotaWatch`, `spool.ListScript`/`ParseList`/`Fail` exported, and the usage harvest reading through any file reader.
-1. **Recipe tasks** (built): the server in the daemon, the client over a port-forward, recipe commands and `sandbox task` moved to it, envd fallback, and the RBAC marker in repo-agent.
-2. **Verify in cluster:** a factory image with the server, recreated sandboxes, and repo-agent's RBAC applied. Then confirm that plan and triage from the board run over the forward.
-3. **Classic tasks:** start them through the server too, with attach as a stream. Then the polling attach and the `kill` scripts go.
+0. **Shared pieces** (done): `envd.QuotaWatch` (now `taskfiles.QuotaWatch`), `spool.ListScript`/`ParseList`/`Fail` exported, and the usage harvest reading through any file reader.
+1. **Recipe tasks** (built, #1739): the server in the daemon, the client over a port-forward, recipe commands and `sandbox task` moved to it, envd fallback, and the RBAC marker in repo-agent.
+2. **Verify in cluster** (done): a factory image with the server, recreated sandboxes, and repo-agent's RBAC applied. Then confirm that plan and triage from the board run over the forward.
+3. **Classic tasks** (superseded: they became recipes, remove-envd.md): start them through the server too, with attach as a stream. Then the polling attach and the `kill` scripts go.
 4. **acpd behind the same surface:**
-   - **Done:** sessions under `/v1/sessions` on the loopback server, task-owned sessions, `session/load`, and recipes driving their asks through it.
-   - **Done:** repo-agent reaches sessions over the port-forward: research first, then "Continue session" on plan and triage, which opens the task's session in the research view (`/api/task-sessions/<sandbox>/<task>`), a watch while the task runs. A sandbox on an older image falls back to the terminal.
-   - **Done:** drop the `:49984` listener (`ACPD_ENABLE`, `factory acpd`, and repo-agent's pod-IP fallback). A sandbox whose daemon hosts no sessions can no longer be reached for one.
-5. **Retire envd for factory:** once no supported image lacks the server, remove the fallback and the envd Service from sandboxes.
+   - **Done (#1742-#1744):** sessions under `/v1/sessions` on the loopback server, task-owned sessions, `session/load`, and recipes driving their asks through it.
+   - **Done (#1745, #1746):** repo-agent reaches sessions over the port-forward: research first, then "Continue session" on plan and triage, which opens the task's session in the research view (`/api/task-sessions/<sandbox>/<task>`), a watch while the task runs. A sandbox on an older image falls back to the terminal.
+   - **Done (#1764):** drop the `:49984` listener (`ACPD_ENABLE`, `factory acpd`, and repo-agent's pod-IP fallback). A sandbox whose daemon hosts no sessions can no longer be reached for one.
+5. **Retire envd for factory** (done, #1929): once no supported image lacks the server, remove the fallback and the envd Service from sandboxes.

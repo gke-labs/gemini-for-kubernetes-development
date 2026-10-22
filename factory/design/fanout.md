@@ -1,6 +1,6 @@
 # Fan-out: one task, many items, a slow start
 
-**Status:** Proposed.
+**Status:** Implemented (steps 2-5 below). Parser, `Decide`/`Sync` and `factory watch fanout` #1825; the `watch/fanouts` controller #1826; templates and JSON item files #1829; groups #1830; the `fanout` recipe and `post-spec` #1832; proposal by the daemon #1833 (as the issue's fix account, #1855); `create: lazy` #1835, the only value since #2017; sub-issue links #1842; items from an https URL #1853; post-spec labels #1838/#1885; children are ordinary issues (no unlabelled-child hold) #2019. The board's Fan out action is offered only on fan-out parents (#1840). Step 6 (KCC #13781) is not tracked in this repo; the open questions below are still open. Not built: the board front end and detecting a fan-out without the label.
 
 Some work is one task applied to many items. [k8s-config-connector#13781](https://github.com/GoogleCloudPlatform/k8s-config-connector/issues/13781) is an example: it has migration steps per resource, a checklist of 21 resources, and a final cleanup once every resource is migrated. Today a person turns an issue like that into child issues by hand and labels them `overseer` a few at a time. Labelling all 21 at once would flood review, and the first few PRs usually show the task's description is wrong somewhere.
 
@@ -232,7 +232,7 @@ A generic `.agents/workflows/fanout.md` that the parent links. The agent reads t
 
 ### B. A deterministic fan-out in `factory watch`, an agent only to write the spec (chosen)
 
-- **A controller does the counting.** A new `watch/fanout` controller reconciles every parent labelled `<trigger>/fanout` (`overseer/fanout` by default). It is deterministic, idempotent and cheap: a few GitHub reads per parent per cycle, and no sandbox.
+- **A controller does the counting.** A `watch/fanouts` controller reconciles every parent labelled `<trigger>/fanout` (`overseer/fanout` by default). It is deterministic, idempotent and cheap: a few GitHub reads per parent per cycle, and no sandbox.
 - **An agent does the reading.** For an issue that does not use the standard headings, the controller runs the `fanout` recipe once, to write the spec. Maintainers edit the spec themselves after that.
 
 - **For:** exact, cheap and safe to re-run, and the window is enforced in code. The agent is used where judgement helps, once per parent.
@@ -287,7 +287,7 @@ Checkpoints reached are recorded in the progress comment's state (below), so rem
 7. **Label.** `active` is the children that are open and carry the trigger label. Label the next `window − active` children, in item order (existing children not yet started, and new ones), with the trigger label plus the spec's `labels`. From then on the existing scanner owns them, as it owns any labelled issue. The daemon's `--max-pending` still caps how many run at once, so the window decides which children are eligible, not how fast they run.
 8. **Final.** Once every item's child is closed, create the `Finally` child (labelled at once). When that one closes as completed, or straight away if there is no `Finally` section, close the parent. If the bot cannot close it, it comments instead.
 
-The issue scanner skips a parent labelled `<trigger>/fanout`. Otherwise a coder bot would pick up the whole parent as one fix task. It also leaves alone a child that has the marker but not the trigger label, both when it adopts issues filed by the bot's login and when it queues. The fan-out files its children as that same login, so adoption would otherwise label every child at once and defeat the window. Once the fan-out labels a child, the scanner handles it like any other labelled issue.
+The issue scanner skips a parent labelled `<trigger>/fanout`, both when it adopts issues filed by the bot's login and when it queues (`issues/scan.go` `fanoutWork`), and the rules engine's `fix` and `workflow` rules say `fanout: false` (`factory/pkg/watch/rules/fix.yaml`, `workflow.yaml`). Otherwise a coder bot would pick up the whole parent as one fix task. A child is an ordinary issue (#2019): with `create: lazy` it exists only once its turn has come, so the scanner and the rules handle it like any other issue, and a person pauses it with the stop label.
 
 ### The slow start
 
@@ -388,20 +388,22 @@ The agent only reads and writes text. It never creates or labels issues; the con
 
 ## Steps
 
-1. **This note.**
-2. **factory `pkg/fanout`:**
+All merged except step 6, which runs on KCC.
+
+1. **This note.** #1819, #1828.
+2. **factory `pkg/fanout`:** #1825
    - The parser: `Spec`, items, settings.
    - `Decide(Input) Plan`, a pure function returning the issues to create or rewrite, the labels to add, the checkpoint to stop at, and the new state. All the rules above live here, tested by table.
    - `Sync`, one pass on GitHub: read, `Decide`, write, the progress comment. The watch controller (step 3) calls it.
    - `factory watch fanout --url <issue> [--dry-run]` runs it once by hand, so it can be tried on #13781 before any daemon runs it.
-3. **watch:**
+3. **watch:** #1826
    - The `watch/fanouts` controller: a sweep calling `Sync` on each parent.
-   - The scanner skips parents and children the fan-out has not labelled (adoption too).
+   - The scanner skips parents (adoption too). It also skipped children the fan-out had not labelled, until #2019.
    - The reconciler's closed-issue hook wakes a parent when one of its children closes.
-4. **Templates, item files and groups** (two PRs):
+4. **Templates, item files and groups** (#1829, #1830):
    - Templates (`text/template`, `.item` / `.items` / `.parent`, `missingkey=error`) replacing `{item}` / `{parent}`, and `items.from` / `select` / `where` / `name` read through the contents API.
    - `group` with the two-phase ramp, `create: lazy`, `items=` markers and the state's `group`.
-5. **The proposal** (two PRs):
+5. **The proposal** (#1832, #1833):
    - The `fanout` recipe, its `FanOut` kind and its `post-spec` action (`factory recipe fanout`).
    - The controller runs it in-process (`runRecipe` with `--apply`, run name `fanout-<N>-<time>`) on a parent without a spec.
 6. **Verify on KCC:**
@@ -413,7 +415,7 @@ Steps 2 to 4 serve parents that already use the headings or an item file. Step 5
 
 ## Later: a repo-agent board front end
 
-This design does not need repo-agent. A board could later show a fan-out as a row: the spec as a draft to edit, the children as chips, and removing the stop label as its button. That is a thought experiment for now. The controller and the GitHub conventions above are the contract either way.
+This design does not need repo-agent. The board already offers the `fanout` recipe (Fan out) on issues labelled `<trigger>/fanout`, through the recipe's `applicable-when` label (#1840). Beyond that, a board could later show a fan-out as a row: the spec as a draft to edit, the children as chips, and removing the stop label as its button. That is a thought experiment for now. The controller and the GitHub conventions above are the contract either way.
 
 ## Later: detecting a fan-out from the issue
 
