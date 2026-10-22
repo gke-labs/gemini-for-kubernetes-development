@@ -3,9 +3,8 @@
 # at - labelled with the trigger, assigned to the pool, or opened by the
 # watcher's own login - not a fan-out's parent, with no closing or
 # linked PR and no workflow named in its body, updated since its last fix
-# ended, is fixed and the PR opened ready (the dispatcher's recipe table,
-# api/recipe.go: fix --apply --action open-pr --pr-labels --input
-# draft=false). The 10m / 20m cooldowns are the scanner's after a success
+# ended, is fixed and the PR opened ready (its run: below: fix --apply
+# --action open-pr --pr-labels --input draft=false). The 10m / 20m cooldowns are the scanner's after a success
 # / a failure.
 #
 # After 3 failed runs since a trusted human last spoke on the issue or it

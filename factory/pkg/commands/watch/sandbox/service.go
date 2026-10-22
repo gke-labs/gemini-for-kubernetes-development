@@ -138,8 +138,8 @@ func (s *Service) ResolveName(ctx context.Context, taskType api.TaskType, num in
 
 	// A credentials: clone recipe (review) holds no credentials, so it
 	// shares no sandbox with the PR's other tasks.
-	if rt, ok := api.RecipeTaskOf(taskType); ok && rt.OwnSandbox {
-		return factorysandbox.RecipeSandboxName(s.repo, num, rt.Recipe)
+	if rt, ok := api.RecipeTaskOf(taskType); ok && rt.Sandbox != "" {
+		return factorysandbox.RecipeSandboxName(s.repo, num, rt.Sandbox)
 	}
 
 	prURL := fmt.Sprintf("https://github.com/%s/%s/pull/%d", s.owner, s.repo, num)

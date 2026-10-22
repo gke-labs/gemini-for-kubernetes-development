@@ -122,8 +122,8 @@ type QueueTask struct {
 	Recovered bool `yaml:"recovered,omitempty"`
 	// Rule, Recipe, Apply and Inputs are the run the rules engine decided,
 	// when it decided the task: its rule's run:, placeholders filled
-	// (act.Task). The runner runs them in place of the task type's
-	// (RecipeTask.For). PRLabels is an input of {{pr-labels}}: the CLI's
+	// (act.Task). The runner runs them (RecipeArgs); a task without a
+	// Recipe runs nothing. PRLabels is an input of {{pr-labels}}: the CLI's
 	// --pr-labels labels the PR as the overseer does, when it opens it.
 	Rule     string            `yaml:"rule,omitempty" json:"rule,omitempty"`
 	Recipe   string            `yaml:"recipe,omitempty" json:"recipe,omitempty"`

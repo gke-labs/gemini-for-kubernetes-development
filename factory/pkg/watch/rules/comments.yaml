@@ -1,7 +1,7 @@
 # Mirrors prs/handlers.go handlePRComments: new feedback from a trusted
 # human on the PR, or a last comments run on this head that failed, is
 # answered by its author and the replies posted (care-comments --apply
-# --action post-replies, api/recipe.go), as often as new feedback comes:
+# --action post-replies, its run: below), as often as new feedback comes:
 # one queued task at a time, not once per head. After 3 failed runs since
 # the head, a trusted human's last comment or the last pause, it gives up:
 # the stop label and a pause comment (the handler's retry limit: new

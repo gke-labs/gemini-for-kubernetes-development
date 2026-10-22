@@ -76,8 +76,19 @@ func TestRedecide(t *testing.T) {
 	// label taken off, no pool assignee) is dropped; with a PR linked
 	// since, too.
 	issue := rules.Item{Kind: rules.OnIssue, Number: 12, Labels: []string{"overseer"}, UpdatedAt: now.Add(-time.Hour), TaskActive: true, Queued: []string{"fix"}}
-	if drop, why := redecide(set, "fix", &api.QueueTask{Number: 12}, issue, env); drop {
+	unstamped := &api.QueueTask{Number: 12}
+	if drop, why := redecide(set, "fix", unstamped, issue, env); drop {
 		t.Errorf("a labelled issue's fix dropped: %s", why)
+	}
+	// A task that carries no recipe (queued before the rules stamped
+	// their tasks) runs what the engine decides now; a stamped one keeps
+	// its stamp.
+	if unstamped.Rule != "fix" || unstamped.Recipe != "fix" || unstamped.Apply != "open-pr" || !unstamped.PRLabels || unstamped.Inputs["draft"] != "false" {
+		t.Errorf("an unstamped fix was not stamped with the decision: %+v", unstamped)
+	}
+	stamped := &api.QueueTask{Number: 12, Rule: "fix", Recipe: "fix-v2", Apply: "open-pr"}
+	if drop, _ := redecide(set, "fix", stamped, issue, env); drop || stamped.Recipe != "fix-v2" {
+		t.Errorf("a stamped fix: drop %v, recipe %s", drop, stamped.Recipe)
 	}
 	unlabelled := issue
 	unlabelled.Labels = []string{"bug"}

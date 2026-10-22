@@ -5,53 +5,45 @@ import (
 	"sort"
 )
 
-// RecipeTask is how a task type runs as a `factory recipe`: the recipe,
-// the one action of its result the CLI applies, how its runs are named,
-// and the sandbox it runs in.
+// RecipeTask is how the runner runs a task type as a `factory recipe`:
+// how its runs are named and the sandbox it runs in. What it runs - the
+// recipe, the action of its result the CLI applies, the inputs - is the
+// rule's that decided the task, stamped on it (QueueTask.Recipe, Apply,
+// Inputs, PRLabels; act.Task).
 type RecipeTask struct {
-	Recipe string
-	// Action is applied by the CLI once the run finishes (--apply
-	// --action): the watch writes nothing of the result itself.
-	Action string
 	// RunPrefix starts its run names (RunName).
 	RunPrefix string
-	// OwnSandbox is for a credentials: clone recipe, which runs in a
-	// sandbox of its own (<recipe>-<repo>-<N>); the others run in the
-	// PR's fix sandbox.
-	OwnSandbox bool
-	// Args are more of the command's arguments, after the recipe's.
-	Args []string
-	// Recorded is the task type the recipe records on its sandbox, when
-	// its task-type: names one; else it records recipe-<Recipe>.
-	Recorded string
+	// Sandbox, for a credentials: clone recipe, is the recipe whose own
+	// sandbox (<recipe>-<repo>-<N>) it runs in; "" runs it in the PR's
+	// fix sandbox.
+	Sandbox string
 }
 
 // recipeTasks are the task types that run as `factory recipe`. The other,
 // agent-chore, runs as `factory agent create`, which runs the agent or
 // workflow recipe (ChoreRunName).
 var recipeTasks = map[TaskType]RecipeTask{
-	TypePRReview:      {Recipe: "review", Action: "submit-review", RunPrefix: "review", OwnSandbox: true},
-	TypePRInvestigate: {Recipe: "care-ci", Action: "post-replies", RunPrefix: "investigate"},
-	TypePRComments:    {Recipe: "care-comments", Action: "post-replies", RunPrefix: "comments"},
-	TypePRIterate:     {Recipe: "care-rebase", Action: "post-replies", RunPrefix: "iterate"},
-	// The PR opens ready for review, labelled as the classic factory fix labelled it:
-	// the watch scans only labelled PRs.
-	TypeIssueFix: {Recipe: "fix", Action: "open-pr", RunPrefix: "fix", Args: []string{"--pr-labels", "--input", "draft=false"}, Recorded: "fix"},
+	TypePRReview:      {RunPrefix: "review", Sandbox: "review"},
+	TypePRInvestigate: {RunPrefix: "investigate"},
+	TypePRComments:    {RunPrefix: "comments"},
+	TypePRIterate:     {RunPrefix: "iterate"},
+	TypeIssueFix:      {RunPrefix: "fix"},
 }
 
-// For is how task t runs: rt, its type's, with the recipe, the action and
-// the arguments the rules engine decided for it when it did (t.Recipe):
-// --pr-labels for a {{pr-labels}} input, then each input, by name, as
-// --input name=value. The run's name, sandbox and recorded type stay its
-// type's.
-func (rt RecipeTask) For(t *QueueTask) RecipeTask {
+// RecipeArgs are the arguments of the run the rules engine decided for t,
+// after `recipe <t.Recipe>` and the CLI's own: --apply --action for its
+// apply, --pr-labels for a {{pr-labels}} input, then each input, by name,
+// as --input name=value. nil for a task no rule decided (no recipe).
+func RecipeArgs(t *QueueTask) []string {
 	if t.Recipe == "" {
-		return rt
+		return nil
 	}
-	out := rt
-	out.Recipe, out.Action, out.Args = t.Recipe, t.Apply, nil
+	var args []string
+	if t.Apply != "" {
+		args = append(args, "--apply", "--action", t.Apply)
+	}
 	if t.PRLabels {
-		out.Args = append(out.Args, "--pr-labels")
+		args = append(args, "--pr-labels")
 	}
 	names := make([]string, 0, len(t.Inputs))
 	for name := range t.Inputs {
@@ -59,17 +51,9 @@ func (rt RecipeTask) For(t *QueueTask) RecipeTask {
 	}
 	sort.Strings(names)
 	for _, name := range names {
-		out.Args = append(out.Args, "--input", name+"="+t.Inputs[name])
+		args = append(args, "--input", name+"="+t.Inputs[name])
 	}
-	return out
-}
-
-// RecordedType is the task type a run of rt records on its sandbox.
-func (rt RecipeTask) RecordedType() string {
-	if rt.Recorded != "" {
-		return rt.Recorded
-	}
-	return "recipe-" + rt.Recipe
+	return args
 }
 
 // RecipeTaskOf is how tasks of type t run as a recipe, if they do.

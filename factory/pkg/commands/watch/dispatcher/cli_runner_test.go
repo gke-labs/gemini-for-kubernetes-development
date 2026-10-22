@@ -34,8 +34,9 @@ func TestCLIRunner_BuildArgs(t *testing.T) {
 
 	t.Run("issue-fix task runs the fix recipe", func(t *testing.T) {
 		task := &api.QueueTask{
-			Type:       api.TypeIssueFix,
-			URL:        "https://github.com/test-owner/test-repo/issues/123",
+			Type:   api.TypeIssueFix,
+			URL:    "https://github.com/test-owner/test-repo/issues/123",
+			Recipe: "fix", Apply: "open-pr", PRLabels: true, Inputs: map[string]string{"draft": "false"},
 			Number:     123,
 			EnqueuedAt: time.Unix(1760000000, 0),
 		}
@@ -86,6 +87,7 @@ func TestCLIRunner_BuildArgs(t *testing.T) {
 			CommitSHA:    "0123456789abcdef",
 			EnqueuedAt:   time.Unix(1760000000, 0),
 			Instructions: []string{"check security", "check unit tests"},
+			Recipe:       "review", Apply: "submit-review",
 		}
 		args := r.BuildArgs(task, "reviewer-bot")
 		if len(args) == 0 {
@@ -115,6 +117,7 @@ func TestCLIRunner_BuildArgs(t *testing.T) {
 
 	t.Run("pr-investigate task runs care-ci", func(t *testing.T) {
 		task := &api.QueueTask{
+			Recipe: "care-ci", Apply: "post-replies",
 			Type:       api.TypePRInvestigate,
 			URL:        "https://github.com/test-owner/test-repo/pull/456",
 			Number:     456,
@@ -130,6 +133,7 @@ func TestCLIRunner_BuildArgs(t *testing.T) {
 
 	t.Run("pr-comments task runs care-comments", func(t *testing.T) {
 		task := &api.QueueTask{
+			Recipe: "care-comments", Apply: "post-replies",
 			Type:       api.TypePRComments,
 			URL:        "https://github.com/test-owner/test-repo/pull/456",
 			Number:     456,
@@ -145,6 +149,7 @@ func TestCLIRunner_BuildArgs(t *testing.T) {
 
 	t.Run("pr-iterate task runs care-rebase", func(t *testing.T) {
 		task := &api.QueueTask{
+			Recipe: "care-rebase", Apply: "post-replies",
 			Type:       api.TypePRIterate,
 			URL:        "https://github.com/test-owner/test-repo/pull/456",
 			Number:     456,
@@ -212,6 +217,7 @@ func TestCLIRunner_Run_ExecutesChildProcessAndWritesLog(t *testing.T) {
 
 	task := &api.QueueTask{
 		Type:   api.TypeIssueFix,
+		Recipe: "fix",
 		Number: 10,
 		URL:    "https://github.com/test-owner/test-repo/issues/10",
 	}
@@ -280,7 +286,7 @@ func TestCLIRunner_Run_PropagatesExecutableResolutionError(t *testing.T) {
 func TestEveryTaskTypeNamesItsRun(t *testing.T) {
 	r := testCLIRunner(t.TempDir())
 	for _, typ := range []api.TaskType{api.TypeIssueFix, api.TypePRInvestigate, api.TypePRComments, api.TypePRIterate, api.TypePRReview, api.TypeAgentChore} {
-		task := &api.QueueTask{Type: typ, URL: "https://github.com/o/r/pull/1", Number: 1, AgentFile: ".agents/x.md", EnqueuedAt: time.Unix(1760000000, 0)}
+		task := &api.QueueTask{Type: typ, URL: "https://github.com/o/r/pull/1", Number: 1, AgentFile: ".agents/x.md", Recipe: "r", EnqueuedAt: time.Unix(1760000000, 0)}
 		args := r.BuildArgs(task, "coder-bot")
 		want := api.ChoreRunName(task)
 		if rt, ok := api.RecipeTaskOf(typ); ok {

@@ -4,7 +4,7 @@
 # not reviewed, and that wants a review - */review on itself, or, while
 # it is not ready-for-human, on an issue it closes - is reviewed and the
 # review submitted (review --apply --action submit-review,
-# api/recipe.go), once per head. Fourth of the PR rules that take the
+# its run: below), once per head. Fourth of the PR rules that take the
 # item (prs/scanner.go evaluate). The review instructions are the overseer's,
 # passed by the engine.
 name: review

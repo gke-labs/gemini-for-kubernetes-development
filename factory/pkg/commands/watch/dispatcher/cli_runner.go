@@ -54,17 +54,21 @@ func NewCLIRunner(cfg CLIRunnerConfig) *CLIRunner {
 	}
 }
 
-// BuildArgs returns the factory CLI arguments for a task, or nil if the task type is unknown.
+// BuildArgs returns the factory CLI arguments for a task, or nil if the
+// task type is unknown or, for a recipe task, no rule decided it (no recipe).
 func (r *CLIRunner) BuildArgs(t *api.QueueTask, selectedUser string) []string {
 	var args []string
 	if rt, ok := api.RecipeTaskOf(t.Type); ok {
-		rt = rt.For(t)
-		// The recipe, its result applied by the CLI as the user picked
-		// (--user). The run name is this enqueue's: a restarted watcher's
-		// recovered task follows its run, or applies its result, and a
-		// task enqueued again after a failure starts a new one.
-		args = []string{"recipe", rt.Recipe, "--url", t.URL, "--run-name", rt.RunName(t), "--apply", "--action", rt.Action}
-		args = append(args, rt.Args...)
+		// The recipe the rule that decided t names, its result applied
+		// by the CLI as the user picked (--user); none without one. The
+		// run name is this enqueue's: a restarted watcher's recovered
+		// task follows its run, or applies its result, and a task
+		// enqueued again after a failure starts a new one.
+		if t.Recipe == "" {
+			return nil
+		}
+		args = []string{"recipe", t.Recipe, "--url", t.URL, "--run-name", rt.RunName(t)}
+		args = append(args, api.RecipeArgs(t)...)
 		for _, inst := range t.Instructions {
 			args = append(args, "--instruction", inst)
 		}
@@ -130,6 +134,9 @@ func (r *CLIRunner) withCommonArgs(args []string, selectedUser string) []string 
 func (r *CLIRunner) Run(ctx context.Context, taskFilename string, task *api.QueueTask, selectedUser string) error {
 	args := r.BuildArgs(task, selectedUser)
 	if args == nil {
+		if _, ok := api.RecipeTaskOf(task.Type); ok {
+			return fmt.Errorf("task %s carries no recipe: no rule decided it", taskFilename)
+		}
 		return fmt.Errorf("unknown task type: %s", task.Type)
 	}
 
