@@ -332,6 +332,11 @@ func TestPRIterateTriggerMetadata(t *testing.T) {
 	if !strings.Contains(task.TriggerNotes, "merge conflicts with base branch 'main'") {
 		t.Errorf("unexpected triggerNotes: %s", task.TriggerNotes)
 	}
+	// conflict's policy.revisit every-scan: the evaluation is not recorded,
+	// so the next fast pass looks at the pull request again.
+	if got := s.state.get(prNum).lastEvaluatedUpdatedAt; !got.IsZero() {
+		t.Errorf("the conflicted PR's evaluation was recorded at %v; want it looked at every scan", got)
+	}
 }
 
 // TestPRCommentsAcknowledgesReviews covers the review feedback of an

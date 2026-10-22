@@ -227,6 +227,11 @@ type Policy struct {
 	GiveUp   *GiveUp   `yaml:"give-up,omitempty" json:"give-up,omitempty"`
 	// Phase orders the rule's tasks after the priority label: lower first.
 	Phase int `yaml:"phase,omitempty" json:"phase,omitempty"`
+	// Revisit every-scan looks at the item again every scan once the rule
+	// is decided, instead of skipping it until it changes: what it waits
+	// on (a PR's conflict resolved by a change to its base) need not
+	// change the item itself.
+	Revisit string `yaml:"revisit,omitempty" json:"revisit,omitempty"`
 }
 
 // Cooldown is how long after a run, by its outcome, the rule waits before
@@ -385,6 +390,7 @@ var enums = map[string][]string{
 	"last-run":  {"failed"},
 	"reset-on":  {"head"},
 	"dedupe":    {"head", "update"},
+	"revisit":   {"every-scan"},
 	"since":     {"head", "human", "pause"},
 }
 
@@ -467,8 +473,25 @@ var (
 	inputPlaceholders = map[string][]string{
 		"*":     {"{{trigger}}"},
 		OnIssue: {"{{pr-labels}}"},
+		OnPR:    {ReviewInstructions},
 	}
 )
+
+// ReviewInstructions is the input placeholder for the review instructions
+// the pull request and the issues it closes carry: the scanner, which has
+// read them, gives them to the recipe as its --instruction flags.
+const ReviewInstructions = "{{review-instructions}}"
+
+// Asks reports whether the rule's run gives one of its inputs as
+// placeholder, whole.
+func (r *Run) Asks(placeholder string) bool {
+	for _, v := range r.Inputs {
+		if strings.TrimSpace(v) == placeholder {
+			return true
+		}
+	}
+	return false
+}
 
 // checkPlaceholders checks every {{name}} the rule uses is one the engine
 // fills in where it is used.
@@ -534,6 +557,9 @@ func (r *Rule) Validate() error {
 		return fail("when%v", err)
 	}
 	if err := checkEnum("dedupe", r.Policy.Dedupe); err != nil {
+		return fail("%v", err)
+	}
+	if err := checkEnum("revisit", r.Policy.Revisit); err != nil {
 		return fail("%v", err)
 	}
 	if err := r.checkPlaceholders(); err != nil {

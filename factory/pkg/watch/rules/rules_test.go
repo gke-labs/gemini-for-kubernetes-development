@@ -321,3 +321,38 @@ func TestCompose(t *testing.T) {
 		t.Error("an unknown mode was taken")
 	}
 }
+
+// policy.revisit is every-scan or nothing; {{review-instructions}} is an
+// input of a rule on pull requests, which Asks reports.
+func TestRevisitAndReviewInstructions(t *testing.T) {
+	ok := "name: r\non: pr\norder: 99\nwhen: {checks: green}\nrun: {recipe: review, inputs: {instructions: \"{{review-instructions}}\"}}\npolicy: {revisit: every-scan}\n"
+	r, err := Parse([]byte(ok))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if !r.Run.Asks(ReviewInstructions) || r.Policy.Revisit != "every-scan" {
+		t.Errorf("run %+v, policy %+v", r.Run, r.Policy)
+	}
+	for name, y := range map[string]string{
+		"bad revisit":           strings.Replace(ok, "every-scan", "sometimes", 1),
+		"instructions on issue": "name: r\non: issue\norder: 99\nwhen: {labels: {all: [x]}}\nrun: {recipe: review, inputs: {instructions: \"{{review-instructions}}\"}}\n",
+	} {
+		r, err := Parse([]byte(y))
+		if err == nil {
+			err = r.Validate()
+		}
+		if err == nil {
+			t.Errorf("%s: valid", name)
+		}
+	}
+	set, err := Builtin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !set.Named("review").Run.Asks(ReviewInstructions) || set.Named("conflict").Policy.Revisit != "every-scan" {
+		t.Error("the prebaked review does not ask for instructions, or conflict is not revisited")
+	}
+}

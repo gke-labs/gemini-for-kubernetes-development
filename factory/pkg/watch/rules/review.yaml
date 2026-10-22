@@ -24,6 +24,8 @@ when:
 run:
   recipe: review
   apply: submit-review
+  inputs:
+    instructions: "{{review-instructions}}"
 policy:
   dedupe: head
   phase: 1
