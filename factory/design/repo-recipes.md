@@ -1,6 +1,6 @@
 # Recipes from the repository
 
-Status: steps 1-3 built: a task keeps its recipe (#1934); recipes load from the repository's `.agents/recipes/` with `recipe list --url` and sources (#1935); results are files the agent writes and revise goes, factory #1938 and repo-agent #1939, #1940 (design #1933, #1936). Not built: step 4 (generic `sandbox:`; `sandbox: {kind: run}` is still the only kind, and warm is still special-cased by name in `runRecipe` and `recipe list`), step 5 (`long-lived` labels, `repoRecipes.identity`), step 6 (the overseer launching repository recipes; the watch's rules, watch-rules.md, are factory's, and a repository's `.agents/rules/` is read only by `factory watch rules … --dir`). A PR per run is not built. A repository recipe may not declare `sandbox:` yet (#1935).
+Status: steps 1-3 built, and repository recipes on the board (each board's catalog is `recipe list --url` for its repository): a task keeps its recipe (#1934); recipes load from the repository's `.agents/recipes/` with `recipe list --url` and sources (#1935); results are files the agent writes and revise goes, factory #1938 and repo-agent #1939, #1940 (design #1933, #1936). Not built: step 4 (generic `sandbox:`; `sandbox: {kind: run}` is still the only kind, and warm is still special-cased by name in `runRecipe` and `recipe list`), step 5 (`long-lived` labels, `repoRecipes.identity`), step 6 (the overseer launching repository recipes; the watch's rules, watch-rules.md, are factory's, and a repository's `.agents/rules/` is read only by `factory watch rules … --dir`). A PR per run is not built. A repository recipe may not declare `sandbox:` yet (#1935).
 
 A repository can define its own recipes in `.agents/recipes/<name>.yaml`. They run like the built-in ones: from the CLI (`factory recipe run --recipe <name> --url <item>`), and from a board's catalog, on the items their `on:` names. Adding one should take no Go change.
 
@@ -12,7 +12,7 @@ What this note started from. factory was nearly recipe-agnostic already. The rec
 |---|---|
 | `loadRecipe` | a name is a built-in; anything else is a local file path (replaced by `resolveRecipe`, #1935) |
 | revise, resume and apply (`recipe_revise.go`, `awaitAndApply`, `apply.go`) | after a run has started, its recipe is found again by name, with `recipe.Builtin(e.Recipe)` (replaced by the task's recipe, #1934; revise is gone, #1938) |
-| `recipe list` (the board's catalog, `RepoBoard.status.recipes`) | built-ins only, and the warm recipe left out by name |
+| `recipe list` (the board's catalog, `RepoBoard.status.recipes`) | built-ins only, and the warm recipe left out by name (now with `--url`: the repository's recipes too) |
 | `runRecipe` | the warm recipe's sandbox chosen by name (`rec.Name == "warm"`) |
 | `sandbox: {kind: run}` | a preset: the `run` input names the sandbox, and it runs as the deployer service account and is long-lived (still so) |
 
@@ -39,7 +39,7 @@ A task carries the recipe it ran: its full source, as `recipe.source.yaml`, besi
 
 ### The catalog
 
-`factory recipe list --url <repo>` lists the built-ins and the repository's recipes, each with its source (`builtin` or the file's path and commit) (#1935). The board's catalog is to be that list, so a repository recipe gets its row buttons, its chips and its session view like any other; not yet: repo-agent runs `recipe list` without `--url`, so a board lists built-ins only.
+`factory recipe list --url <repo>` lists the built-ins and the repository's recipes, each with its source (`builtin` or the file's path and commit) (#1935). The board's catalog is that list: the controller runs `recipe list --url` for each board's repository with the board owner's token, every 10 minutes, and publishes it on `RepoBoard.status.recipes` with each recipe's `source`, so a repository recipe gets its row buttons, its chips and its session view like any other; a click on one runs `factory recipe run --recipe <name>` (a repository recipe takes no `--instruction`). A file that is not a recipe is left out and logged.
 
 Not built: a recipe with nothing for a board to launch (the warm recipe) says so with `board: false`, instead of being left out by name.
 

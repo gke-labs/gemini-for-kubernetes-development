@@ -155,5 +155,5 @@ As built by step 6. Since then the tabs are one Work tab, revise buttons are gon
 
 - **The board's other tabs, settings, Deploy ▾ and research's landing pane.** They are board features, not recipe surfaces.
 - **A recipe's own UI.** Triage's label form and review's inline-comment view stay written for them. A new kind's draft is shown as its `markdown`.
-- **Recipes from the watched repository** (e.g. `.agents/recipes/`). factory reads built-ins and local files only. Once it reads a repository's recipes, `factory recipe list` lists them and the board needs nothing more. (factory reads them since #1935, `factory recipe list --url <repo>`; the board's catalog still runs `recipe list` without `--url`, so it shows built-ins only.)
+- **Recipes from the watched repository** (e.g. `.agents/recipes/`). factory reads built-ins and local files only. Once it reads a repository's recipes, `factory recipe list` lists them and the board needs nothing more. (factory reads them since #1935, `factory recipe list --url <repo>`, and the board's catalog is that list for its repository.)
 - **Who may launch a recipe.** Launching is a board member's, as today; per-recipe permissions can come later from the recipe.

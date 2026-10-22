@@ -297,7 +297,7 @@ func TestRecipesCarryOnFinishAndTimeout(t *testing.T) {
  {"name":"fix","label":"Fix","kind":"Change","onFinish":"open-pr","timeout":"3h"}]
 JSON
 ;;`)
-	recipes, err := newRunner(bin, &fakeProber{}).Recipes(context.Background())
+	recipes, _, err := newRunner(bin, &fakeProber{}).Recipes(context.Background(), "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -310,5 +310,41 @@ JSON
 	}
 	if s := byName["summarize"]; s.OnFinish != "" || s.Timeout != "" {
 		t.Errorf("summarize = %+v, want neither", s)
+	}
+}
+
+// With a repository, the catalog is factory's list for it: the built-ins
+// and the repository's recipes, a file that is not one left out and
+// named; a repository recipe runs as recipe run --recipe, with no
+// --instruction (recipe run has none).
+func TestRecipesOfARepository(t *testing.T) {
+	bin, argsLog := fakeFactory(t, `recipe) cat <<'JSON'
+[{"name":"fix","label":"Fix","source":"builtin"},
+ {"name":"explain-pr","label":"Explain","on":["pr"],"source":".agents/recipes/explain-pr.yaml"},
+ {"name":"broken","source":".agents/recipes/broken.yaml","error":"recipe is named x, not broken as its file is"}]
+JSON
+;;`)
+	recipes, skipped, err := newRunner(bin, &fakeProber{}).Recipes(context.Background(), "https://github.com/o/r", "tok")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if args := readArgs(t, argsLog); !strings.Contains(args[0], "recipe list -o json --url https://github.com/o/r") {
+		t.Errorf("args = %q", args)
+	}
+	if len(recipes) != 2 || recipes[0].Name != "fix" || !recipes[0].IsBuiltin() || recipes[1].Name != "explain-pr" || recipes[1].IsBuiltin() {
+		t.Errorf("recipes = %+v", recipes)
+	}
+	if len(skipped) != 1 || !strings.Contains(skipped[0], ".agents/recipes/broken.yaml: recipe is named x") {
+		t.Errorf("skipped = %v", skipped)
+	}
+
+	opts := RecipeOptions{Recipe: "explain-pr", RepoRecipe: true, URL: "https://github.com/o/r/pull/9", Namespace: "alice", RunName: "r/1", Instructions: []string{"be brief"}}
+	args := strings.Join(recipeArgs(opts, time.Minute), " ")
+	if !strings.HasPrefix(args, "recipe run --recipe explain-pr --run-name r/1") || strings.Contains(args, "--instruction") {
+		t.Errorf("repository recipe args = %q", args)
+	}
+	opts.Recipe, opts.RepoRecipe = "review", false
+	if args := strings.Join(recipeArgs(opts, time.Minute), " "); !strings.HasPrefix(args, "recipe review --run-name") || !strings.Contains(args, "--instruction be brief") {
+		t.Errorf("built-in args = %q", args)
 	}
 }

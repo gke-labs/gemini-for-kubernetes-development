@@ -18,8 +18,12 @@ import (
 // for any recipe: what it runs on, its inputs, the sandbox it makes, and
 // what the runner does with its task output once it ends.
 type RecipeOptions struct {
-	// Recipe is the built-in recipe's name (factory recipe list).
+	// Recipe is the recipe's name (factory recipe list).
 	Recipe string
+	// RepoRecipe is a recipe of the target repository's
+	// (.agents/recipes/<name>.yaml): factory has no command of its name,
+	// so it runs as factory recipe run --recipe <name>.
+	RepoRecipe bool
 	// URL is the issue, PR or repository the recipe runs on.
 	URL string
 	// SandboxName is the sandbox the run's task output is read back from;
@@ -129,8 +133,11 @@ func recipeTimeout(timeout time.Duration) time.Duration {
 // recipeArgs is the command line, split out so the contract with factory
 // can be asserted without spawning anything.
 func recipeArgs(opts RecipeOptions, timeout time.Duration) []string {
-	args := []string{
-		"recipe", opts.Recipe,
+	args := []string{"recipe", opts.Recipe}
+	if opts.RepoRecipe {
+		args = []string{"recipe", "run", "--recipe", opts.Recipe}
+	}
+	args = append(args,
 		"--run-name", opts.RunName,
 		"--url", opts.URL,
 		"--namespace", opts.Namespace,
@@ -138,7 +145,7 @@ func recipeArgs(opts RecipeOptions, timeout time.Duration) []string {
 		// Never kill the in-sandbox task when this process dies; the next
 		// invocation follows it instead.
 		"--abort-on-cancel=false",
-	}
+	)
 	if opts.Session != "" {
 		args = append(args, "--session", opts.Session)
 	}
@@ -151,8 +158,10 @@ func recipeArgs(opts RecipeOptions, timeout time.Duration) []string {
 	for _, name := range slices.Sorted(maps.Keys(opts.Inputs)) {
 		args = append(args, "--input", name+"="+opts.Inputs[name])
 	}
+	// A built-in's instructions input has its --instruction flag; recipe
+	// run has none, so a repository recipe takes no instructions.
 	for _, instruction := range opts.Instructions {
-		if instruction != "" {
+		if instruction != "" && !opts.RepoRecipe {
 			args = append(args, "--instruction", instruction)
 		}
 	}
@@ -241,18 +250,35 @@ func HarvestedOutput(kind, output string) string {
 }
 
 // Recipes is the catalog of recipes this factory binary runs (factory
-// recipe list -o json), in the board's order (OrderRecipes).
-func (r *Runner) Recipes(ctx context.Context) ([]boardv1alpha1.BoardRecipe, error) {
-	out, err := r.execStdout(ctx, []string{"recipe", "list", "-o", "json"}, "")
-	if err != nil {
-		return nil, fmt.Errorf("factory recipe list: %w: %s", err, tail(out, 2000))
+// recipe list -o json), in the board's order (OrderRecipes): the
+// built-in ones, and with repoURL that repository's own, read at its
+// default branch with token. A repository's file that is not a recipe is
+// left out, and named in skipped with why.
+func (r *Runner) Recipes(ctx context.Context, repoURL, token string) (recipes []boardv1alpha1.BoardRecipe, skipped []string, err error) {
+	args := []string{"recipe", "list", "-o", "json"}
+	if repoURL != "" {
+		args = append(args, "--url", repoURL)
 	}
-	var recipes []boardv1alpha1.BoardRecipe
-	if err := json.Unmarshal([]byte(out), &recipes); err != nil {
-		return nil, fmt.Errorf("reading factory recipe list: %w", err)
+	out, err := r.execStdout(ctx, args, token)
+	if err != nil {
+		return nil, nil, fmt.Errorf("factory recipe list: %w: %s", err, tail(out, 2000))
+	}
+	var listed []struct {
+		boardv1alpha1.BoardRecipe
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(out), &listed); err != nil {
+		return nil, nil, fmt.Errorf("reading factory recipe list: %w", err)
+	}
+	for _, l := range listed {
+		if l.Error != "" {
+			skipped = append(skipped, fmt.Sprintf("%s: %s", l.Source, l.Error))
+			continue
+		}
+		recipes = append(recipes, l.BoardRecipe)
 	}
 	OrderRecipes(recipes)
-	return recipes, nil
+	return recipes, skipped, nil
 }
 
 // boardOrder is where the built-ins go on a row, in the order the work on
