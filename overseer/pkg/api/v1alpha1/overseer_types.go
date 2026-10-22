@@ -57,6 +57,25 @@ type OverseerRules struct {
 	Disabled []string `json:"disabled,omitempty"`
 }
 
+// OverseerRepoRecipe is how the repository's own recipes run, and at
+// which of its commits they are read.
+type OverseerRepoRecipe struct {
+	// Mode is off (factory's recipes only), augment (the repository's
+	// recipes run too, under names of their own; a file named as one of
+	// factory's is ignored) or replace (the repository's recipe of a name
+	// runs before factory's, for any name, factory's included).
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:validation:Enum=off;augment;replace
+	// +kubebuilder:default=off
+	Mode string `json:"mode,omitempty"`
+	// GitCommit is the commit .agents/recipes is read at: a commit SHA, or
+	// latest (the default) for the default branch's head.
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:validation:MaxLength=40
+	// +kubebuilder:validation:Pattern=`^(latest|[0-9a-f]{7,40})$`
+	GitCommit string `json:"gitCommit,omitempty"`
+}
+
 // OverseerSpec defines the desired state of Overseer
 type OverseerSpec struct {
 	// The full URL of the GitHub repository to watch.
@@ -149,6 +168,11 @@ type OverseerSpec struct {
 	// GitHub calls.
 	// +kubebuilder:validation:Optional
 	SharedScan bool `json:"sharedScan,omitempty"`
+
+	// RepoRecipe is whether the repository's own recipes (.agents/recipes)
+	// run beside, or in place of, factory's. Unset, factory's only.
+	// +kubebuilder:validation:Optional
+	RepoRecipe *OverseerRepoRecipe `json:"repoRecipe,omitempty"`
 
 	// GraphQLPRDetails makes the watcher's PR scanner read what it decides
 	// on about each pull request - the pull request, its merge queue entry,

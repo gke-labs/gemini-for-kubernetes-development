@@ -296,3 +296,28 @@ func TestBuildSandboxManifest_GraphQLPRDetails(t *testing.T) {
 		t.Errorf("WATCH_GRAPHQL_PR_DETAILS = %v, want true", got)
 	}
 }
+
+// spec.repoRecipe reaches the watcher, and the factory commands it runs,
+// as FACTORY_REPO_RECIPE_MODE and FACTORY_REPO_RECIPE_COMMIT (latest when
+// unset), and only when its mode is not off.
+func TestBuildSandboxManifest_RepoRecipe(t *testing.T) {
+	o := &overseerv1alpha1.Overseer{Spec: overseerv1alpha1.OverseerSpec{RepoURL: "https://github.com/owner/repo"}}
+	for _, r := range []*overseerv1alpha1.OverseerRepoRecipe{nil, {}, {Mode: "off", GitCommit: "abc1234"}} {
+		o.Spec.RepoRecipe = r
+		env := overseerEnv(t, o)
+		if _, ok := env["FACTORY_REPO_RECIPE_MODE"]; ok {
+			t.Errorf("repoRecipe %+v: mode set: %v", r, env)
+		}
+		if _, ok := env["FACTORY_REPO_RECIPE_COMMIT"]; ok {
+			t.Errorf("repoRecipe %+v: commit set: %v", r, env)
+		}
+	}
+	o.Spec.RepoRecipe = &overseerv1alpha1.OverseerRepoRecipe{Mode: "augment"}
+	if env := overseerEnv(t, o); env["FACTORY_REPO_RECIPE_MODE"] != "augment" || env["FACTORY_REPO_RECIPE_COMMIT"] != "latest" {
+		t.Errorf("augment: %v %v", env["FACTORY_REPO_RECIPE_MODE"], env["FACTORY_REPO_RECIPE_COMMIT"])
+	}
+	o.Spec.RepoRecipe = &overseerv1alpha1.OverseerRepoRecipe{Mode: "replace", GitCommit: "0123abcd"}
+	if env := overseerEnv(t, o); env["FACTORY_REPO_RECIPE_MODE"] != "replace" || env["FACTORY_REPO_RECIPE_COMMIT"] != "0123abcd" {
+		t.Errorf("replace: %v %v", env["FACTORY_REPO_RECIPE_MODE"], env["FACTORY_REPO_RECIPE_COMMIT"])
+	}
+}

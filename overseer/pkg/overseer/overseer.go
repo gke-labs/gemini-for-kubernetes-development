@@ -358,6 +358,7 @@ func newOverseerSandboxFromOverseer(o *overseerv1alpha1.Overseer, name, namespac
 		})
 	}
 	env = append(env, rulesEnv(o.Spec.Rules)...)
+	env = append(env, repoRecipeEnv(o.Spec.RepoRecipe)...)
 	if o.Spec.RulesRecord {
 		// Beside the scan's snapshot, on the volume: it outlives restarts
 		// and stays out of the queue directory run.sh pushes.
@@ -607,4 +608,21 @@ func rulesEnv(r *overseerv1alpha1.OverseerRules) []interface{} {
 		return nil
 	}
 	return []interface{}{map[string]interface{}{"name": "WATCH_RULES_DISABLED", "value": strings.Join(r.Disabled, ",")}}
+}
+
+// repoRecipeEnv is spec.repoRecipe for the watcher and the factory
+// commands it runs: FACTORY_REPO_RECIPE_MODE (augment or replace) and
+// FACTORY_REPO_RECIPE_COMMIT (a SHA, or latest), when the mode is not off.
+func repoRecipeEnv(r *overseerv1alpha1.OverseerRepoRecipe) []interface{} {
+	if r == nil || r.Mode == "" || r.Mode == "off" {
+		return nil
+	}
+	commit := r.GitCommit
+	if commit == "" {
+		commit = "latest"
+	}
+	return []interface{}{
+		map[string]interface{}{"name": "FACTORY_REPO_RECIPE_MODE", "value": r.Mode},
+		map[string]interface{}{"name": "FACTORY_REPO_RECIPE_COMMIT", "value": commit},
+	}
 }
