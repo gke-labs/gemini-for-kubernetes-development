@@ -1,6 +1,11 @@
 # Warm pool for research sandboxes
 
-Status: proposed — feasibility established, not built
+Status: not built, deliberately — feasibility established, build pinned by
+the user (2026-09-28). No pool code exists (`pkg/sandbox` has no `pool.go`, no
+`research-pool` label). Neither alternative below was done either: the default
+image is still `ghcr.io/.../factory-golang:latest`, and there is no reaper for
+research sandboxes. The code this note walks has since changed (see
+"Since this was written"); the line references are as of 2026-09-28.
 Owner: barney-s
 Date: 2026-09-28
 Scope: factory (primary), repo-agent (call sites + the filler), UI (untouched)
@@ -17,6 +22,23 @@ over it with a `requested` row and a `starting` state, and
 This note asks whether keeping one or two pre-warmed sandboxes ready
 would remove that wait, what it would cost, and what would have to
 change. It is written to be picked up later; the build is deferred.
+
+### Since this was written
+
+- Research launches through `factory recipe research` (#1755, design in
+  `research-recipe.md`); `factory research start`, `save-notes`, the
+  kickoff and capture paths are deleted (#1763), and so is acpd's own
+  listener (#1764). Sessions live on the daemon's `/v1/sessions`.
+- envd is removed (#1902–#1929), so "envd answering" and the
+  `envd.Connect` argument under "The name is the blocker" no longer apply.
+- `GET /api/research` and `handlers_research.go`'s list are gone; the
+  Sessions page reads `/api/sessions` (#1910–#1921), and `Research.js` was
+  replaced by the shared task-session view (#1766).
+- `EnsureResearchSandbox` and `ResearchSandboxName` still exist
+  (`pkg/sandbox/research.go`), still name by session digest.
+- Warm workspaces (`warm-workspace.md`) restore a fix sandbox's disk from a
+  snapshot. That pre-pays the clone and build caches, not scheduling or the
+  image pull, and is not used for research.
 
 ## What the wait actually is (measured, not assumed)
 

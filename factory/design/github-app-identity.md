@@ -1,6 +1,6 @@
 # Design Note: GitHub App Identity for Overseer/Factory
 
-**Status:** Proposed
+**Status:** Proposed; nothing built (2026-10-21). No GitHub App, token broker, app transport, identity-typed `roles` or content-creation throttle exists in factory, overseer or repo-agent; bots still run as user accounts with PATs (`factory/pkg/github/github.go` `GetGithubToken`). Since this note, the seven task scripts became recipes whose auth is one shared preamble (`setupGit` in `factory/pkg/tasks/lib.sh`, the `setup-git`/`setup-fork` steps), so §3.3's "extract `auth.sh`" is effectively done for PATs; and `github.IsTrustedAuthor` already trusts App bots (type `Bot`) as comment authors.
 **Date:** 2026-07-23
 **Related:** `docs/kcc-code-emergency-scaling-plan.md` items 2.3 (webhooks), 2.4 (rate-limit client), 2.6 (GitHub App)
 
@@ -14,19 +14,19 @@ The bot fleet currently runs as ~8 free GitHub **user accounts** authenticated w
 
 **GitHub Apps** are the sanctioned identity for automation: they act as `<app-slug>[bot]`, are exempt from user-account TOS, get their own (larger, per-installation) rate limits, mint short-lived tokens (fixes our cleartext-token-on-PVC issue), and come with webhooks (roadmap item 2.3) for free.
 
-## 2. Current state — where bot identity flows (verified)
+## 2. Current state — where bot identity flows (verified 2026-07-23; locations updated 2026-10-21)
 
 | Surface | Location | Mechanism |
 |---|---|---|
 | Go API client | `factory/pkg/github/github.go:21-63` | go-github v39, static PAT from `MANUAL_PAT`/`GITHUB_TOKEN`/`OAUTH_PAT`/`gh auth token` |
-| Bot pool / role selection | `factory/pkg/commands/watch.go:2791-2958` | roles watcher/coder/reviewer/agent from `.factory.cfg`; per-bot k8s Secret `user-<bot>`; random pick (`:2920`) |
+| Bot pool / role selection | `factory/pkg/commands/watch/user_selection.go` `selectUserForTask` | roles watcher/coder/reviewer/agent from `.factory.cfg`; per-bot k8s Secret `user-<bot>`; pick per task |
 | Secrets schema | `factory/pkg/commands/root.go:19-25` | `GITHUB_TOKEN`, `GITHUB_LOGIN`, `GITHUB_EMAIL` (+ Gemini key) in `factory-user` / `user-<bot>` |
-| Sandbox `gh` auth | all 7 task scripts (e.g. `fix_issue.sh:47-74`) | write static token into `~/.config/gh/hosts.yml`, `gh auth setup-git` |
-| Sandbox git auth | same blocks | `git config url."https://${GH_USER}:${GITHUB_USER_TOKEN}@github.com/".insteadOf` — **static token embedded in git config for the task's lifetime (up to 3h)** |
-| Fork/push model | `fix_issue.sh:105-106`, `address_feedback.sh:102-103`, `iterate.sh:109`, `review.sh:98-99`, `investigate_failures.sh:103-104`, `adopt.sh:177` | `gh repo fork --remote` into the **bot user's namespace**, branch pushed to user fork, PR opened cross-fork |
-| Commit author | task scripts (`git config user.name/email` from `GITHUB_BOT_NAME/EMAIL`) | bot user identity on commits |
+| Sandbox `gh` auth | `factory/pkg/tasks/lib.sh` `setupGit` (recipe step `setup-git`; was copied into all 7 task scripts) | write static token into `~/.config/gh/hosts.yml`, `gh auth setup-git` |
+| Sandbox git auth | same function | `git config url."https://${GH_USER}:${GITHUB_USER_TOKEN}@github.com/".insteadOf` — **static token embedded in git config for the task's lifetime (up to 3h)** |
+| Fork/push model | `lib.sh` (recipe steps `setup-fork`, `push`; was in each task script) | `gh repo fork --remote` into the **bot user's namespace**, branch pushed to user fork, PR opened cross-fork |
+| Commit author | `lib.sh` (`git config user.name/email` from `GITHUB_BOT_NAME/EMAIL`) | bot user identity on commits |
 | Onboarding | `factory user onboard`, `overseer/examples/install-bot-users.sh` | one PAT secret per bot, by hand |
-| Token refresh precedent | `factory/pkg/geminitokens/geminitokens.go:205,258` (`TOKENSCRIPT_DIR`) | scripts that mint fresh Gemini tokens on demand — the pattern we'll reuse for GitHub |
+| Token refresh precedent | `factory/pkg/geminitokens/geminitokens.go` (`TOKENSCRIPT_DIR`) | scripts that mint fresh Gemini tokens on demand — the pattern we'll reuse for GitHub |
 | API proxy | `github-portal` (`overseer/deps/github-portal.yaml`), `run.sh` HTTPS_PROXY wrapper | caching proxy for sandbox `gh` traffic only |
 
 Constraints that shape the design:
@@ -62,7 +62,7 @@ A small cluster-local service (new `factory token-broker` subcommand, deployed l
 - Holds app private keys (one k8s Secret per app: `app-<slug>` with `APP_ID`, `INSTALLATION_ID`(s), `PRIVATE_KEY`).
 - Mints installation tokens via the Apps API, caches until ~5 min before expiry, refreshes on demand.
 - Serves `GET /token?role=coder&repo=owner/name` over ClusterIP with NetworkPolicy limiting callers to overseer/sandbox namespaces (plus a shared bearer secret — sandboxes are LLM-controlled, so scope what the broker will hand out: only tokens for the configured repos/roles).
-- Exposes `GET /ratelimit?role=` (from the last API response headers) so the orchestrator can pick the identity with the most headroom — replaces the random pick at `watch.go:2920` and closes roadmap item 2.4's "quota-aware bot selection".
+- Exposes `GET /ratelimit?role=` (from the last API response headers) so the orchestrator can pick the identity with the most headroom — replaces the pick in `selectUserForTask` and closes roadmap item 2.4's "quota-aware bot selection".
 - Metrics: tokens minted, remaining quota per installation, 403/secondary-limit sightings.
 
 Why a broker instead of minting in each consumer: the private key stays in one place (never on sandbox PVCs — today's cleartext-PAT problem disappears), caching avoids the 5,000/h Apps-API budget being spent on token minting, and both Go code and bash scripts can consume plain HTTP.

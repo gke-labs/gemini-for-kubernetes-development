@@ -1,5 +1,7 @@
 # Design Note: LLM-Driven Workflow Orchestration & Session Reconciliation
 
+**Status:** built, and since reshaped. The reconciliation loop, `wf-issue-<n>` sandboxes, the workflow label and workflow detection (`common.FindWorkflowPath`, directory convention plus header check) are built. Changed since: conversation resume and `workflow-sessions.json` were dropped (62bf4c30: periodic runs accumulated tokens), so a workflow's state is only its journal in git; the workflow runs as the `workflow` recipe (#1914, [remove-envd.md](remove-envd.md)), not `run_agent.sh`, and keeps its journal on its own branch `factory-<n>` on the member's fork, force-pushed, not on a shared `overseer` branch, so there is no rebase-and-retry; the watch's choice is the `workflow` and `workflow-missing` rules of its rules engine (`factory/pkg/watch/rules/`, watch-rules.md); a closed linked issue nudges the workflow at once (`NudgeLinkedWorkflows`, #1691). `factory fix` and its workflow interception are gone (#1884); the CLI entry point is `factory agent create --agent <definition> --session-id issue-<n>`.
+
 This design note outlines the architecture for persistent, multi-step workflow execution (e.g., repository migration, kind-by-kind checklist resolution) driven by LLMs, with parallel session isolation and Git/GitHub state reconciliation.
 
 ---
@@ -15,9 +17,9 @@ In contrast, a **Workflow** is a long-running, multi-step process with dependenc
 
 ---
 
-## Proposed Architecture: Reconciliation Loop & Session Mapping
+## Architecture: Reconciliation Loop & Session Mapping
 
-Rather than keeping agent containers running continuously (wasting CPU/memory and risking connection flakes), we implement a **reconciliation loop** modeled after Kubernetes controllers.
+Rather than keeping agent containers running continuously (wasting CPU/memory and risking connection flakes), factory implements a **reconciliation loop** modeled after Kubernetes controllers.
 
 ```mermaid
 sequenceDiagram
@@ -35,10 +37,10 @@ sequenceDiagram
         Watcher->>Watcher: Parses workflow path & extracts SessionID (issue-123)
         Watcher->>Runner: Spawns "factory agent create --session-id issue-123"
         Runner->>Sandbox: Reuses Sandbox "wf-issue-123"
-        Sandbox->>Sandbox: Resumes Gemini thread via workflow-sessions.json
+        Sandbox->>Sandbox: Checks out factory-123 (the journal), rebased on the default branch
         Sandbox->>Git: Runs "gh pr view" or "gh issue view" to fetch sub-task status
         Note over Sandbox: LLM Reconciles State:<br/>- If child PR is open: Log "waiting", exit.<br/>- If child PR is merged: Trigger Step 2.
-        Sandbox->>Git: Commits/Pushes journal updates directly to overseer (Rebase-and-Retry)
+        Sandbox->>Git: factory commits the journal and force-pushes factory-123 to the fork
         Sandbox->>Git: Edits Description of Issue #123 (Visual Progress Update)
         Sandbox-->>Runner: Exits container (Sandbox goes idle)
     end
@@ -48,6 +50,8 @@ sequenceDiagram
 ```
 
 ### Detailed Reconciliation Lifecycle Walkthrough
+
+As first built. Today the workflow recipe takes the place of `run_agent.sh`: it checks out `factory-<n>`, runs the definition's precondition (a failure skips the step), asks once in a fresh conversation, then commits and force-pushes the branch; once the issue is closed it deletes the branch instead. The journal's path is whatever the definition tells the agent.
 
 1.  **Trigger**: A developer opens parent issue `#123` containing a path reference to a workflow (e.g. `.agents/workflows/checklist-for-kind.yaml`) in its description.
 2.  **First Run**:
@@ -78,6 +82,8 @@ sequenceDiagram
 
 ### 1. Distinguishing Workflows from Regular Tasks
 
+Still the detection (`factory/pkg/commands/common/workflow.go`). The scanner records the result as an issue fact; the rules `workflow-missing` (stop with a comment when the definition cannot be loaded) and `workflow` (run the `workflow` recipe, cooldown from the definition, 10m by default) decide on it, ahead of `fix`.
+
 To prevent every issue that references a skill or prompt from launching a persistent workflow, `factory watch` performs a two-tier verification:
 
 1.  **Directory Convention Check**: Any path containing `/workflows/` (e.g. `.agents/workflows/checklist-for-kind.yaml`) is automatically classified as a workflow.
@@ -95,6 +101,8 @@ To avoid long names that exceed Kubernetes' 63-character limit:
 
 ### 3. Dynamic Gemini Session Mapping
 
+Removed (62bf4c30): every run starts a fresh conversation, and the journal carries the state.
+
 Gemini session files are named dynamically with UUIDs in the persistent home directory (`/workspaces/.home/.gemini/tmp/`). To resume the same thread across sequential reconciliation runs:
 1.  We maintain a local JSON registry inside the persistent volume: `$HOME/.gemini/workflow-sessions.json`.
 2.  Before running Gemini, the script `run_agent.sh` checks:
@@ -108,6 +116,8 @@ Gemini session files are named dynamically with UUIDs in the persistent home dir
     ```
 
 ### 4. Git Push Conflict Mitigation (Rebase-and-Retry)
+
+Superseded: each workflow has its own branch, `factory-<n>`, which only it writes, so there is nothing to rebase or retry.
 
 When parallel sessions commit their logs to the `overseer` branch, they push to the same remote. To prevent push failures:
 1.  **Disjoint Files**: Sessions write to unique journal files named after their issue ID (e.g., `session-issue-123.md`), making Git merges automatic.
@@ -128,6 +138,8 @@ To keep developers informed of the workflow's current state:
 2.  **Visual Progress State**: The agent uses the `gh` CLI to dynamically edit the description/body of the triggering GitHub issue (e.g., `#123`). The agent keeps a markdown checklist updated, showing completed sub-tasks, pending steps, and active PR links.
 
 ### 6. Unified Developer CLI UX
+
+Removed with `factory fix` (#1884). A workflow is run by the watch's `workflow` rule, or by hand with `factory agent create --url <issue> --agent <definition> --session-id issue-<n>`.
 
 To keep the developer interface simple and prevent confusion between `fix`, `agent`, and `workflow` commands, we unify the entry point under the existing `factory fix` command:
 

@@ -2,6 +2,8 @@
 
 This design note outlines the architecture and execution flow for adopting third-party Pull Requests under the onboarded factory-user identity.
 
+**Status:** Implemented. `factory pr adopt` landed in #1105/#1123 as `adopt.sh` + `adopt.txt` run over envd; it now runs the `adopt` recipe (`factory/pkg/recipe/recipes/adopt.yaml`: #1908, one recipe with a `strategy` input #1911, task output #1912, input check after `setup-fork` #2050/#2052) and applies its `open-pr` action. The `--adopt` flags are gone; `factory pr` has only `watch` and `adopt`. The watch adopts no third-party PRs (its `adopt-pr` rule, `factory/pkg/watch/rules/adopt-pr.yaml`, is a different thing: it relabels a pool bot's orphaned PR, and is off).
+
 ---
 
 ## Background & Problem Statement
@@ -16,13 +18,13 @@ Therefore, the adoption process **must execute entirely inside the sandbox envir
 
 ---
 
-## Proposed Architecture: Sandbox-Bound PR Adoption
+## Architecture: Sandbox-Bound PR Adoption
 
-We implement a dedicated `factory pr adopt` command that handles sandbox scheduling and runs the adoption logic inside it.
+`factory pr adopt` refuses a PR the adopting account already authored, then runs `factory recipe adopt` against the PR and applies the result's `open-pr` action. The recipe runs in the PR's fix sandbox (`fix-<repo>-<n>`); `open-pr` aliases that sandbox to the new PR, so the adopted PR's care runs there, on its branch.
 
-We support two adoption strategies:
-1. **`reuse`**: A git-based approach that fetches the original PR history and pushes it directly to the factory-user's fork to preserve history and git authorship.
-2. **`reimplement`**: An LLM-based approach that pulls the latest main/master branch, downloads the original PR diff, and instructs the LLM (Gemini) to use the diff as inspiration/guidelines to re-implement the fix/feature from scratch on top of the latest base.
+Two adoption strategies (the recipe's `strategy` input):
+1. **`reuse`**: A git-based approach that takes the original PR's head (`pull/<n>/head`) as branch `adopt-pr-<n>` on the factory-user's fork, preserving history and git authorship. No agent runs.
+2. **`reimplement`**: The agent (the configured engine) redoes the change on branch `adopt-reimplement-pr-<n>` from the latest default branch, taking the original PR's title, description and diff as what the change does, and commits.
 
 ---
 
@@ -33,30 +35,26 @@ sequenceDiagram
     autonumber
     actor Developer
     participant Host as factory (Local Dev Machine)
-    participant Sandbox as adopt-repo-123 (Sandbox Pod)
+    participant Sandbox as fix-repo-123 (Sandbox Pod)
     participant Git as GitHub / Git Branch
 
     Developer->>Host: factory pr adopt close --pr-url https://github.com/owner/repo/pull/123 --strategy reuse
     Note over Host: Validates PR owner isn't already the bot.<br/>Resolves credentials & namespace.
     Host->>Sandbox: Spawns Sandbox & mounts bot credentials
-    Host->>Sandbox: Executes "/workspaces/tasks/adopt/pre-script.sh" via envd
+    Host->>Sandbox: Runs the adopt recipe (setup-git, setup-fork)
     
     alt Strategy: reuse
-        Sandbox->>Git: Fork repository under bot account
         Sandbox->>Git: Fetch original PR's head ref locally
-        Sandbox->>Git: Push branch to bot's fork repository
-        Sandbox->>Git: Create new adopted PR on base repo
+        Sandbox->>Sandbox: Branch adopt-pr-123 from it
     else Strategy: reimplement
-        Sandbox->>Git: Fork repository under bot account
         Sandbox->>Git: Fetch original PR's diff and PR description
-        Sandbox->>Sandbox: Run Gemini with prompt + original diff + base branch
-        Sandbox->>Git: Commit and push generated changes to bot's fork
-        Sandbox->>Git: Create new adopted PR on base repo
+        Sandbox->>Sandbox: Agent redoes the change on the latest default branch and commits
     end
     
-    Sandbox->>Git: Leave comment on original PR #123
-    Sandbox->>Git: Close original PR #123 (since "close" was specified)
-    Sandbox-->>Host: Logs and final adopted PR URL streamed back
+    Sandbox->>Git: push step pushes the branch to bot's fork
+    Sandbox-->>Host: Task output: a Change (title, body, adopts, closeAdopted)
+    Host->>Git: open-pr: create the adopted PR on base repo
+    Host->>Git: Comment on original PR #123 (and close it, with "close")
     Host-->>Developer: Prints new adopted PR URL
 ```
 
@@ -81,45 +79,21 @@ factory pr adopt <open|close> --pr-url <url> [flags]
   * `reimplement`: Re-apply changes using LLM on the latest base branch.
 * Standard Sandbox configuration flags (e.g., `--namespace`, `--secret-name`, `--workspace-disk-size`, `--image`, `--ephemeral-storage`).
 
-### Reverting `--adopt` flag on other subcommands
-The `--adopt` flag will be removed from `factory pr watch`, `factory pr iterate`, and `factory pr investigate`. These commands will verify ownership of the PR and error out immediately if it does not belong to the factory user:
+The same run is `factory recipe adopt --url <PR> [--strategy reuse|reimplement] [--close true]`.
+
+### No `--adopt` flag on other subcommands
+The `--adopt` flag is gone (`factory pr iterate` and `factory pr investigate` are gone too). `factory pr watch` verifies ownership of the PR (`verifyPROwnership`) and errors out immediately if it does not belong to the factory user:
 ```
-PR was not created by the factory user (bot). It is owned by <author>. Use 'factory pr adopt <open|close> --pr-url <url>' to adopt it first.
+PR is not owned by the factory user (<login>). It is owned by <author>. Please run 'factory pr adopt <open|close> --pr-url <url>' to adopt it first
 ```
 
 ---
 
 ## Task Implementation Inside the Sandbox
 
-We introduce a new task type `adopt` inside `factory/pkg/tasks/`:
-
-### 1. `adopt.sh` (Shell script executed inside sandbox)
-Executes the git and GitHub API steps.
-* Uses the mounted `GITHUB_TOKEN` secret to configure `git credential.helper` and authenticate `gh`.
-* Performs `gh repo fork --remote` to ensure the fork exists under the bot account.
-* If `reuse`:
-  * Fetches the original PR head from upstream.
-  * Pushes the branch to `origin` (the bot's fork).
-  * Creates the new PR using `gh pr create`.
-* If `reimplement`:
-  * Fetches original PR diff (`gh pr diff`).
-  * Runs the `gemini` command passing the prompt template.
-  * Commits and pushes the modified code to the fork.
-  * Creates the new PR.
-* Comments on and optionally closes the original PR.
-* Outputs the new PR URL to `agent-output.txt`.
-
-### 2. `adopt.txt` (LLM prompt template for reimplement strategy)
-```
-You are the PR Adoption agent. We want to adopt a third-party PR under our factory user identity.
-To do this, you should re-apply the changes from the original PR as inspiration, but implement them on top of the latest base branch.
-
-Original PR Title: {{ .Title }}
-Original PR Description:
-{{ .Body }}
-
-Original PR Diff:
-{{ .Diff }}
-
-Please implement the same fix/feature on the current repository, ensuring all tests pass and following the repository's guidelines.
-```
+The `adopt` recipe (`factory/pkg/recipe/recipes/adopt.yaml`) replaces the old `adopt` task (`adopt.sh`, `adopt.txt`):
+* `setup-git` and `setup-fork` authenticate with the mounted bot token and make the checkout, `origin` the bot's fork and `upstream` the repository.
+* `reuse`: fetches `pull/<n>/head` and checks out `adopt-pr-<n>`; the base is its merge base with the default branch.
+* `reimplement`: `configure-engine` and `checkout-default-branch`, branch `adopt-reimplement-pr-<n>`, `gh pr diff` into `pr.diff`, then one `ask` with the PR's URL, title, description, diff and any `instructions`. The agent commits and never pushes; the prompt follows `--disclose` for attribution.
+* A factory step writes `change.yaml` (`title: adopt: <title>`, body linking the original, `adopts`, `closeAdopted`), and `push` pushes the branch to the fork.
+* The task output is a `Change` with `edit`, `open-pr` (Open adopted PR) and `reject` actions. `open-pr` opens the PR, comments on the original with a link, and closes it when `closeAdopted` is set.

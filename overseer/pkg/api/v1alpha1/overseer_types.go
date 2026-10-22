@@ -128,15 +128,17 @@ type OverseerSpec struct {
 	// +kubebuilder:validation:Optional
 	TaskTimeout *metav1.Duration `json:"taskTimeout,omitempty"`
 
-	// Rules is how the watch rules (factory/docs/watch-rules.md) run beside
-	// the watcher's scanners.
+	// Rules is the operator's say over the watch rules
+	// (factory/docs/watch-rules.md), which decide what the watcher does on
+	// each issue and PR.
 	// +kubebuilder:validation:Optional
 	Rules *OverseerRules `json:"rules,omitempty"`
 
-	// RulesRecord makes the watcher's issue and PR scanners record each
-	// decision with the facts it was made on, on the overseer's volume
-	// (/workspaces/.cache/factory-watch/decisions.jsonl), for the watch
-	// rules' replay. What they decide is unchanged.
+	// RulesRecord makes the watcher record each decision with the facts it
+	// was made on, on the overseer's volume
+	// (/workspaces/.cache/factory-watch/decisions.jsonl), for `factory watch
+	// rules replay` (a rule change run against what the watch saw) and
+	// `explain --record`. What it decides is unchanged.
 	// +kubebuilder:validation:Optional
 	RulesRecord bool `json:"rulesRecord,omitempty"`
 

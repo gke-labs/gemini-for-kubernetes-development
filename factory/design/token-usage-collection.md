@@ -1,12 +1,14 @@
 # Token Usage Collection Design Note
 
+**Status:** Built: the collector (`factory token-daemon`), producer, rollups, subjects, workflow summary comment and the Usage view. Since the original design: recipe asks record their own usage from acpd turns (#1903; antigravity reports no tokens, claude is not an acpd engine), harvests read through the sandbox's task server rather than envd (#1904, envd removed #1929), the per-command push hooks went with the classic commands (the recipe runner harvests at task end), the GCS archive tier (#2031, §8), and task-directory archiving plus harvest before suspend (#2035, #2038, §9).
+
 This document describes how gemini-cli token usage produced inside sandboxes is centrally collected, aggregated per issue/PR/workflow, surfaced in a dashboard, and summarized on GitHub.
 
 ---
 
 ## 1. Overview & Goals
 
-Every task script accumulates gemini-cli stats into `<taskDir>/token-usage.json` (and `llm-usage.json`) inside the sandbox PVC (see `record_gemini_usage` in `factory/pkg/tasks/*.sh`). That data was previously stranded: nothing read it, and sandbox cleanup destroyed it.
+Every task accumulates its token usage into `<taskDir>/token-usage.json` (and `llm-usage.json`) inside the sandbox PVC. Originally the task scripts wrote it (`record_gemini_usage` and friends, now in `factory/pkg/tasks/lib.sh`); a recipe's asks now add each turn's usage, per model, from acpd's `turn_end` event (`recipe.AddUsage`, #1903). That data was previously stranded: nothing read it, and sandbox cleanup destroyed it.
 
 Goals:
 * **Durability**: usage must survive sandbox and overseer pod deletion.
@@ -20,7 +22,7 @@ Goals:
 
 ```mermaid
 graph LR
-    A[Task scripts<br/>token-usage.json] -->|envd Exec cat| B[factory binary<br/>pkg/usagereport]
+    A[Recipe tasks<br/>token-usage.json] -->|task server files API| B[factory binary<br/>pkg/usagereport]
     B -->|POST /v1/usage| C[factory token-daemon collector<br/>overseer-system StatefulSet + PVC]
     C -->|GET rollups| D[repo-agent API proxy<br/>/api/usage/*]
     D --> E[Review UI<br/>Usage view]
@@ -28,7 +30,7 @@ graph LR
 ```
 
 * **Collector** (`factory/pkg/tokenusage`, run as the hidden `factory token-daemon` command): plain net/http service storing records in a JSONL append log on a PVC (`records.jsonl`), with a full in-memory index rebuilt by replay at startup. Deployed by `overseer/k8s/token-usage.yaml` as Service + StatefulSet `token-usage` in `overseer-system`, reusing the overseer image (which bundles the factory binary) with `command: ["factory", "token-daemon"]` — no separate image to manage.
-* **Producer** (`factory/pkg/usagereport`): reads usage files over envd (`cat <taskDir>/token-usage.json || cat <taskDir>/llm-usage.json`) and POSTs a `UsageRecord` to `$COLLECTOR_URL`. No-op when `COLLECTOR_URL` is unset; failures only log warnings.
+* **Producer** (`factory/pkg/usagereport`): reads usage files through the sandbox's task server (`token-usage.json`, else `llm-usage.json`; over envd until #1904) and POSTs a `UsageRecord` to `$COLLECTOR_URL`. No-op when `COLLECTOR_URL` is unset; failures only log warnings.
 * **Wiring**: the overseer controller injects `COLLECTOR_URL` (default `http://token-usage.overseer-system.svc.cluster.local:8080`) into overseer sandboxes; `factory watch` and its re-exec'd subcommands inherit it.
 
 ---
@@ -41,7 +43,7 @@ Each record carries context for aggregation plus the stats payload:
 {
   "key": "<sandbox>:<taskDir>",
   "repo": "owner/name",
-  "taskType": "fix|review|investigate|address|iterate|adopt|agent",
+  "taskType": "fix|review|care|triage|plan|agent|...",   // the task's type, from its recipe
   "taskDir": "/workspaces/tasks/fix-...", "sandbox": "fix-repo-42",
   "issue": 42, "pr": 101, "issues": [42],
   "workflow": "issue-42", "workflowName": "greenfield",
@@ -56,8 +58,8 @@ The `key` is the idempotency key: re-posting upserts (append to the log; last li
 
 ## 4. Harvest Strategy: Push + Sweep
 
-1. **Push (rich context)**: each command harvests right after its task completes — `fix.go` (issue + created PR), `pr.go` investigate/address-comments/iterate/adopt (PR + issues referenced by the PR via `getReferencedIssues`), `review.go` (PR), `agent.go` (workflow session/name, issue parsed from `issue-N`, created PR).
-2. **Sweep (safety net)**: the watch-loop cleanup functions (`cleanupClosedPRSandboxes`, `cleanupClosedIssueSandboxes`, `cleanupStaleIdleSandboxes`) call `HarvestSandbox` immediately before `DeleteSandbox`, listing all `/workspaces/tasks/*/` dirs and harvesting each. Context is recovered from sandbox labels (`factory.gemini.google.com/pr`, `factory.gemini.google.com/workflow`) and the `wf-issue-N` naming convention. This catches detached, crashed, or timed-out tasks whose push hook never ran.
+1. **Push (rich context)**: the recipe runner harvests right after its task completes (`HarvestTask` in `commands/recipe.go`). Originally each classic command did (`fix.go`, `pr.go`, `review.go`, `agent.go`); those were deleted when every task became a recipe.
+2. **Sweep (safety net)**: the watch-loop cleanup functions (`cleanupClosedPRSandboxes`, `cleanupClosedIssueSandboxes`, `cleanupStaleIdleSandboxes`, in `commands/watch/sandbox/reconciler.go`; since #2035 also `suspendIdleSandboxes`, see §9) call `HarvestSandbox` immediately before deleting (or suspending) the sandbox, listing its tasks through the task server and harvesting each. Context is recovered from sandbox labels (`factory.gemini.google.com/pr`, `factory.gemini.google.com/workflow`) and the `wf-issue-N` naming convention. This catches detached, crashed, or timed-out tasks whose push hook never ran.
 
 ---
 

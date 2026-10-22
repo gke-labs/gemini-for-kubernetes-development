@@ -1,8 +1,8 @@
 # Design Note: Research as a Recipe
 
-**Status:** Phase 1 built: the Notes kind and `push-notes` (#1753); repo targets, `credentials: clone` and the `research` recipe.
+**Status:** All three phases built. Phase 1 (factory): the Notes kind and `push-notes` (#1753); repo targets, `credentials: clone` and the `research` recipe (#1754). Phase 2 (repo-agent): launch through the recipe (#1755); Save notes as a revise plus a `push-notes` apply, keyed by sandbox (#1758), the draft folded (#1761). Phase 3: the old path deleted (#1763), then `ACPD_ENABLE` and :49984 (#1764). Later: research opens in the one task-session view shared with every recipe (#1765, #1766; `factory/design/task-session-view.md`), and the rail became the Sessions page, which also picks the engine; `GET /api/research` is gone (#1910–#1921).
 
-A research conversation is a member talking to an agent about a repository: "how does the reconciler handle deletes?", "what changed in the last two weeks?". It runs in its own sandbox, and its notes can be saved to the member's fork on `research/notes`. Today it is built on a separate mechanism from recipes. This note moves it onto one: a built-in **`research` recipe** whose start clones the repo and asks the kickoff, whose conversation is the task session, and whose **Save notes** is a revise that produces a **Notes** task output with a **`push-notes`** action.
+A research conversation is a member talking to an agent about a repository: "how does the reconciler handle deletes?", "what changed in the last two weeks?". It runs in its own sandbox, and its notes can be saved to the member's fork on `research/notes`. It was built on a separate mechanism from recipes. This note moved it onto one: a built-in **`research` recipe** whose start clones the repo and asks the kickoff, whose conversation is the task session, and whose **Save notes** is a revise that produces a **Notes** task output with a **`push-notes`** action.
 
 ---
 
@@ -118,9 +118,9 @@ actions: …
 
 ### repo-agent
 
-- **Launch.** The Request verb `research` stays. The controller runs `factory recipe research --url <repo> --session <session> --run-name research/<session>/<ts> --topic …` instead of `factory research start` plus a kickoff. The kickoff annotation, its TTL, the 409, the `research-ready` receipt and `research-engine` all go. The recorded run says what ran, and the engine is the board's (claude still maps to gemini; see Known limits).
-- **The rail.** `GET /api/research` lists research sandboxes as today. Live state (busy / waiting / held) comes from the daemon's sessions, as the task-session view's does. Pending rows still come from Requests.
-- **Open.** A row opens the task-session view on its session. The research view's landing pane (box, overview, recent changes), terminal and mermaid rendering are kept and become how a research task session is shown.
+- **Launch.** The Request verb `research` stays. The controller runs `factory recipe research --url <repo> --session <session> --run-name research/<session>/<ts> --topic …` instead of `factory research start` plus a kickoff. The kickoff annotation, its TTL, the 409, the `research-ready` receipt and `research-engine` all go. The recorded run says what ran, and the engine is the board's (claude still maps to gemini; see Known limits). Since #1921 the Sessions start box picks gemini or antigravity, filed as `spec.research.engine` on the Request.
+- **The rail.** Live state (busy / waiting / held) comes from the daemon's sessions, as the task-session view's does. Pending rows still come from Requests. Superseded: the rail is now the Sessions page, fed by `/api/sessions`; `GET /api/research` was deleted (#1921).
+- **Open.** A row opens the task-session view on its session (`#/task-session/<sandbox>/<task>`). The `#/research/<id>` view, its 💾, notes panel and event stream were deleted when one view served every recipe (#1766).
 - **Rename, delete, title.** Kept as they are: annotations on the sandbox, and deleting the sandbox.
 - **Save notes.** The task-session view already shows the session's revise actions (#1751). For research that is **Save notes**. The resulting draft appears in the same view with **Save to research/notes**, applied through the Request verb `apply` (#1736). The revise Request and its controller code are keyed by issue number today; they gain a sandbox key for repo targets.
 - **Removed:** `POST /capture`, `research-capture` / `research-note`, `completeResearchSaves`, the controller's kickoff path, the research `CreateSession` / `Prompt` client and its header.

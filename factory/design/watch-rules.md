@@ -1,9 +1,59 @@
 # The watch loop as rules
 
-Status: draft, being refined. Phases 0 and 1 are done; 2a (the model,
-the prebaked rules, the evaluator, record and replay) is merged. The rule
+Status: Phases 0 to 4 are built (October 2026): the rules engine decides
+every issue and PR rule on every overseer, and the scanners only carry
+out its decisions. Phase 5 (a repository's own `.agents/rules/`) is not:
+the watch reads only the prebaked rules; `factory watch rules --dir` lays
+a checkout's rules over them for listing, explain and replay. The rule
 files' reference - every field, and how a rule is evaluated - is the
-[watch rules guide](../docs/watch-rules.md).
+[watch rules guide](../docs/watch-rules.md). "Before the move" is the
+watch as it was; "As built" is the watch now.
+
+## As built
+
+- **The rules.** Prebaked YAML files in `factory/pkg/watch/rules/`
+  (embedded), one ordered list per kind: on issues workflow-missing,
+  workflow, fix; on PRs inherit-labels, inactive, comments, conflict, ci,
+  review, ready, ready-unreview; chore and nudge
+  describe the scheduler and the linked-issue nudge. `when:` says which
+  items a rule takes, `run:` the recipe (with `apply:` and `inputs:`) or
+  the writes, `policy:` the pacing (cooldown, dedupe, give-up, phase).
+- **The gates** are code (`rules.Gates`): stop label, closed,
+  below-min-number, merge queue. A gated item is decided no further.
+- **The scanners read facts and carry out decisions.** The PR and issue
+  scanners build each item's `rules.Item` (`Scanner.Facts` for one item),
+  ask the engine (`Set.Decide`; on issues the policy first on the cheap
+  facts, `Set.Held`), and do what it decided: queue the task, stamped with
+  the rule, recipe, apply, inputs and phase (`act.Task`), or make its
+  writes - labels, assignees, a stop's label and comment
+  (`act.ApplyWrites`). workflow-missing's stop keeps a handler, which posts
+  the rule's comment with the definition's path and load error.
+- **The dispatcher runs what the rule names.** `api.RecipeTask` keeps only
+  the run-name prefix and the sandbox; the recipe, `--apply --action`,
+  `--pr-labels` and inputs come from the task (`api.RecipeArgs`). Which
+  bot runs it is `SelectUser`.
+- **The decision at start.** Just before a task starts, `Redecide` reads
+  the item's facts again and asks the engine, as if the task were not
+  there: a gate, a moved head, or a rule that no longer decides drops it,
+  not counted as an attempt. A nudged workflow step is held to the gates
+  alone. A task without a stamp is stamped with the decision, or dropped
+  when its item cannot be read.
+- **Watching it.** `rules.Summary` tallies each rule's runs, give-ups and
+  drops at start since the watch started, and checks every recorded
+  decision against the engine (consistent); the queue API serves it as
+  `rules` and the overseer page shows it. `spec.rulesRecord` writes each
+  decision with its facts (`decisions.jsonl`, a file a day, kept a month)
+  for `factory watch rules replay` and `explain --record`.
+- **The operator's say.** `spec.rules.disabled` (`WATCH_RULES_DISABLED`):
+  a disabled rule decides nothing and its queued tasks are dropped at
+  start. It does not stop chores, fan-outs or running tasks; `prMode`,
+  `issueMode` and `chores.mode` do, per loop.
+- **Not yet on the rules.** Adopting an orphaned bot PR (one a pool bot
+  opened without its labels) still runs as PR-scanner code on every sweep
+  (`prs/adoption.go`); the `adopt-pr` rule that describes it ships
+  `enabled: false` and is not consulted. Moving it means the engine
+  deciding it (or folding it into inherit-labels) and deleting
+  `adoptOrphanedBotPRs`.
 
 `factory watch` (the overseer) decides what to run by code: an issue
 scanner, a PR scanner, a fan-out controller, a chores scheduler, a
@@ -15,7 +65,7 @@ rules as data, so the loop is one engine and a repository can say what
 its overseer does without a Go change, as `.agents/recipes` did for
 recipes (design/repo-recipes.md).
 
-## Today
+## Before the move
 
 ### The loops
 
@@ -386,68 +436,11 @@ scanners set them (`prs/task.go` expectFor, the issue scanner):
   to one) refreshes the task's recorded facts, so it is not dropped for
   a change it already reflects.
 
-**Phase 4, in steps** (step 1b, done: `Scanner.Facts(ctx, number)` in
-`prs/` and `issues/` reads one item's facts with the functions the scan
-records them with - read-only, every fact, not stopping at an active task -
-and `explain` reads live through it; "pointed at", the issue listings'
-filter, is the issue rules' `any-of` so a decision outside a scan holds it
-too; step 2, done: `spec.rules.atStart` → `WATCH_RULES_AT_START` →
-`dispatcher.Config.AtStart`, `watcherTaskCoordinator.Redecide` maps the task
-file to its rule, reads `Facts`, and drops the task on a gate, a moved head
-or a rule that no longer decides, before the preconditions, which stay
-until step 4 - step 4's second part, done: the engine decides every rule
-(`spec.rules.engine`, `use`, `canaryLabel`, `canaryPercent` and the watch's
-canary labelling gone; `spec.rules.disabled` the operator's only say, and a
-disabled rule's queued task dropped at start); the scanners' legacy
-branches, now unreached, go next (B1, done: the PR scanner's - evaluate
-is the facts, the engine's inherit-labels/inactive writes, its one
-pr-care rule through that rule's handler or its give-up's writes, its
-ready/ready-unreview writes; the handlers' own retry limits, cooldowns and
-give-ups, the label sync, the inactivity pause, the readiness reconcile
-and the PR scanner's Handed recording are gone; B2, done: the issue
-scanner's - its policy is the engine's (Set.Held) alone, workflow-missing
-and the fix/workflow decision without the legacy wrappers; inCooldown,
-failedCooldown, processedIssues and its Handed recording are gone; B3,
-done: the shadow is a summary - rules.Summary tallies each rule's runs,
-give-ups and drops at start, and checks each record against the engine
-(consistent), served as `rules` on the queue API; Record.Handed,
-HandedTally and replay's "scanner's own condition" lines are gone) -
-step 4's first part, done: the decision at start is always
-on (`spec.rules.atStart` and `spec.preconditions` gone, `Expect`/`StaleTask`
-deleted), a task of a rule the scanner still decides held to the
-preconditions' checks on the facts read (`stale`); step 3a, done: `watch/act.ApplyWrites` carries out a
-decision's writes - labels, assignees, then a stop's label and a comment
-naming it - for inherit-labels, inactive, ready, ready-unreview and every
-give-up the engine decides (PR and issue), in place of their handlers;
-workflow-missing keeps its handler, whose comment carries the load error;
-step 3b, done: a task the engine decided carries its rule, recipe, apply,
-inputs (a `{{pr-labels}}` input as `PRLabels`, the CLI's `--pr-labels`) and
-`policy.phase` (`act.Task`), and the runner runs those
-(`api.RecipeArgs`); for every prebaked recipe rule the command was the
-type table's exactly, and the phases the handlers'. Part C, done: the
-type's table (`api.RecipeTask`) keeps only the run name and the sandbox
-(a credentials: clone recipe's own); the recipe, apply and inputs come only
-from the task's stamp, and a task queued without one (before an upgrade,
-by hand) is stamped at start with the engine's decision, or dropped when
-its item cannot be read. Which bot runs it stays
-`SelectUser`; step 3c, done: on an issue rule the engine decides, the
-issue scanner asks its policy first on the cheap facts (`Set.Held`: runs,
-queue, updated-at; a workflow's cooldown) instead of its own `inCooldown`
-and "processed since", so the engine decides run as well as no at today's
-read cost, and a give-up due is not held by the cooldown):
-(1) the gates in code (`rules.Gates`, with
-`closed` and `below-min-number`) and the facts built outside the scanners
-(`facts.Build(kind, number) → rules.Item`: the reads in `prs/` and
-`issues/` moved to one package both scanners and the dispatcher call,
-`Scanner.Record` gone); (2) decide again at start (below), replacing
-`StaleTask`, `QueueTask.Expect` and `ShouldCancelTask`, behind
-`spec.rules.atStart`; (3) a decision runs generically: the task from the
-decision (recipe, apply, inputs, `policy.phase`), the identity rule in
-one place, one executor for `Writes` (the give-up and inactive/ready/
-inherit-labels handlers become it); (4) delete the scanners' conditions,
-`Handed`, `spec.rules.use` and `engine: off|shadow` (below).
+**Phase 4** replaced the preconditions with the decision at start and
+moved what the scanners decided into the engine; the steps and their PRs
+are in the Plan below, the result under "As built".
 
-**Phase 4: decide again at start.** Preconditions check a few facts; once
+**Phase 4: decide again at start** (built, #2041, always on since #2049). Preconditions check a few facts; once
 the engine can build an item's facts on its own (the shared scan and a
 fact builder out of the scanners), the dispatcher asks it instead:
 would it still decide this rule on this item now? That catches what the
@@ -657,7 +650,9 @@ no-op. The scanners and the engine write into the same queue, and the
 dispatcher, the preconditions, the leases and the identity are shared:
 a task both decide runs once.
 
-**Modes,** on the Overseer:
+**Modes,** on the Overseer, during Phases 2 and 3 (all removed by
+#2051, once the engine decided every rule; `spec.rules` keeps only
+`disabled`):
 
 ```yaml
 spec:
@@ -704,9 +699,11 @@ PRs opened, give-ups) are compared over a week before and after it moves.
 **Not partial by loop:** issues on one path and PRs on the other is too
 coarse, since PR care is rules of very different risk.
 
-### How the engine runs inside the scanners (Phases 2 and 3, as built)
+### How the engine runs inside the scanners (Phases 2 and 3)
 
-Built, `use` is narrower than the bullet above: the engine does not
+This is how Phases 2 and 3 ran; Phase 4 replaced it (the shadow, `use`,
+the canary and Handed are gone; see "As built"). Built, `use` was
+narrower than the bullet above: the engine does not
 queue tasks of its own. It runs inside the two scanners and, for a rule
 it has taken, answers the scanner's question at the point the scanner
 used to answer it from its own condition. The fetching, the handlers
@@ -859,7 +856,7 @@ stays in the rule format with no rule using it.
   rule is its outcomes.
 - An issue rule on the engine can only lose work: its regressions are
   fixes and workflows that did not happen.
-- `use`, `canaryLabel`, `canaryPercent` and `disabled` reach the watch as `WATCH_RULES_*`
+- (Phases 2-3) `use`, `canaryLabel`, `canaryPercent` and `disabled` reached the watch as `WATCH_RULES_*`
   environment, so changing them restarts the pod (a safe upgrade on
   KCC); the canary label itself is read every scan, so labelling an item
   moves it with no restart.
@@ -871,8 +868,10 @@ behaviour, and goes to the smaller overseers (`overseer-repo-agent`,
 `overseer-agent-sandbox`) before staging `overseer-kcc`, then
 production.
 
-**Phase 0, fixes in today's watch** (no decision changes; each a small
-PR, each verified on staging `overseer-kcc`):
+**Phase 0, fixes in today's watch** (done; no decision changes; each a
+small PR, each verified on staging `overseer-kcc`; 0e's `attempts`
+setting was removed in #2062 once the engine counted give-ups from the
+journal):
 
 | PR | what | done when |
 |---|---|---|
@@ -882,13 +881,14 @@ PR, each verified on staging `overseer-kcc`):
 | 0d | the HTTP cache on the overseer's volume, surviving the restart | the first pass after a restart is mostly 304s |
 | 0e | `attempts` from the processed tasks, seeded from the comment counts, replacing the comment counting (setting `attempts`) | the give-ups happen at the same counts as before |
 
-**Phase 1, one scan** (behind `scan: shared`): the scanners read one set
+**Phase 1, one scan** (done: `sharedScan`, `graphqlPRDetails`): the scanners read one set
 of listings (deduplicated, incremental with `since`), the cursor and
 snapshots persisted, PR details from one GraphQL query. The scanners'
 decisions are unchanged; only where their data comes from. Done when, on
 KCC, calls per pass drop and the tasks enqueued match a week before.
 
-**Phase 2, the engine in shadow:**
+**Phase 2, the engine in shadow** (done, #1996-#2005, #2027; the shadow
+became the summary in #2057):
 
 - 2a: the model and the prebaked rules (2a-1, #1996); the model's gaps
   closed and the files exact (2a-2a: `from` (since removed), `any-of`, `closes`,
@@ -911,9 +911,9 @@ KCC, calls per pass drop and the tasks enqueued match a week before.
 - Done when every built-in rule has a week on KCC staging with no
   disagreement that is not understood and fixed.
 
-**Phase 3, rule by rule** (`use: {<rule>: engine}`, the canary label
-first, then all items; staging, then production), cheapest to get wrong
-first:
+**Phase 3, rule by rule** (done, #2007, #2025; `use: {<rule>: engine}`,
+the canary label first, then all items; staging, then production),
+cheapest to get wrong first:
 
 The switches are in (the Overseer's `spec.rules`, all off by default):
 `engine: on` with `use: {<rule>: engine}` has the engine decide that rule
@@ -937,25 +937,32 @@ waits for the facts gathered up front.
 Each rule moves when its shadow week is clean, and moves back on any
 regression. Done when every rule is on the engine.
 
-**Phase 4, delete:** a rule's scanner code goes once the rule has run on
-the engine in production for two weeks without moving back; the
-scanners go with their last rule.
+**Phase 4, the engine decides, the scanners carry out** (done; on
+staging `overseer-kcc` from 2026-10-21, the other overseers at their next
+upgrade). Rather than two weeks per rule in production, the rules moved
+together once staging's shadow had agreed on every rule:
 
-When the engine starts building a rule's task itself, it takes the
-queue phase from the rule's `policy.phase`, which until then nobody reads
-(the handlers set it from their own constants). At that switch, check
-once that each rule's `phase` is the one its handler set (comments 1,
-review 1, conflict 2, ci 3, fix 3, workflow 4), so the queue's order does
-not change with it; after it there is one source and nothing to drift.
+| step | what | PR |
+|---|---|---|
+| 1a | the gates in code, one list (`rules.Gates`) | #2039 |
+| 1b | `Scanner.Facts`: one item's facts, read-only, with the scan's own functions | #2040 |
+| 2 | the decision at start (`Redecide`) | #2041; nudged workflow steps to the gates alone #2046; comments acknowledged at start #2047 |
+| 3a | one executor for the engine's writes (`act.ApplyWrites`) | #2042 |
+| 3b | tasks stamped with rule, recipe, apply, inputs and `policy.phase` (`act.Task`); the phases checked equal to the handlers' | #2044 |
+| 3c | issue rules ask the engine's policy first (`Set.Held`) | #2045 |
+| 4 | the decision at start always on, the preconditions gone | #2049 |
+| 4 | the engine decides every rule; `engine`, `use`, the canary gone; `spec.rules` keeps `disabled` | #2051 |
+| B1, B2 | the PR and issue scanners' own decisions deleted | #2053, #2055 |
+| B3 | the shadow becomes `rules.Summary`; Handed gone | #2057 (overseer page #2058) |
+| C | the recipe table keeps runner details only | #2059 |
+| | workflow-missing posts its rule's comment | #2061 |
 
-**Phase 5, the repository's rules:** `.agents/rules/*.yaml` replacing,
+**Phase 5, the repository's rules** (not built; the overlay is read by
+`factory watch rules --dir` only): `.agents/rules/*.yaml` replacing,
 turning off or adding to the prebaked rules, within the global gates and
 floors, and `.agents/watch.yaml` for its settings; then the board's auto
 rules on the same predicates.
 
-Phase 0 is worth doing whether or not the rest follows: it fixes what
-the read turned up, saves quota and wasted runs, and makes today's
-give-ups sturdier.
 
 ## Open questions
 

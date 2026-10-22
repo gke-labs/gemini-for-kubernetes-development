@@ -1,6 +1,6 @@
 # Warm workspaces: a sandbox's disk from a snapshot
 
-**Status:** steps 1 (measured, below), 2 (restore), 3 (warm) and 4 (overseer) built; the whole cycle verified on autopush (below). Step 5, the KCC fan-out, is left.
+**Status:** steps 1 (measured, below), 2 (restore, #1858), 3 (warm, #1860) and 4 (overseer, #1861, fixes #1862 #1864 #1866 #1867) built; the whole cycle verified on autopush (below). Enabled for KCC: `overseer/examples/kcc.yaml` has a `warmWorkspace` block (#1868, #1870) and the staging KCC overseer runs it; #1871 made classic tasks use the warm cache paths. Since then: a dirty tree is reset rather than failing the snapshot (#1977), a failed warm retries after 6 hours (#1978), and the classic task scripts are gone, so every fix is the recipe (#1884). Step 5's fan-out timings are not recorded in this note.
 
 Every sandbox starts on an empty workspace disk. A KCC fix sandbox first clones 4.9 GB, then downloads 2.2 GB of modules, then compiles 4.8 GB of build cache, all before its own change builds once. On 2026-10-08 the KCC fan-out children took 1h45m to 2h each to open their PRs. About 11 minutes of that was the model; the rest was tools, mostly whole-repo builds from those empty caches (`generate-types-and-mappers` 45m, `validate-generated-files` 29m, `make test` 52m).
 
@@ -12,13 +12,13 @@ This note gives a sandbox a workspace disk restored from a snapshot of a warmed 
 
 - **The disk.** The workspace is a PVC from the Sandbox's `volumeClaimTemplates` (`workspaces-pvc`, `pkg/sandbox/manifests.go`), mounted at `/workspaces`. Its size and class come from `workspaceDiskSize` and `workspaceStorageClass`; KCC uses 40Gi `premium-rwo` (`pd.csi.storage.gke.io`, pd-ssd).
 - **Restoring needs no agent-sandbox change.** The Sandbox CRD's claim template already has `dataSource` and `dataSourceRef`, so a sandbox can ask for its disk from a `VolumeSnapshot`.
-- **The caches live on the disk.** The sandbox env puts them there (`GOCACHE=/workspaces/.cache/go-build`, `GOMODCACHE=/workspaces/.cache/mod`, `pkg/sandbox/manifests.go`), and `lib.sh` uses the same paths for classic tasks. A restored disk brings both.
+- **The caches live on the disk.** The sandbox env puts them there (`GOCACHE=/workspaces/.cache/go-build`, `GOMODCACHE=/workspaces/.cache/mod`, `pkg/sandbox/manifests.go`), and `lib.sh` uses the same paths for classic tasks. A restored disk brings both. (Classic tasks were on other paths until #1871, and are deleted since #1884.)
 - **Config reaches factory through env.** The Overseer controller passes its CR's fields to the overseer sandbox as env vars (`overseer/pkg/overseer/overseer.go`). The sandbox's `run.sh` writes them into `/workspaces/.factory.cfg` and then runs `factory watch` for one `POLL_INTERVAL` (5m), in a loop.
 - **Watch passes call into `commands` through hooks.** `factory watch` runs passes as goroutines (`pkg/commands/watch/subcontrollers.go`). A pass that needs a recipe gets a hook from `commands`, as the fan-out controller gets `ProposeFanout`, which calls `runRecipe` (`watch_fanout_propose.go`).
 - **A recipe run is resumable.** `runRecipe` with a run name that already exists waits for that run instead of starting another. A cancelled context stops the waiting, not the task.
 - **What `run:` steps see.** Inputs arrive as `INPUT_<NAME>` env vars, never as shell source. The GitHub tokens are stripped from a `run:` step's env (`pkg/recipe/sandbox.go`).
 - **`credentials: clone` keeps the token off the disk.** `cloneRepo` (`lib.sh`) clones into `/workspaces/<repo>` with a one-shot credential helper, and leaves `origin` as the clone URL with no credentials.
-- **The fix recipe is safe on an old checkout; classic `fix_issue.sh` is not.**
+- **The fix recipe is safe on an old checkout; classic `fix_issue.sh` is not.** (Since #1884 there is no `fix_issue.sh`; the overseer's fixes run the recipe.)
   - The recipe resets to upstream's default branch (`checkout-default-branch`, `checkoutDefaultBranch` in `lib.sh`).
   - Classic `fix_issue.sh`, which the overseer's fix tasks run, goes `setupGitRepos` → `checkoutNewBranch`, branching from HEAD. On a restored disk, HEAD is the snapshot's commit.
 - **Snapshots aren't set up.** The cluster has the snapshot CRDs (`snapshot.storage.k8s.io/v1`) but no `VolumeSnapshotClass`.
@@ -41,7 +41,7 @@ Overseer CR spec.warmWorkspace {interval, keep, one of script | scriptURL | scri
 
 any later sandbox for the repo (pkg/sandbox manifests)
   └─ newest readyToUse snapshot labelled for the repo, same image → volumeClaimTemplates dataSource
-       └─ fix_issue.sh: setupGitRepos → checkoutDefaultBranch → checkoutNewBranch
+       └─ fix recipe: setup-git → setup-fork → checkout-default-branch (classic fix_issue.sh until #1884)
 ```
 
 ### 1. The Overseer CR
@@ -168,7 +168,7 @@ There is no `ask`, no engine and no task output. The recipe's own task directory
 - **The claim.** If one matches, the claim gets `dataSource: {apiGroup: snapshot.storage.k8s.io, kind: VolumeSnapshot, name: …}`. Its size is the larger of `workspaceDiskSize` and the snapshot's `restoreSize`.
 - **No snapshot.** The disk is empty, as today.
 - **No changes elsewhere.** No caller of the sandbox builders changes. Neither does repo-agent, nor the overseer's task flow.
-- **The checkout.** `fix_issue.sh` calls `checkoutDefaultBranch` between `setupGitRepos` and `checkoutNewBranch`, so a branch starts from upstream's default branch as it is now. That is right with or without a snapshot. The recipes already do it.
+- **The checkout.** `fix_issue.sh` (deleted in #1884; the fix recipe's `checkout-default-branch` does this) calls `checkoutDefaultBranch` between `setupGitRepos` and `checkoutNewBranch`, so a branch starts from upstream's default branch as it is now. That is right with or without a snapshot. The recipes already do it.
 
 ### 6. Cluster objects
 
@@ -264,7 +264,7 @@ Measured by hand on staging (`barney-s`) on KCC `7106e14276`, which includes [#1
 - **Expiry.** The snapshot carries `factory.gemini.google.com/warm-expires` (RFC 3339), which step 3 sets to its creation time plus 3 × `interval`. Restore skips expired snapshots, so it needs no configuration of its own.
 - **Choice.** The newest snapshot that is labelled for the repository, `readyToUse`, made with the same image and unexpired. The claim gets its `dataSource` and grows to its `restoreSize` if that is larger. The sandbox is annotated `factory.gemini.google.com/warm-restored-from: <snapshot>`.
 - **Failure.** If listing snapshots fails (no snapshot API, no RBAC), the disk is empty and the failure is logged at `-v=1`.
-- **`fix_issue.sh`** runs `checkoutDefaultBranch` before `checkoutNewBranch`.
+- **`fix_issue.sh`** runs `checkoutDefaultBranch` before `checkoutNewBranch`. (Moot since #1884 deleted it.)
 
 ### Step 3: warm
 
@@ -311,7 +311,7 @@ The `overseer` Overseer on autopush (`repo-agent-1`; sandboxes in `overseer-over
 
 **Follow-ups:**
 
-- **`warm-image` is the tag** (`factory-golang:latest`), as step 2 chose. A rebuilt image restores the old snapshot until the next warm. Go's cache keys on the toolchain, so it misses rather than breaks. The pod's resolved image ID would fix that.
+- **`warm-image` is the tag** (`factory-golang:latest`), as step 2 chose. A rebuilt image restores the old snapshot until the next warm. Go's cache keys on the toolchain, so it misses rather than breaks. The pod's resolved image ID would fix that. Since #1952 a pinned overseer runs its sandboxes on `factory-golang:<its sha>`, so for overseers the tag no longer moves: an overseer upgrade instead leaves no matching snapshot until the next warm.
 - **A failed warm keeps its backoff** for 6 hours (or the `interval`) even after the script is fixed; deleting the warm sandbox starts it at once. Keying the failure on a hash of the warm config would restart it at once.
 - **Changing `spec.warmWorkspace` does not reach a running overseer.** The controller updates the Sandbox's template, but the pod keeps its env until the sandbox is recreated. The controller also does not recreate a deleted overseer Sandbox until the Overseer changes (`recreate-timestamp`). Both apply to every Overseer field, not just this one.
 - **Not measured here:** the agent's build and test times on the restored disk against a cold one. Step 5 measures that on the KCC fan-out, where the builds are long.

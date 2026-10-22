@@ -1,6 +1,10 @@
 # A board driven by recipes
 
-**Status:** Proposed.
+**Status:** Built, steps 1–6: one PRs tab (#1782); factory's `on:`, run record and `recipe list` (#1783); runs by scanning and one revise path (#1785); one stored output and applied stamp per run (#1786); one apply path (#1787); a draft for every kind (#1788); one `StartRecipe` (#1789); the `recipe` launch Request, the catalog on `RepoBoard.status.recipes` and `sessions[]` (#1790); launch-again and run status (#1791); stages and `rerun` removed (#1792); summarize as the new built-in that needed no repo-agent change (#1793). Changed since:
+- **Revise is gone** (#1938, #1940; [repo-recipes.md](repo-recipes.md#results-are-files-the-agent-writes)): no revise path, revise inputs or revise buttons; a result is rewritten by asking in the session. The fix's PR follow-ups are care's recipes ([care-recipe.md](care-recipe.md), [recipe-sessions.md](recipe-sessions.md)).
+- **The per-recipe hooks are gone** ([generic-board-recipes.md](../../repo-agent/docs/design/generic-board-recipes.md)): a recipe declares how it finishes (`task-output.on-finish`, `timeout`, #1946), every click is a generic recipe Request (#1950), and auto-triage, auto-fix and auto-review file recipe Requests (#1954, any recipe since #1957).
+- **The tabs** became one Work tab (#1823), research moved to the Sessions page (#1910, #1920), and Work shows one board at a time (#1918, #1919).
+- **The overseer** runs recipes too (#1876-#1884), decided by the watch rules (`factory/pkg/watch/rules/`).
 
 Triage, plan, research, review and fix all run as recipes now. The board still knows each by name. Only the task-session view is driven by the recipe: its revise buttons come from the run factory records, and its draft buttons from the task output. Everything else is written per recipe:
 
@@ -23,7 +27,7 @@ A new recipe, or a new revise of an existing one, needs Go and UI changes in all
 4. **One draft and one apply path.** The draft is the run's stored task output, for any kind. An apply Request names the sandbox, the run and the action, and the controller runs `factory apply --action`. Verbs carry permissions, not kinds.
 5. **No stages.** A row shows its runs, each with its own state, read from the sandbox. Buttons, chips and attention follow from the runs by one set of rules, the same for every recipe.
 6. **Per-recipe board code stays only where it is board policy:** settings (auto-triage, auto-fix, auto-review), Review's Finalize link, research's landing pane. A recipe without such code still gets a button, a session, revises and a draft.
-7. **The overseer is unchanged**, as for every recipe step so far.
+7. **The overseer is unchanged**, as for every recipe step so far. (Later moved onto recipes, #1876-#1884; it does not depend on the board.)
 
 ## The design
 
@@ -54,6 +58,8 @@ A new recipe, or a new revise of an existing one, needs Go and UI changes in all
 - **`factory recipe list -o json`** prints the built-in recipes, each with its name, label, `on`, inputs, kind and revises. The board reads it from its factory binary, so a new built-in shows up with the image that ships it.
 
 ### repo-agent: runs, revises and drafts by data
+
+The revise parts below were built (#1785) and deleted with revise (#1940).
 
 - **Runs.** `SessionRun` reads every `sandbox.gemini.google.com/*-run` annotation and takes the kind from the record. `recordedRunKinds` and `reviseInputs` go.
 - **Revises.**
@@ -103,7 +109,7 @@ The work item's `stage`, its `switch` in the API and the UI's stage table go. Th
   - Your PR: those, plus the `my-pr` recipes, the fix session's revises, Auto, and Promote on a draft.
   - Filter chips replace the split: *mine*, *review requested*, *drafts*. The tab opens on what *Up Next* would show first. *Up Next* is unchanged: it already mixes the two.
 - **The PR row's follow-ups** are the fix session's revises: Iterate (with its input box, from `inputs`), Address comments, Fix CI, and Rebase.
-- **What stays per recipe in the controller:**
+- **What stays per recipe in the controller** (as built through #1792; all of it moved to the generic path or the catalog by #1946-#1954):
   - `ensureFix`'s apply of `open-pr` when the run ends, and the PR alias;
   - `ensureReview`'s pending review;
   - plan approval;
@@ -111,6 +117,8 @@ The work item's `stage`, its `switch` in the API and the UI's stage table go. Th
   These are board policy for those recipes. A recipe gains such a hook in Go when it needs one, not to appear on the board.
 
 ## The board after this
+
+As built by step 6. Since then the tabs are one Work tab, revise buttons are gone, and the controller has no recipe names (see Status).
 
 | Page | Element | Source |
 |---|---|---|
@@ -147,5 +155,5 @@ The work item's `stage`, its `switch` in the API and the UI's stage table go. Th
 
 - **The board's other tabs, settings, Deploy ▾ and research's landing pane.** They are board features, not recipe surfaces.
 - **A recipe's own UI.** Triage's label form and review's inline-comment view stay written for them. A new kind's draft is shown as its `markdown`.
-- **Recipes from the watched repository** (e.g. `.agents/recipes/`). factory reads built-ins and local files only. Once it reads a repository's recipes, `factory recipe list` lists them and the board needs nothing more.
+- **Recipes from the watched repository** (e.g. `.agents/recipes/`). factory reads built-ins and local files only. Once it reads a repository's recipes, `factory recipe list` lists them and the board needs nothing more. (factory reads them since #1935, `factory recipe list --url <repo>`; the board's catalog still runs `recipe list` without `--url`, so it shows built-ins only.)
 - **Who may launch a recipe.** Launching is a board member's, as today; per-recipe permissions can come later from the recipe.

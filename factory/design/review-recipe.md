@@ -1,13 +1,16 @@
 # Review as a recipe
 
-**Status:** Phases 1 (factory, #1767) and 2 (repo-agent) are built: the board's review runs `factory recipe review` and lands as the member's pending review. Phase 2 differs from the plan below in places; see [As built](#as-built-phase-2).
+**Status:** Phases 1 (factory, #1767) and 2 (repo-agent, #1769) are built: the board's review runs `factory recipe review` and lands as the member's pending review. Phase 2 differs from the plan below in places; see [As built](#as-built-phase-2). Since then:
+- **The overseer reviews with the recipe too** (#1873), against decision 2: the watch runs `factory recipe review --apply --action submit-review --user <reviewer>`, submitting the result as a COMMENT review; the classic `factory pr review`, `review.sh` and `structured_review.*` are deleted (#1874). The watch's `review` rule names the recipe (`factory/pkg/watch/rules/review.yaml`).
+- **Update review is gone** with revise (#1938, #1940; [repo-recipes.md](repo-recipes.md#results-are-files-the-agent-writes)): the agent writes `review.yaml`, rewrites it when asked in the session, and the task's result follows.
+- **The board runs review like any recipe** (#1950): a click is a recipe Request on the generic path, `post-review` is review's `task-output.on-finish` (#1946), and a click's instructions reach the run (#1939).
 
 A PR review is the last agent task the board runs on the old mechanism. `factory pr review` renders `structured_review.txt`, runs `review.sh` with the full token, and then either posts a review itself (`--publish yes|draft`) or prints it between stdout markers, which repo-agent greps and keeps as a draft on the board. Triage, plan and research already run as recipes: a task session in the sandbox's daemon, a typed task output, actions that whoever shows the result builds its controls from, and `factory apply` doing the writes with the caller's token.
 
 This note moves review onto recipes too, on two decisions:
 
 1. **The draft is GitHub's pending review.** That is where a review is easiest to reason about: on the diff, next to the code, with GitHub's own controls for editing, deleting and submitting comments. The board only gets the review onto GitHub; it does not keep a draft of its own.
-2. **The overseer is left as it is.** The watch's reviews, `factory pr review`, `review.sh`, `structured_review.*` and `EnsureReviewSandbox` keep working exactly as they do today. Nothing here changes what they do. There is no factory or overseer dependency on repo-agent.
+2. **The overseer is left as it is.** The watch's reviews, `factory pr review`, `review.sh`, `structured_review.*` and `EnsureReviewSandbox` keep working exactly as they do today. Nothing here changes what they do. There is no factory or overseer dependency on repo-agent. (Superseded by #1873 and #1874: the overseer runs this recipe and the classic review is deleted. There is still no dependency on repo-agent.)
 
 ## The design
 
@@ -17,8 +20,8 @@ This note moves review onto recipes too, on two decisions:
 
 - **`credentials: clone`.** The PR's title, body and code are anyone's, and the session runs with nobody approving its tools. The token therefore reaches the clone and nothing else, as research's does: no `setup-git`, no `gh` auth, nothing on disk.
 - **The clone fetches the PR.** With `PR_NUMBER` and `PR_BASE` set, `cloneRepo` (lib.sh) also fetches `refs/pull/<n>/head` and the base branch from `CLONE_URL` into `refs/factory/pr/{head,base}`, and checks the head out, detached. The agent reviews with `git diff refs/factory/pr/base...HEAD`, the PR's diff as GitHub shows it, without `gh`.
-- **Start:** clone, configure-engine, an ask that investigates, and an ask that writes the review as YAML, captured to `review.yaml`.
-- **Revise:** `review`, labelled *Update review*. After a *Continue session*, it rewrites the review from the conversation, in the same format. The revise has no token, so it does not re-fetch. Its result stays pinned to the commit the start reviewed.
+- **Start:** clone, configure-engine, an ask that investigates, and an ask that writes the review as YAML, captured to `review.yaml`. (Since #1938 the agent writes `review.yaml` itself; the ask `expects` it.)
+- **Revise:** `review`, labelled *Update review* (deleted by #1938; ask in the session instead). After a *Continue session*, it rewrites the review from the conversation, in the same format. The revise has no token, so it does not re-fetch. Its result stays pinned to the commit the start reviewed.
 - **No `task-type`.** It runs as `recipe-review`, the main task of its own sandbox (see below).
 
 The prompt comes from `structured_review.txt`. It drops the parts that contradicted each other (`file`/`comment` in the instructions, `path`/`body` in the schema) and the diff-URL fetching, which needs network access to GitHub.
@@ -53,7 +56,7 @@ spec:
 
 - **Parsing.** `review:` YAML, cleaned the way triage's is. Sides are normalized to `RIGHT`/`LEFT`, since GitHub rejects a whole review over `"RIGHT\n"`. A review with neither a body nor comments fails the task.
 - **`target.commit`** is new on `Target`, empty for every other kind. The runner (`writeTaskOutput`) sets it from `refs/factory/pr/head`, not from `HEAD`, which the agent may have moved. A Review wrapped without it, by the client for a sandbox image that predates the kind, cannot be posted. The fix is to run the review again on a newer image; there is no fallback.
-- **Default actions:** `edit` (spec, as YAML), `post-review` (*Post as pending review*), `reject`. The recipe adds `revise: review`. There is no `comment`: the review goes up as a review.
+- **Default actions:** `edit` (spec, as YAML), `post-review` (*Post as pending review*), `reject`. The recipe adds `revise: review` (gone since #1938). There is no `comment`: the review goes up as a review.
 
 ### `post-review`
 
@@ -89,20 +92,20 @@ It does not refuse when the caller has already submitted a different review of t
    - *Continue session* and *Update review* use the generic session view (#1766): the run is recorded with its `revises`.
    - The board's ignore-files and review instructions become `--instruction`s.
    - Auto-posting, if a board wants it, is the controller applying `post-review` when the task ends. The review still lands as pending, never submitted.
-3. **overseer.** Not planned: per the decision above it stays on `factory pr review`.
+3. **overseer.** Not planned: per the decision above it stays on `factory pr review`. (Done anyway in #1873: `submit-review`, a COMMENT review submitted as the watch's reviewer.)
 
 ## As built (phase 2)
 
-What repo-agent does, where it differs from step 2:
+What repo-agent does, where it differs from step 2. #1950 and #1954 later moved the board's review onto the generic recipe path, so `StartReview`, the `review/…` run name, `reviewState`, reviewed-at and the review error annotations below are gone: a click's run is named `request/<uid>`, the runner applies `post-review` because it is review's `on-finish`, and a run's draft, failure and chip are any recipe run's.
 
 - **The board posts every review as pending, with no draft step.** The board ran `factory pr review --publish draft` and grepped stdout for "posted as a draft", not `--publish no`. It never held a review draft to click on. Keeping that behaviour, the controller's runner applies `post-review` itself, as the executor, when the run ends: `factory recipe review` → `factory sandbox task output` → `factory apply -f <output> --action post-review`, one runner invocation (`StartReview`). There is no apply Request and no *Post as pending review* button on the row. The Review kind's actions (`edit`, `post-review`, `reject`) are registered with the board (`boardVerbs`/`defaultActions`), with `post-review` needing no permission beyond the comment's, so a row could offer them later.
 - **The run.** `--run-name review/<board>/<pr>/<unix>`, `--abort-on-cancel=false`, with the board's image, disk size and engine. It is recorded under `recipe-review-run`, and a restarted controller follows the recorded run by name, as a plan's is followed (no adoption). The `review/` prefix keeps it from following a revise recorded under the same annotation.
-- **No `--instruction`s.** A RepoBoard has no review instructions or ignore-files to pass. `ReviewOptions.Instructions` carries them once it does.
+- **No `--instruction`s.** A RepoBoard has no review instructions or ignore-files to pass. `ReviewOptions.Instructions` carries them once it does. (Since #1939 a click's instructions, "Review with instructions…", are passed.)
 - **Success** is `reviewState=pending` plus reviewed-at on `review-<repo>-<n>`. A failure, of the run or of the post, is the review error, parked until the member clicks Review again.
 - **Lookups go by name.** The board finds the review in `review-<repo>-<n>` in the executor's namespace (`ReviewSandboxName`, `ReviewPROf`): the review row's state, re-review, abandon, the resume and settle passes, and the Request's receipt. The PR's labelled sandbox (`factory-pr-…`, or an aliased fix sandbox) is still found by label, for the fix and its follow-ups. There is no compatibility path for the board's old `factory-pr` review sandboxes. A review left in one is not shown; Review starts a new one.
 - **Closed PRs.** The board has no closed-PR GC of its own. Cleanup of PR sandboxes is the watch's, which this change does not touch.
 - **A pending review factory posted does not block a launch.** The board refuses to launch over the member's own pending review (GitHub keeps one per author, and `post-review` would refuse it after a full run). A pending review carrying factory's Review marker is not counted, since `post-review` replaces it.
-- **Update review** is filed from the generic session view as a sandbox-keyed revise (`spec.sandbox: review-<repo>-<n>`, `revise: review`), as Save notes is. It is offered once the review is on GitHub and its run has ended. The controller asks the revise into the review's session and posts what it writes over the pending review (`ReviseOptions.PostReview`). The review is then pending again, even if the one before was submitted. The row's review-pending panel links *Continue session* next to *Finalize ↗* (GitHub's files view), and a running review's row links to *watch*. There is no draft panel.
+- **Update review** (deleted by #1940) was filed from the generic session view as a sandbox-keyed revise (`spec.sandbox: review-<repo>-<n>`, `revise: review`), as Save notes is. It is offered once the review is on GitHub and its run has ended. The controller asks the revise into the review's session and posts what it writes over the pending review (`ReviseOptions.PostReview`). The review is then pending again, even if the one before was submitted. The row's review-pending panel links *Continue session* next to *Finalize ↗* (GitHub's files view), and a running review's row links to *watch*. There is no draft panel.
 
 ## Not done
 

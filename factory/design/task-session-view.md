@@ -1,6 +1,6 @@
 # One session view for every recipe
 
-**Status:** Built. Step 1 (factory records the recipe's revises) shipped in #1765; steps 2 and 3 (repo-agent API and UI) are built.
+**Status:** Built: step 1 (factory records the recipe's revises) in #1765, steps 2 and 3 (repo-agent API and UI) in #1766. The one view stands; its revises do not. Revise was deleted (#1938 factory, #1940 repo-agent; [repo-recipes.md](repo-recipes.md#results-are-files-the-agent-writes)): the recorded run no longer carries `revises`, the `revise` route is gone, and a result is changed by asking in the session. The task-session `GET` now returns `recipes` (the session group's, [recipe-sessions.md](recipe-sessions.md)), run through `POST …/recipe`, and `draft`, re-read from the run's output when the agent rewrote it. Research conversations are listed on the Sessions page (#1910, #1920), not a board tab.
 
 Research has been a recipe since #1755, and a research conversation is a daemon task session, like a plan's or a triage's after *Continue session*. The board still shows the two differently. The browser uses one component for both, but it runs two mechanisms side by side:
 
@@ -51,6 +51,9 @@ A session knows its buttons from the moment it starts, whether or not an output 
 3. **UI.** One view from `revises` and `draft`. The 💾, the notes panel and the `/research/:session/*` session routes are deleted.
 
 ## As built
+
+Since #1938/#1940: *Save notes* is a button that sends "Save notes." into the conversation, and research's notes are its run's optional `Notes` output on the generic draft path. *Update plan* and *Update review* are things to say in the session. The `revises` below describe the view as #1766 built it.
+
 
 - **Triage has no draft panel.** Its draft is YAML for the board row's form, not a document, so a triage session shows its revises (disabled, with why) and no draft.
 - **A plan's revise is disabled** once the plan is approved, before there is a draft, or when the draft came from another session.

@@ -2,12 +2,12 @@
 
 | Metadata | Details |
 | :--- | :--- |
-| **Status** | Implemented |
+| **Status** | Implemented (Phases 1-4). Two subcontrollers came later: the fan-out controller (`watch/fanouts`, #1826) and the warm workspace pass (`watch/warmworkspace`, [warm-workspace.md](warm-workspace.md)). Since #1576 the scanners run 2m fast / 10m sweep and the PR scanner evaluates sequentially (no worker pool). Since October 2026 the decisions inside the scanners are the rules engine's ([watch-rules.md](watch-rules.md)): the prebaked rules in `factory/pkg/watch/rules/*.yaml` decide every issue and PR rule, the scanners read facts and carry the decisions out (#2053, #2055), writes go through `act.ApplyWrites` (#2042), tasks carry the rule's recipe, apply and inputs (#2044, #2059), the dispatcher re-decides each task just before it starts (#2041, #2049), and the gates are code (#2039). Where this note describes a decision, the named rule file is authoritative. |
 | **Author(s)** | Sam Dowell (`sdowell@google.com`) |
 | **Created** | 2026-08-31 |
-| **Last Updated** | 2026-09-17 |
+| **Last Updated** | 2026-10-21 |
 
-This document proposes a decoupled, asynchronous subcontroller architecture for the `factory watch` command. It details the motivation, structural design, shared memory model, concurrency controls, lifecycle management, and a gradual implementation plan.
+This document describes the decoupled, asynchronous subcontroller architecture for the `factory watch` command. It details the motivation, structural design, shared memory model, concurrency controls, lifecycle management, and a gradual implementation plan.
 
 ---
 
@@ -20,7 +20,7 @@ The `factory watch` daemon serves as the central background orchestration engine
   * Reduce newly assigned/created issue pickup latency from **O(minutes-hours) down to O(seconds)**.
   * Reduce task scheduling latency to **at most one dispatch interval**, by dispatching from an in-memory queue on a dedicated loop that is never blocked behind scan cycles.
 * **Decoupled Separation of Concerns**:
-  * Break down the monolithic loop into **5 dedicated, autonomous subcontrollers** running in isolated goroutines coordinated by a shared context.
+  * Break down the monolithic loop into **dedicated, autonomous subcontrollers** (5 at first; the fan-out controller and the warm workspace pass have joined since) running in isolated goroutines coordinated by a shared context.
   * Enforce strict, uni-directional dependencies to prevent circular cross-controller calls.
 * **Shared In-Memory State with Disk Write-Through**:
   * Maintain queue state, sandbox leases, and repository metadata in thread-safe memory primitives (`TaskQueueManager`, `SandboxLockRegistry`, `EntityStateCache`).
@@ -32,8 +32,8 @@ The `factory watch` daemon serves as the central background orchestration engine
 
 ## 2. Problem Statement & Motivation
 
-### Current Monolithic Architecture
-Currently, `Watcher.Run()` executes a single sequential loop governed by a 10-second sleep timer:
+### The Monolithic Architecture It Replaced
+`Watcher.Run()` used to execute a single sequential loop governed by a 10-second sleep timer:
 
 ```mermaid
 flowchart TD
@@ -67,20 +67,20 @@ flowchart TD
 
 ---
 
-## 3. Proposed Architecture
+## 3. Architecture
 
-The daemon will be rearchitected into **5 decoupled subcontroller goroutines** plus an HTTP server, running concurrently under a shared root context. The subcontrollers coordinate entirely through thread-safe in-memory primitives:
+The daemon runs **decoupled subcontroller goroutines** plus an HTTP server, concurrently under a shared root context. The subcontrollers coordinate entirely through thread-safe in-memory primitives. The diagram shows the original five; the fan-out controller (`watch/fanouts`, 5m, woken when a child's sandbox is collected) and the warm workspace pass (`watch/warmworkspace`, 5m, only in `all`/`run` mode) run beside them. The scanners ask the rules engine (`factory/pkg/watch/rules`) what to do with each item:
 
 ```mermaid
 flowchart TB
     subgraph External["External Systems"]
         GH["GitHub REST API"]
-        K8S["Kubernetes API / Envd"]
+        K8S["Kubernetes API / task server"]
     end
 
     subgraph Controllers["Autonomous Subcontroller Goroutines"]
-        ISC["Issue Scanner<br/>(Single Cycle: 30s-60s)"]
-        PSC["PR Scanner<br/>(Single Cycle: 1m-2m<br/>+ Worker Pool)"]
+        ISC["Issue Scanner<br/>(2m fast, 10m sweep)"]
+        PSC["PR Scanner<br/>(2m fast or 10m sweep,<br/>sequential)"]
         CSC["Chore Scheduler<br/>(Ticker: 30s<br/>+ 5m definition cache)"]
         TQD["Task Dispatcher<br/>(Dedicated Ticker: 30s)"]
         SGC["Sandbox Reconciler & GC<br/>(Ticker: 30s-60s)"]
@@ -129,7 +129,7 @@ flowchart TB
     TQM -->|"Append event"| FS_JRNL
 
     %% Reconciliation Flow
-    SGC -->|"1. Check pod states & envd status"| K8S
+    SGC -->|"1. Check pod states & task status"| K8S
     SGC -->|"2. Fast-path check open status"| ESC
     SGC -->|"3. Clean up closed sandboxes"| K8S
 
@@ -150,40 +150,41 @@ To guarantee maintainability and eliminate circular dependencies, subcontrollers
   * `SweepInterval` paginates over every trigger-labelled issue and publishes the open-issue set to `EntityStateCache`. This is the expensive half; running it on the fast ticker would multiply its GitHub traffic tenfold to discover the same issues the fast queries already surface while they are being worked on. It also fires on the first cycle, so a restart does not wait out a full sweep interval.
   * An issue that falls off the first page of the fast queries has not been touched recently, and is picked up by the sweep.
 * **Responsibilities**:
-  * Scans open issues assigned to bot accounts or created by the user login (automatically labeling and assigning newly created user issues) and issues carrying the trigger label (e.g., `factory`).
+  * Scans open issues assigned to bot accounts or created by the user login (automatically labeling and assigning newly created user issues) and issues carrying the trigger label (e.g., `factory`). Fan-out parents are skipped, for adoption and for queueing.
   * Filters out items that are pull requests (`item.PullRequestLinks != nil`).
   * Consults `EntityStateCache.GetReferencedIssuesMap()` for instant O(1) in-memory checks rather than calling the GitHub Timeline API, and falls back to the Timeline and Search APIs only for the issues that survive it.
   * Probes `SandboxService.IsTaskRunning(sandboxName)` to avoid duplicate work if a sandbox is currently active.
   * Uses `TaskQueueManager.TaskExists(filename)` as the authoritative in-memory check before falling back to disk, and withdraws the pending tasks of an issue that has since been stopped.
-  * Keeps its own record of when each issue was last worked on, recovered on first use from `Queue.ListProcessedTasks()` rather than by reading `processed/`. It is a plain map with no mutex, because `ScanOnce` is only ever called from the `Run` loop or from the caller itself in `--once` mode. The per-workflow cooldown is answered the same way, from `Queue.GetProcessedTask(filename)`.
-  * Enqueues `issue-fix` (or `agent-chore` if the issue specifies an `.agents/` workflow) directly into `TaskQueueManager`.
+  * Reads each issue's facts into a `rules.Item` (`Scanner.Facts` for one item) and asks the engine: first the rule's policy on the cheap facts (`Set.Held`: cooldown, once per update, a give-up due), then `Set.Decide`. The rules are `workflow-missing`, `workflow` and `fix` (`factory/pkg/watch/rules/`). The last run and the per-workflow cooldown come from `Queue.GetProcessedTask(filename)` and the workflow definition; the scanner keeps no record of its own.
+  * Carries out the decision: enqueues the `issue-fix` or workflow (`agent-chore`) task stamped with the rule's recipe, apply and inputs (`act.Task`) directly into `TaskQueueManager`, or makes its writes (`act.ApplyWrites`: a give-up's stop label and comment). `workflow-missing`'s stop keeps a handler, which posts the rule's comment with the definition and its load error. One task per issue at a time (`HasActiveIssueTask`).
 * **Cold Cache Guard**: An unpopulated open PR cache is indistinguishable from "no open PR references this issue", so a scan that trusted it would re-trigger fixes for issues that already have one — which is exactly what happened after a restart into a rate limit window. The scanner fails closed on `HasOpenPRs()`. Because the two scanners are gated independently and a deployment can scan issues with pull request scanning switched off, the issue scanner primes that half of the cache itself with a single listing when — and only when — no pull request scanner is running to fill it. It is not a fallback for a cache the owner has simply not reached yet: priming on cold alone would duplicate the listing on every start and give the cache two writers.
 * **Pause Signal**: `Deps.Paused` is the same read-only drain signal the reconciler and chore scheduler take. Queueing a fix is taking on new work, which is precisely what a drain stops.
 * **Decoupling Guarantee**: Does **not** invoke `PRScanner.ProcessPRs`. Pull requests returned in GitHub API issue queries are dropped: the pull request scanner lists them itself on its own cadence, which keeps the dependency graph acyclic without a handoff channel or a shared primitive to carry it.
 
 
 ### 2. `PRScanner`
-Implemented as `watch/prs.Scanner` (`New(Config, Deps)` / `Run(ctx)` / `ScanOnce(ctx)`).
+Implemented as `watch/prs.Scanner` (`New(Config, Deps)` / `Run(ctx)` / `ScanOnce(ctx)`). It reads facts and carries out the rules engine's decisions; the rules are, in order, `inherit-labels`, `inactive`, `comments`, `conflict`, `ci`, `review`, `ready`, `ready-unreview` (and `adopt-pr`, shipped off).
 
 * **Cadence**: Two intervals rather than a single ticker, for the same reason the reconciler, the chore scheduler and the issue scanner ended up with two:
   * A **fast pass** over the pull requests currently assigned to the bot pool — one single-page query per bot account. Assignment is how a pull request is claimed, so this is exactly the set with work in flight, and therefore the set whose CI results, review feedback and merge state change between sweeps.
   * A **sweep** over every pull request the watcher is responsible for (assigned *or* trigger-labelled, both fully paginated), which also refreshes the open PR half of `EntityStateCache`.
-  * The two are **alternatives within a cycle**, not additions: the sweep's candidate set is a superset of the fast pass's, so running both would evaluate the assigned pull requests twice. Evaluating one pull request costs the better part of a dozen GitHub requests; running sweeps on the fast cadence would exhaust a busy repository's hourly rate limit.
+  * The two are **alternatives within a cycle**, not additions: the sweep's candidate set is a superset of the fast pass's, so running both would evaluate the assigned pull requests twice. Evaluating one pull request costs the better part of a dozen GitHub requests; running sweeps on the fast cadence would exhaust a busy repository's hourly rate limit. The fast pass also skips a pull request unchanged since its last complete evaluation (`needsEvaluation`). Optionally (`GraphQLPRDetails`, #1991) the details of a batch are read ahead in one GraphQL query.
 * **Responsibilities**:
   * Publishes the open PR list to `EntityStateCache` on each sweep, from which the issue scanner learns which issues already have a fix in flight and the sandbox reconciler learns which sandboxes are still wanted. A failed listing leaves the previous copy in place rather than publishing a partial one as complete.
   * Fetches each pull request's conversation once per evaluation (`prHistory`: commits, comments, reviews, inline review comments) so that every phase reasons about the same snapshot.
-  * Inherits labels from the issues a pull request closes, then re-checks the stop label — the sync itself may have applied it.
-  * **Adopts orphaned bot pull requests** at the top of each sweep, before the candidate listing. The candidate set is "assigned *or* trigger-labelled", so a pull request with neither is invisible — and the label inheritance above, which would have fixed that, runs inside the evaluation it never gets. That is not hypothetical: a watch cycle that recycles while a fix task is running kills the `factory fix` process that would have labelled the resulting pull request, while the task itself keeps going detached and opens one anyway. The pass runs over the open PR list the sweep has already fetched, so finding the orphans is free, and it runs before the listing so that a pull request adopted in a cycle is also evaluated in it. Adoption is gated on the parent issue carrying the trigger label: a bot account also opens pull requests that are none of the watcher's business, and from here they are indistinguishable from a fix except by what the repository has already said about the issue behind them.
-  * Pauses a pull request no human has engaged with for `PRInactivityTimeout`, applying the stop label and posting the explanation once.
+  * Applies the engine's `inherit-labels` writes (labels of the issues a pull request closes), then re-checks the stop label — the sync itself may have applied it.
+  * **Adopts orphaned bot pull requests** at the top of each sweep, before the candidate listing (`prs/adoption.go`). This pass is still code, outside the engine: the `adopt-pr` rule that describes it ships off and is not consulted. The candidate set is "assigned *or* trigger-labelled", so a pull request with neither is invisible — and the label inheritance above, which would have fixed that, runs inside the evaluation it never gets. That is not hypothetical: a watch cycle that recycles while a fix task is running kills the `factory fix` process that would have labelled the resulting pull request, while the task itself keeps going detached and opens one anyway. The pass runs over the open PR list the sweep has already fetched, so finding the orphans is free, and it runs before the listing so that a pull request adopted in a cycle is also evaluated in it. Adoption is gated on the parent issue carrying the trigger label: a bot account also opens pull requests that are none of the watcher's business, and from here they are indistinguishable from a fix except by what the repository has already said about the issue behind them.
+  * Applies the engine's `inactive` stop: a pull request no human has engaged with for `prInactivityTimeout` gets the stop label and the explanation once.
   * Uses `Sandboxes.IsTaskRunning` and `TaskQueueManager.TaskExists` / `HasActivePRTask` as the authoritative in-memory checks, rather than racy disk directory scans during task renames.
-  * Evaluates PR state across four **ordered** phases. The order is the design, not an implementation detail: unaddressed feedback wins over everything, because a human asking for a change makes the conflict or CI failure the agent would otherwise chase irrelevant.
-    1. **Review Feedback & Comments**: unaddressed human comments and bot reviews (`pr-comments`), acknowledged with `eyes` reactions.
-    2. **Conflicts / Rebase**: gated on mergeability (`pr-iterate`) — nothing can be verified until the branch merges.
-    3. **CI Gating & Investigation**: check runs and commit statuses (`pr-investigate`), with a three-attempt circuit breaker that resets on a new commit or a human comment.
-    4. **Automated Code Review**: opt-in by label (`pr-review`), strictly gated on `!hasPending && !hasFailure`.
-  * **Deterministic Ready-for-Human Reconciler**: gated on clean CI, addressed comments, completed reviews and no active task (`!HasActivePRTask`, read from memory so the label does not flap while a task file is renamed between directories). Runs in both directions — removing the label matters as much as adding it — and unassigns the bot on qualification.
-  * Enqueues tasks directly into `TaskQueueManager`.
-* **State ownership**: the `lastReviewedSHA` / `lastCommentAddressedSHA` / `lastInvestigatedSHA` / `lastIteratedSHA` gating record lives in a mutex-guarded `stateStore` **inside the package**, not on `EntityStateCache` as §5C originally proposed. Nothing outside this scanner reads it, and the shared cache is for state that crosses subcontroller boundaries; putting single-owner bookkeeping there would make it look shared when it is not. The mutex is what the worker pool requires, and it is cheaper than a shared primitive. The store recovers itself on first use by folding `Queue.ListProcessedTasks()`, and the "did the last investigation fail, so is this revision worth another attempt?" check reads `Queue.GetProcessedTask(filename)`; neither opens a task file.
+  * The care rules take the pull request in **order**, at most one per evaluation. The order is the design, not an implementation detail: unaddressed feedback wins over everything, because a human asking for a change makes the conflict or CI failure the agent would otherwise chase irrelevant.
+    1. **Review Feedback & Comments** (`comments.yaml`, `pr-comments`, recipe `care-comments`): new trusted feedback, acknowledged with `eyes` reactions; gives up after 3 failed runs.
+    2. **Conflicts / Rebase** (`conflict.yaml`, `pr-iterate`, recipe `care-rebase`) — nothing can be verified until the branch merges.
+    3. **CI Gating & Investigation** (`ci.yaml`, `pr-investigate`, recipe `care-ci`): a 2h cooldown, and a give-up after 3 attempts since a new commit, a trusted human comment or the last pause.
+    4. **Automated Code Review** (`review.yaml`, `pr-review`, recipe `review`): opt-in by label, CI green, once per head.
+    The scanner's handlers (`prs/handlers.go`) build the task for the decided rule; a give-up is the rule's writes (stop label and comment).
+  * **Ready-for-Human** (`ready.yaml`, `ready-unreview.yaml`): gated on clean CI, no pending feedback, a satisfied review and no active task (`HasActivePRTask`, read from memory so the decision does not flap while a task file is renamed between directories). It adds the label, drops `*/review` and unassigns the bot. It never removes the label (#1597).
+  * Enqueues tasks directly into `TaskQueueManager`, stamped with the rule's recipe, apply and inputs (`act.Task`).
+* **State ownership**: the scanner's own record (`prState`: when feedback was last addressed, and what the last complete evaluation saw, for the fast pass's skip) lives in a mutex-guarded `stateStore` **inside the package**, not on `EntityStateCache` as §5C originally proposed. The per-commit gating (reviewed, investigated, rebased at this head) is now the rules' policy (`dedupe`, `cooldown`, `give-up`), answered from the queue's processed tasks. Nothing outside this scanner reads it, and the shared cache is for state that crosses subcontroller boundaries; putting single-owner bookkeeping there would make it look shared when it is not. The store recovers itself on first use by folding `Queue.ListProcessedTasks()`, and a rule's last run on this pull request is read from `Queue.GetProcessedTask(filename)`; neither opens a task file.
 * **Decoupling Guarantee**: Does **not** scan issues or chores. Issue-typed items returned by its queries are dropped.
 
 ### 3. `ChoreScheduler`
@@ -199,7 +200,7 @@ Implemented as `watch/prs.Scanner` (`New(Config, Deps)` / `Run(ctx)` / `ScanOnce
   * Computes the next execution with `cron.Parse(schedule).Next(lastRun)`, treating `never` and `paused` as disabled and a chore that has never run as immediately due. An unparsable expression falls back to a 24h interval with a warning, rather than silently disabling the chore on a typo.
   * Uses `TaskQueueManager.TaskExists(filename)` as the in-memory deduplication: a chore still queued or running from an earlier cycle is skipped outright, since the queue is keyed by file name and a second copy could not be distinguished from the first.
   * Tracks execution history in `chores_state.json` under the queue directory, read once on first use and served from memory afterwards — the scheduler is that file's only writer. Writes go through a temporary file and a rename: a crash mid-write would otherwise leave a truncated file that reads back as "no chore has ever run" and re-fires every chore. A run is recorded only once the enqueue succeeded.
-  * Enqueues `agent-chore` tasks directly into `TaskQueueManager`.
+  * Enqueues `agent-chore` tasks directly into `TaskQueueManager`. The `chore` rule (`chore.yaml`) describes this scheduler; the engine does not decide it.
 * **Pause Signal**: `Deps.Paused` is the same read-only drain signal the `SandboxReconciler` takes, supplied by `Watcher.draining`. Draining is how an operator stops the daemon from taking on new work, and a chore queued during a drain is exactly that. As with the reconciler, shutdown does *not* travel through it: the scheduler runs under the daemon context, and cancelling that also aborts a cycle already in flight.
 * **Single-Goroutine by Construction**: The definition cache and the run state are plain fields with no mutex, because `ScheduleOnce` is only ever called from the `Run` loop, or from the caller itself in `--once` mode. Nothing else may call into the scheduler concurrently.
 * **Decoupling Guarantee**: Completely independent of PR and issue scanning cycles. Chores previously rode inside the *slow PR cycle* of `checkRepo`, which meant a chore came due up to 5 minutes before anything noticed, and any GitHub latency in PR evaluation delayed it further.
@@ -221,8 +222,8 @@ Implemented as `watch/prs.Scanner` (`New(Config, Deps)` / `Run(ctx)` / `ScanOnce
   * Task claim and lease acquisition flow:
     1. Atomically claims candidate task in memory (`incoming` $\rightarrow$ `processing`) and moves disk file (`incoming/` $\rightarrow$ `processing/`).
     2. Atomically acquires lease in `SandboxLockRegistry` via `sandboxLocks.TryAcquire(sandboxName, filename)`. If acquisition fails, reverts task back to `incoming` via `RequeueTask`.
-    3. Performs post-claim validation outside the queue lock: checks stop labels (`overseer/stop`), closed state, and completed recovery status. If invalidated, marks completed/cancelled outside the lock without deadlocking.
-  * Spawns an asynchronous worker goroutine that delegates execution to a `TaskRunner`. The production implementation, `CLIRunner`, is the only component that maps a task onto a child `factory` CLI command line.
+    3. Performs pre-start validation outside the queue lock: the stop label and closed state (`ShouldCancelTask`), then, for a task not recovered, the **decision at start** (`Redecide`, `atstart.go`): the engine decides the task's rule again on the item's facts read now, as if the task were not there, and a gate, a moved head or a rule that no longer decides (or is disabled) drops it, not counted as an attempt. A sandbox that needs a person (`RequiresHuman`) removes the task too.
+  * Spawns an asynchronous worker goroutine that delegates execution to a `TaskRunner`. The production implementation, `CLIRunner`, is the only component that maps a task onto a child `factory` CLI command line: `factory recipe <task.Recipe>` with the rule's `--apply --action`, `--pr-labels` and inputs (`api.RecipeArgs`); `api.RecipeTask` keeps only the run-name prefix and the sandbox. A task no rule stamped runs nothing.
   * Worker completion handling (success, failure, or timeout):
     1. Calls `TaskQueueManager.CompleteTask` or `TaskQueueManager.FailTask`.
     2. Atomically moves disk file from `processing/` $\rightarrow$ `processed/`.
@@ -239,8 +240,8 @@ Implemented as `watch/prs.Scanner` (`New(Config, Deps)` / `Run(ctx)` / `ScanOnce
   * Both cycles also run once at startup, so a daemon that is restarted more often than `GCInterval` still collects. Because the two share a goroutine, a slow sweep of either kind postpones the other until it returns; that is accepted deliberately in favour of a loop with no timeout plumbing or lifecycle of its own.
 * **Responsibilities**:
   * Proactively deletes evicted sandbox pods (`Phase == Failed`, `Reason == Evicted`) and increments eviction counts. The sandbox name can live under either the `sandbox` or the `agents.x-k8s.io/sandbox` label, and a label selector cannot express "has either key", so each key is listed in turn and the results merged. The pod delete arbitrates the eviction count: `Service.IsTaskRunning` cleans up evicted pods too, so only whoever wins the delete increments the counter and the loser sees `NotFound`.
-  * Reconciles running sandbox pods (checks container exit codes and `envd` status, updates annotations) via `Service.RefreshTaskState`, which is `IsTaskRunning` under the name that admits the annotation correction is the point and the boolean incidental.
-  * Cleans up sandboxes belonging to closed/merged PRs and closed issues (using `EntityStateCache` to fast-path open entities without GitHub API calls).
+  * Reconciles running sandbox pods (checks container exit codes and the task status, updates annotations) via `Service.RefreshTaskState`, which is `IsTaskRunning` under the name that admits the annotation correction is the point and the boolean incidental.
+  * Cleans up sandboxes belonging to closed/merged PRs and closed issues (using `EntityStateCache` to fast-path open entities without GitHub API calls). A collected closed issue is passed to the nudger (the `linked-issue-closed` event the `nudge` rule describes) and to the fan-out controller, which wakes the child's parent.
   * **Lease-Protected Operations**: The reconciler *takes* `sandboxLocks.TryAcquire(sandboxName, "sandbox-gc")` for the whole confirm-and-delete, rather than testing `IsBusy` and then acting. Testing is not enough: confirming an entity against GitHub or probing a sandbox takes long enough that the dispatcher could lease the sandbox and start a task in the gap, and the delete would then destroy the workspace that task is running in. Holding the lease makes the dispatcher's `TryAcquire` fail instead, so it simply retries on a later cycle. This covers closed PR/issue collection, stale eviction and idle suspension.
   * Suspends idle sandboxes by walking the sweep's own listing and calling `factorysandbox.SuspendSandboxIfIdle` per sandbox, each bracketed by the same acquire/release as every other pass, so a lease is never held across more than one sandbox. Sandboxes already deleted earlier in the sweep are skipped. Because the listing can be minutes old by the time a given sandbox is reached, `SuspendSandboxIfIdle` re-reads the sandbox before writing: the stale copy would carry a stale `resourceVersion`, and the re-read is also the last chance to notice the sandbox picked up work in the meantime.
   * Harvests token usage via `usagereport.HarvestSandbox`.
@@ -252,7 +253,7 @@ Implemented as `watch/prs.Scanner` (`New(Config, Deps)` / `Run(ctx)` / `ScanOnce
 ### 6. `QueueServer` (HTTP API)
 * **Port**: `:13338`
 * **Responsibilities**:
-  * Serves `GET /api/v1/queue` directly from in-memory state via `TaskQueueManager.GetQueueResponse()` under an `RLock()` in **< 1ms**.
+  * Serves `GET /api/v1/queue` directly from in-memory state via `TaskQueueManager.GetQueueResponse()` under an `RLock()` in **< 1ms**, with the rules engine's summary (`rules`: runs, give-ups and drops per rule) beside it, and `GET /api/v1/status`.
   * Handles queue mutation endpoints (`DELETE /queue/:task`, `POST /queue/:task/priority`) by updating in-memory state and persisting to disk.
 
 ---
@@ -385,9 +386,9 @@ func (w *Watcher) Run(ctx context.Context) error {
 
     if w.Once {
         w.reconciler.ReconcileOnce(ctx)
-        w.checkRepo(ctx)
-        w.reconciler.CollectGarbage(ctx) // after the scan, so the entity cache is warm
-        w.dispatcher.DispatchOnce(ctx)
+        // issue scanner + fan-outs, PR scanner, chores, each if its mode is on
+        w.reconciler.CollectGarbage(ctx) // after the scans, so the entity cache is warm
+        w.dispatcher.DispatchOnce(ctx)   // and the warm workspace pass, in all/run mode
         w.Wait() // delegates to each subcontroller's own Wait()
         return nil
     }
@@ -397,28 +398,28 @@ func (w *Watcher) Run(ctx context.Context) error {
 
     // Each subcontroller's Run() drains its own workers before returning.
     var wg sync.WaitGroup
-    for _, run := range []func(context.Context) error{w.reconciler.Run, w.dispatcher.Run} {
-        wg.Add(1)
-        go func() { defer wg.Done(); _ = run(daemonCtx) }()
+    wg.Add(1)
+    go func() { defer wg.Done(); _ = w.reconciler.Run(daemonCtx) }()
+    if w.issuesEnabled() {
+        // w.issueScanner.Run and w.fanouts.Run, the same way
     }
+    // w.prScanner.Run if w.prsEnabled(), w.chores.Run if w.choresEnabled(),
+    // w.dispatcher.Run (and w.warmWorkspace.Run) in all/run mode
 
     doneChan := make(chan struct{})
     go func() { defer close(doneChan); wg.Wait() }()
 
-    for {
+    // Every cycle belongs to a subcontroller: this goroutine only supervises.
+    select {
+    case <-ctx.Done():
+        return ctx.Err()
+    case <-w.timeoutChan:
+        daemonCancel()
         select {
-        case <-ctx.Done():
-            return ctx.Err()
-        case <-w.timeoutChan:
-            daemonCancel()
-            select {
-            case <-doneChan: // all subcontrollers quiesced
-            case <-time.After(5 * time.Minute):
-            }
-            return nil
-        case <-time.After(pollInterval):
-            w.checkRepo(ctx)
+        case <-doneChan: // all subcontrollers quiesced
+        case <-time.After(dispatcher.DefaultShutdownGracePeriod + time.Minute):
         }
+        return nil
     }
 }
 ```
@@ -427,8 +428,8 @@ func (w *Watcher) Run(ctx context.Context) error {
 * When `ctx.Done()` is received or `WatchTimeout` expires:
   1. `daemonCancel()` cancels `daemonCtx`, signaling all subcontrollers to exit their polling `select` loops cleanly.
   2. `TaskDispatcher` stops claiming new tasks from `incoming`.
-  3. Each subcontroller's `Run` blocks on its own `defer wg.Wait()`, letting active workers and adopted-task monitors finish before returning.
-  4. The `Watcher` waits for every subcontroller's `Run` to return, bounded by a 5-minute maximum drain timeout.
+  3. Each subcontroller's `Run` blocks on its own `defer wg.Wait()`, letting active workers finish before returning.
+  4. The `Watcher` waits for every subcontroller's `Run` to return, bounded by the dispatcher's shutdown grace period plus a minute; tasks still running are recovered on the next run.
 * When drain mode (`TaskQueueManager.IsDrainMode()`, backed by the `DO_NOT_PROCESS` marker in the queue directory) is active:
   1. The `TaskDispatcher` stops claiming new tasks.
   2. Active in-flight tasks continue running until completion.
@@ -454,9 +455,9 @@ To prevent race conditions, deadlocks, and state divergence in this asynchronous
 
 | Metric / Scenario | Current Monolithic Architecture | Proposed Subcontroller Architecture |
 | :--- | :--- | :--- |
-| **New Issue Pickup Latency** | minutes - hours (sequential loop blocking) | **Up to 30–60 seconds** (dedicated single-cycle issue ticker) |
+| **New Issue Pickup Latency** | minutes - hours (sequential loop blocking) | **Up to 2 minutes** (dedicated issue scanner fast pass; 30s as first built, 2m since #1576) |
 | **Task Dispatch Latency** | 0s – 30s after enqueue, plus any in-progress scan (minutes) | **≤ one dispatch interval** (dedicated dispatcher goroutine, never blocked by scans) |
-| **PR Evaluation Concurrency** | Serial loop (all PRs block one another) | **Concurrent** (bounded worker pool in the PR scanner) |
+| **PR Evaluation Concurrency** | Serial loop (all PRs block one another) | **Serial, but in its own goroutine** (the worker pool landed, then went in #1576; the fast pass skips unchanged PRs) |
 | **Chore Trigger Precision** | Delayed by up to 5 minutes, plus any in-progress PR scan | **Up to 30 seconds** (dedicated evaluation ticker over cached definitions) |
 | **HTTP Queue API Latency** | 50ms – 500ms+ (disk scans & YAML parsing) | **< 1 millisecond** (in-memory `RLock` read) |
 | **Sandbox Concurrency Checks** | Repetitive K8s API calls per candidate | **O(1) in-memory lookups** (`SandboxLockRegistry`) |
@@ -488,7 +489,7 @@ To avoid the code sprawl and tight coupling seen in initial refactoring attempts
          DryRun       bool
      }
      ```
-3. **Preserve Existing Fixes on `main`**:
+3. **Preserve Existing Fixes on `main`** (now in the rules: `checks: green` in `review.yaml` and `ready.yaml`, `unassign` in `ready.yaml`, the active-task hold in the engine):
    * CI pending status gating (`!hasPending`) for `ready-for-human` and automated bot reviews.
    * State-driven bot unassignment upon `ready-for-human` qualification.
    * Active PR task check (`hasActivePRTask`).
@@ -555,3 +556,11 @@ Extracted one subcontroller at a time, each landing as its own package with the 
 * **Verification Gate**:
   * Full repository test pass: `go test -race ./factory/pkg/commands/watch/...`.
   * End-to-end integration test verifying concurrent task enqueue and dispatch.
+
+### Since: the rules engine
+* **Status**: Built, October 2026 ([watch-rules.md](watch-rules.md), user guide [../docs/watch-rules.md](../docs/watch-rules.md)).
+* **Scope**: The subcontroller structure above is unchanged; what moved is the decision logic inside the scanners and the dispatcher's pre-start check.
+  * The prebaked rules (`factory/pkg/watch/rules/*.yaml`) decide every issue and PR rule; the scanners read facts and carry out the decisions (Phase 4 B1 #2053, B2 #2055). Writes go through `act.ApplyWrites` (#2042).
+  * Tasks carry the rule, recipe, apply and inputs (#2044); the runner runs them (Part C #2059).
+  * The decision at start (#2041, #2049) and the gates as code (stop, closed, below-min-number, merge queue; #2039).
+  * The operator's switch is `spec.rules.disabled` alone; the shadow, canary and handed switches are gone (#2051, #2057), and so is `spec.attempts` (#2062).

@@ -1,10 +1,10 @@
 # A branch per run
 
-Status: proposed. It follows remove-envd.md step 4 (#1925), which moved a run's phases into the `run-plan`, `run-deploy` and `run-teardown` recipes and run.sh's functions into lib.sh. That step left where a run's files live alone. This note changes it.
+Status: built (design #1926). Step 1, repo-agent reading `runs/*` branches only and the local-only warning label, is #1927; step 2, factory writing `runs/<run>` from `runs/root` in a worktree at `.factory-run`, is #1928. A PR per run is not built. Since then #1932 deleted `factory run`: repo-agent runs `factory recipe run-<phase> --run <name>`, in a sandbox named `run-<repo>-<run>`. It follows remove-envd.md step 4 (#1925), which moved a run's phases into the `run-plan`, `run-deploy` and `run-teardown` recipes and run.sh's functions into lib.sh. That step left where a run's files live alone. This note changes it.
 
-## Today
+## Before
 
-Every run lives in one branch: `docs-exploration/agent-runs/<run>/` on `research/runs`, a branch of the repository on the member's fork. For a repository the member cannot fork, the branch lives only in the run sandbox's checkout (local-only). Most of lib.sh's run section exists because of two things about that layout.
+The layout this note replaced. Every run lived in one branch: `docs-exploration/agent-runs/<run>/` on `research/runs`, a branch of the repository on the member's fork. For a repository the member cannot fork, the branch lived only in the run sandbox's checkout (local-only). Most of lib.sh's run section existed because of two things about that layout.
 
 **One shared branch.** Every run pushes to `research/runs`, so:
 - runs race each other's pushes, and the finish step replays a rejected push onto the moved branch;
@@ -16,7 +16,7 @@ Every run lives in one branch: `docs-exploration/agent-runs/<run>/` on `research
 - to deploy a pull request, its head is laid over the worktree, and cleared again before every commit (`resolveTarget`, `clearTarget`);
 - whatever the agent changed outside the run's directory has to be found and thrown away, and reported (`discarded` in result.json).
 
-## Proposal
+## Design
 
 **One branch per run, `runs/<run>`, on the member's fork, holding only the run's files at its root:** `runbook.md`, `params.env`, `deploy.sh`, `teardown.sh`, the receipts, and `target.env` for a pull request run. There is no `docs-exploration/agent-runs/<run>/` prefix, and none of the repository's code.
 
@@ -63,5 +63,5 @@ A PR per run is an addition, not part of this. It would open a draft PR in the f
 
 ## Steps
 
-1. **repo-agent reads runs from `runs/*` branches,** and a local-only run gets its warning label.
-2. **factory writes branches:** `run-prepare` and `run-finish` as above, and the prompts naming `.factory-run/`. lib.sh loses the shared-branch, overlay, discard and legacy code.
+1. **repo-agent reads runs from `runs/*` branches,** and a local-only run gets its warning label (#1927).
+2. **factory writes branches (#1928):** `run-prepare` and `run-finish` as above, and the prompts naming `.factory-run/`. lib.sh loses the shared-branch, overlay, discard and legacy code.

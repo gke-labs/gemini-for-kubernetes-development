@@ -1,6 +1,6 @@
 # Recipe sessions: a tag that groups recipes
 
-**Status:** Step 1 (factory) built. Changes care ([care-recipe.md](care-recipe.md)); the other recipes are unchanged.
+**Status:** Steps 1 (factory, #1834) and 2 (repo-agent: one group on the board #1836, New conversation #1837) built. Step 3's in-cluster verification is not recorded here. Changes care ([care-recipe.md](care-recipe.md)); the other recipes are unchanged. Since then: `revise:` is gone from every recipe (#1938), so a recipe's follow-ups are its session's siblings or a turn in the session; the overseer's watch runs `care-ci`, `care-comments` and `care-rebase` (#1878-#1880, now named by the watch rules in `factory/pkg/watch/rules/`); a run whose continued conversation outgrew the model's window goes on in one of its own (#1968).
 
 care has one start and four revises. To rebase a PR you first run the start (rebase, then fix checks, then answer comments) and only then the `rebase` revise. Its revises are not follow-ups to the start. Each is a job of its own, as useful first as fifth.
 
@@ -23,7 +23,7 @@ Recipes on one target already share a sandbox. Each keeps its own conversation: 
 2. **Nothing else is shared.** There is no session file and no inheritance: every tagged recipe is a whole recipe, as today, with its own `on`, `context`, `steps` and `task-output`. Steps several need (the PR checkout, the replies question, the push) are copied into each. Loading the recipes only checks that those with one tag agree on `on` and `credentials`, so that they land in one sandbox, and that one of them is named like the tag.
 3. **The recorded run is the session's.** It lives at `RunAnnotation("recipe-<session>")`; the run record keeps which recipe it ran. One run of a session at a time, as one task per sandbox is today.
 4. **A run in a session is a start that continues.** It opens the session with its steps if the session has no recorded run, or its recorded run's session is gone. Otherwise it asks its steps into that session (`OpenDaemonSession`). Its setup steps run again each time, so they must be idempotent. `--new-session` opens a new one regardless.
-5. **A recipe in a session has no `revise:`.** Its siblings are its follow-ups.
+5. **A recipe in a session has no `revise:`.** Its siblings are its follow-ups. (Since #1938 no recipe has one.)
 6. **Sessions never cross.** care's session is `care`, the fix's conversation is the fix's own: care never continues the fix, though both run in the PR's fix sandbox.
 7. **The tag is the board's group.** One chip per group per row (its newest run). One button, labelled with the recipe named like the tag: it runs that recipe, and the others are its `▾` menu, by their own labels.
 
@@ -81,7 +81,7 @@ So the board groups by `session || recipe`, where it keys by recipe today:
 | `latestRuns` (`Work.js`, `rows.go`) | key by group: one chip per group, its newest run |
 | Rail | one button per group, the recipe named like the tag, and `▾` for the rest (Iterate… prompts for its instruction) |
 | Running / ready gate | per group: no button or menu while any run of the group is running or starting |
-| Slide-over | the group's recipes where care's revises are today, plus ⋯ → New conversation (`--new-session`) |
+| Slide-over | the group's recipes where care's revises are today, plus ⋯ → New conversation (`--new-session`); built as the session `GET`'s `recipes`, run through `POST …/task-sessions/:sandbox/:task/recipe` (#1940) |
 
 Untagged recipes (fix, plan, triage, summarize, review, research) are each their own group, so their rows look as they do now. The launch path is today's (`recipe` Request verb, `POST ./recipes/:recipe`), one recipe per click.
 
@@ -111,4 +111,5 @@ Session `care` records at `recipe-care`, the annotation care's runs use today. T
 - `--new-session` exists only for a recipe in a session. A repository's runs (`--session`, research) are untouched.
 - care-iterate takes its instruction as `--instruction`. It has no `instructions` input, whose flag has the same name.
 - `pr watch` runs `care-ci` and `care-comments` under a `watch-<recipe>-<unix>` run name, then posts their replies (`post-replies`).
+- **A full conversation is left (#1968).** A run whose first ask, in a conversation an earlier run left, stops for `max_tokens` with nothing written closes it, opens one of its own, sends the context and the ask again, and marks its task `rotated`. The next run in the session continues the new conversation. It is the automatic way out of a session that grew too long (see Risks); New conversation is the board's.
 

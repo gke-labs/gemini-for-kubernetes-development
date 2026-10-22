@@ -22,8 +22,8 @@ getting there without changing what it does, is in
 | source | where | what it can do |
 |---|---|---|
 | factory | `factory/pkg/watch/rules/<name>.yaml`, embedded in the binary | the prebaked rules: today's watch, out of the box |
-| a repository | `.agents/rules/<name>.yaml` on its default branch (Phase 5) | replace a factory rule of the same name, add a rule of a new name, or turn a factory rule on or off |
-| the overseer | the Overseer's `spec.rules.disabled` (with the engine) | the operator's emergency switch: turn rules off |
+| a repository | `.agents/rules/<name>.yaml` on its default branch (Phase 5: the watch does not read these yet; `factory watch rules --dir` lays a checkout's over factory's for listing, explain and replay) | replace a factory rule of the same name, add a rule of a new name, or turn a factory rule on or off |
+| the overseer | the Overseer's `spec.rules.disabled` | the operator's emergency switch: turn rules off |
 
 A rule's file is named after it: `fix.yaml` holds the rule named `fix`.
 
@@ -369,19 +369,26 @@ A single rule decides:
 ## Before a task starts
 
 A decision is made at scan time; the task may wait in the queue behind
-the concurrency limits. Just before it starts, the dispatcher checks it
-again and drops it if:
+the concurrency limits. Just before it starts, the dispatcher has the
+engine decide the task's rule again, on the item's facts read then, as
+if the task were not there (not queued, its own run not counted). It
+drops the task if:
 
-- the item closed, or has the stop label (every task);
-- a PR task decided on its head (ci, conflict, review) finds the head
-  moved;
-- a fix finds an open PR linked to the issue.
+- a gate now holds: the item closed, has the stop label, or is in the
+  merge queue;
+- a PR task's head moved since it was decided;
+- the rule no longer decides it: feedback answered or gone, checks green,
+  an earlier rule now takes the item, a give-up due, a fix whose issue
+  got a linked PR;
+- the rule is disabled (`spec.rules.disabled`).
 
 A drop is not an attempt and starts no cooldown; the next scan decides
-again. Comments are not dropped by a push: a commit does not answer
-feedback. Which facts are checked follows from the task, not from the
-rule file; once the engine builds tasks itself, it decides the rule
-again on the item as it is instead.
+again. The reason is in the log and in the rule's `lastDrop` on the queue
+API. A workflow step the linked-issue nudge queued is held to the gates
+alone (the nudge steps inside the workflow's cooldown). A comments task
+acknowledges its feedback (👀) only when it starts, so the feedback is
+still new at this check. A task already running when the watch restarts
+is followed by its run name, never dropped.
 
 ---
 
@@ -390,9 +397,9 @@ again on the item as it is instead.
 A rule is on unless something turns it off. Each source overrides the one
 before it:
 
-1. **factory's file:** `enabled: false` ships a rule off (`inactive`: no
-   timeout by default; `stop`: the stop label is a gate, not a rule;
-   `adopt-pr`: a safety net held in reserve).
+1. **factory's file:** `enabled: false` ships a rule off (`adopt-pr`: a
+   safety net held in reserve). `inactive` ships on but holds only with a
+   timeout above 0 (`--pr-inactivity-timeout`).
 2. **a repository's file** of the same name with nothing but its name and
    `enabled` turns factory's rule off - or on - keeping the rest of it:
 
@@ -403,7 +410,8 @@ before it:
    ```
 
    A repository's file that is a whole rule replaces factory's rule of that
-   name, or adds a rule of a new name.
+   name, or adds a rule of a new name. (Phase 5: the watch does not read a
+   repository's rules yet; `--dir` shows what they would do.)
 3. **the overseer** (`spec.rules.disabled: [review]`): the operator's
    emergency switch, which only turns rules off: nothing decides a disabled
    rule, and its queued tasks are dropped before they start.

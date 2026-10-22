@@ -1,6 +1,15 @@
 # Multi-engine sandboxes: Claude Code alongside Gemini CLI
 
-Status: proposed
+Status: built — the four PRs of the plan merged: lib.sh consolidation (#1489),
+the claude engine (#1490, plus #1493 IS_SANDBOX), board plumbing (#1491,
+#1492), claude tool telemetry (#1494). Antigravity added later (#1670-#1677,
+section at the end). Since then the per-task scripts this note edits are gone:
+every task is a recipe (#1722, #1874, #1880, #1884, #1908, #1914) whose asks
+run through acpd sessions (#1744), and acpd starts gemini and antigravity
+only. `--engine claude` is still accepted and plumbs `ANTHROPIC_API_KEY`, but
+a recipe ask on claude fails at session create ("unknown engine"); making
+acpd engine-agnostic is an open follow-up. `runEngine` survives in `lib.sh`
+with no caller.
 Owner: barney-s
 Scope: factory (primary), repo-agent (plumbing), overseer (untouched)
 
@@ -38,6 +47,9 @@ The engine surface is exactly: one invocation line + one JSON field name +
 one API key + one usage-stats shape.
 
 ## Current state (verified touchpoints)
+
+As of the design (#1462). The nine task scripts were later deleted in favour
+of recipes; `lib.sh` and `recipe_step.sh` are what remain in `pkg/tasks`.
 
 | Component | Engine coupling |
 | --- | --- |
@@ -239,5 +251,8 @@ gemini board on the same repo before recommending defaults.
 - **Image**: a Go binary from `antigravity.google/cli/install.sh`, installed
   to `/usr/local/bin`; `AGY_CLI_DISABLE_AUTO_UPDATE=true` (exactly "true")
   stops it replacing itself in running pods.
-- **Not covered**: acpd (agy documents no ACP mode) and repo-agent's engine
-  picker / CRD enum, which still offer gemini and claude only.
+- **acpd**: agy has no ACP mode; acpd runs Google's separate
+  `agy_acp_server`, baked into the image at `/opt/agy-acp-server` (#1673).
+- **repo-agent**: the CRD enum is `gemini;claude;antigravity`, and the engine
+  picker, icon (#1671, #1675) and research sessions (#1674) offer it. A task
+  records the engine it ran on and the board reads it (#1677).
