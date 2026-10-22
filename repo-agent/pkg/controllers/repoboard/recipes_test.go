@@ -425,3 +425,44 @@ func TestRepositoryRecipesAreOnTheBoard(t *testing.T) {
 	r.reconcileBoard(t)
 	g.Expect(fake.listed).To(gomega.HaveLen(before))
 }
+
+// Every catalogPeek the catalog is checked with one peek at the tree SHA
+// of the repository's .agents/recipes: unchanged, nothing is read again;
+// changed, the catalog is.
+func TestRepositoryRecipesAreReadAgainOnlyWhenTheyChange(t *testing.T) {
+	g := gomega.NewWithT(t)
+	fake := newFakeLauncher()
+	fake.trees = map[string]string{"recipes": "t1", "workflows": "w1"}
+	r := newTestReconciler(fake, testGithubClient(`[]`), testBoard(map[string]string{}), githubSecret())
+	r.reconcileBoard(t)
+	g.Expect(fake.peeks).To(gomega.Equal(1))
+	lists := len(fake.listed)
+	g.Expect(lists).To(gomega.BeNumerically(">=", 1))
+
+	stale := func() {
+		r.catalogMu.Lock()
+		defer r.catalogMu.Unlock()
+		c := r.catalogs["test/repo"]
+		c.at = time.Now().Add(-catalogPeek - time.Second)
+		r.catalogs["test/repo"] = c
+	}
+
+	// Within catalogPeek: neither a peek nor a read.
+	r.reconcileBoard(t)
+	g.Expect(fake.peeks).To(gomega.Equal(1))
+	g.Expect(fake.listed).To(gomega.HaveLen(lists))
+
+	// Past it, another folder changed: a peek, no read.
+	stale()
+	fake.trees["workflows"] = "w2"
+	r.reconcileBoard(t)
+	g.Expect(fake.peeks).To(gomega.Equal(2))
+	g.Expect(fake.listed).To(gomega.HaveLen(lists))
+
+	// The recipes changed: a peek and a read.
+	stale()
+	fake.trees["recipes"] = "t2"
+	r.reconcileBoard(t)
+	g.Expect(fake.peeks).To(gomega.Equal(3))
+	g.Expect(len(fake.listed)).To(gomega.BeNumerically(">", lists))
+}

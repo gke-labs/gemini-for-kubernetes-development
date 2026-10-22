@@ -134,6 +134,7 @@ effects or host dependencies.`,
 	cmd.AddCommand(sshdCmd)
 
 	cmd.AddCommand(NewRecipeCommand(ctx))
+	cmd.AddCommand(newPeekCommand(ctx))
 
 	applyCmd := NewApplyCommand(ctx)
 	applyCmd.GroupID = "workflows"
