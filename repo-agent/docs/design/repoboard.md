@@ -152,9 +152,10 @@ spec:
     cpuRequest: ""              # "" = factory's defaults:
     cpuLimit: ""                #   cpu 500m / 4,
     memoryRequest: ""           #   memory 2Gi / 6Gi
-    memoryLimit: ""             # all apply when a sandbox is made; a research
-                                #   sandbox gets at least 4/8 CPU, 12Gi/16Gi
-                                #   memory, 10Gi ephemeral and a 40Gi disk
+    memoryLimit: ""             # all apply when a sandbox is made, but a
+                                #   research sandbox's size is its recipe's
+                                #   sandbox: (factory's defaults otherwise);
+                                #   only storageClass applies to it
 
   prepIdentity:
     secretName: ""              # identity for draft-only intake tasks; a bot

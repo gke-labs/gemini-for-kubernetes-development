@@ -34,7 +34,6 @@ import (
 	"strings"
 	"time"
 
-	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
@@ -185,12 +184,13 @@ func (r *Reconciler) ensureResearchClaims(ctx context.Context, work *workState, 
 		// wedged create becomes a failure rather than a permanent
 		// "starting". Deliberately no secret: mounting the member secret
 		// would put the engine key on the sandbox's disk, where the agent
-		// running in it could read it. The sandbox is sized as the
-		// board's others are, but never below a conversation's size
-		// (researchMinSize): a session builds and tests the whole
-		// repository, and a big one was evicted at the code tasks'.
+		// running in it could read it. The board sizes none of it: the
+		// research recipe's sandbox: does, and factory's defaults for
+		// what it does not (a session builds and tests the whole
+		// repository). Only where the disk goes is the board's.
 		opts.Timeout = 20 * time.Minute
-		opts.WorkspaceDiskSize, opts.Sandbox = researchSize(opts.WorkspaceDiskSize, opts.Sandbox)
+		opts.WorkspaceDiskSize = ""
+		opts.Sandbox = factorycli.SandboxSize{StorageClass: opts.Sandbox.StorageClass}
 		if r.Factory.StartRecipe(key, opts) {
 			logger.Info("launched factory recipe research", "session", claim.sessionID, "board", work.board.Name)
 		}
@@ -245,40 +245,4 @@ func (r *Reconciler) stampResearchTitle(ctx context.Context, work *workState, cl
 	if err := r.Update(ctx, sb); err != nil {
 		log.FromContext(ctx).Error(err, "unable to record the research title", "session", claim.sessionID)
 	}
-}
-
-// researchMinSize is the least a research sandbox gets, whatever the
-// board's sandbox size says: factory's default for one (its
-// sandbox.Research*). 10Gi of ephemeral storage is GKE Autopilot's most.
-var researchMinSize = struct {
-	disk string
-	factorycli.SandboxSize
-}{"40Gi", factorycli.SandboxSize{EphemeralStorage: "10Gi", CPURequest: "4", CPULimit: "8", MemoryRequest: "12Gi", MemoryLimit: "16Gi"}}
-
-// researchSize is the board's sandbox size for a research sandbox, each
-// quantity raised to researchMinSize's.
-func researchSize(disk string, s factorycli.SandboxSize) (string, factorycli.SandboxSize) {
-	m := researchMinSize
-	s.EphemeralStorage = atLeast(s.EphemeralStorage, m.EphemeralStorage)
-	s.CPURequest = atLeast(s.CPURequest, m.CPURequest)
-	s.CPULimit = atLeast(s.CPULimit, m.CPULimit)
-	s.MemoryRequest = atLeast(s.MemoryRequest, m.MemoryRequest)
-	s.MemoryLimit = atLeast(s.MemoryLimit, m.MemoryLimit)
-	return atLeast(disk, m.disk), s
-}
-
-// atLeast is quantity v, or least when v is unset or smaller. A v that
-// does not parse is kept, for factory to refuse.
-func atLeast(v, least string) string {
-	if v == "" {
-		return least
-	}
-	q, err := resource.ParseQuantity(v)
-	if err != nil {
-		return v
-	}
-	if q.Cmp(resource.MustParse(least)) < 0 {
-		return least
-	}
-	return v
 }

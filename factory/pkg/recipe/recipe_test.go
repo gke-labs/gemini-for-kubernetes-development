@@ -2130,3 +2130,22 @@ func TestBuiltinRunStepsComeAfterTheCheckout(t *testing.T) {
 		}
 	}
 }
+
+// A sandbox: without a kind sizes a recipe's conversation sandbox: only
+// for a recipe on a repository, and only with quantities.
+func TestSandboxSizeDecl(t *testing.T) {
+	ok := "name: r\non: [repo]\nsandbox: {cpu-request: '8', memory-limit: 32Gi, disk: 100Gi}\nstart: {steps: [{ask: a}]}\n"
+	rec, err := Parse([]byte(ok))
+	if err != nil || rec.Sandbox.CPURequest != "8" || rec.Sandbox.MemoryLimit != "32Gi" || rec.Sandbox.Disk != "100Gi" || rec.Sandbox.Kind != "" {
+		t.Fatalf("sized = %+v, %v", rec, err)
+	}
+	for name, tc := range map[string]struct{ yaml, want string }{
+		"on an issue": {"name: r\non: [issue]\nsandbox: {cpu-request: '8'}\nstart: {steps: [{ask: a}]}\n", "for a recipe on: [repo]"},
+		"not a size":  {"name: r\non: [repo]\nsandbox: {memory-limit: lots}\nstart: {steps: [{ask: a}]}\n", "sandbox memory-limit"},
+		"other kind":  {"name: r\non: [repo]\nsandbox: {kind: big}\nstart: {steps: [{ask: a}]}\n", "is not one of: run"},
+	} {
+		if _, err := Parse([]byte(tc.yaml)); err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: %v, want %q", name, err, tc.want)
+		}
+	}
+}
