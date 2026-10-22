@@ -15,7 +15,14 @@
 name: research
 on: [repo]
 sandbox:
-  kind: research
+  prefix: rsch              # rsch-<repo>-<hash of --sandbox-key>: one per session
+  scope: key
+  cpu-request: "4"          # a session builds and tests the whole repository
+  cpu-limit: "8"
+  memory-request: 12Gi
+  memory-limit: 16Gi
+  ephemeral-storage: 10Gi   # GKE Autopilot's most
+  disk: 40Gi
 task-type: research
 
 inputs:

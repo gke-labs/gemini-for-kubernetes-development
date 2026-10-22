@@ -284,13 +284,13 @@ func legacyResearchSandboxCR(namespace, sessionID, repo string, paused bool) *un
 			"namespace":         namespace,
 			"creationTimestamp": "2026-09-26T10:00:00Z",
 			"labels": map[string]interface{}{
-				researchTypeLabel:    researchType,
-				researchSessionLabel: factorycli.ResearchShortID(sessionID),
+				factorycli.LabelSandboxType: factorycli.ResearchPrefix,
+				factorycli.LabelSandboxKey:  factorycli.ShortID(sessionID),
 			},
 			"annotations": map[string]interface{}{
-				researchSessionIDAnnotation: sessionID,
-				"repo":                      repo,
-				"htmlURL":                   "https://github.com/kubernetes/" + repo,
+				factorycli.AnnotationKeyID: sessionID,
+				"repo":                     repo,
+				"htmlURL":                  "https://github.com/kubernetes/" + repo,
 			},
 		},
 		"spec": spec,
@@ -623,7 +623,7 @@ func TestResearchShortIDCollisionIsRejected(t *testing.T) {
 	// Same label, different session: exactly what a digest collision
 	// looks like from the handler's side.
 	annotations := sb.GetAnnotations()
-	annotations[researchSessionIDAnnotation] = "a-different-session"
+	annotations[factorycli.AnnotationKeyID] = "a-different-session"
 	sb.SetAnnotations(annotations)
 
 	r, _ := researchTestServer(t, &fakeSessions{}, []*unstructured.Unstructured{sb},
@@ -1383,7 +1383,7 @@ func TestResearchSessionIsCreatedOnTheSandboxEngine(t *testing.T) {
 			sb := researchSandboxCR("alice", researchSession, researchRepo, false)
 			if tc.annotation != "" {
 				annotations := sb.GetAnnotations()
-				annotations[acpd.ResearchEngineAnnotation] = tc.annotation
+				annotations[acpd.EngineAnnotation] = tc.annotation
 				sb.SetAnnotations(annotations)
 			}
 			daemon := &fakeSessions{sessionExists: false}

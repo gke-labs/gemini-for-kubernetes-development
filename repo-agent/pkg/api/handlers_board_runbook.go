@@ -261,7 +261,7 @@ func (s *Server) getBoardRunbooks(c *gin.Context) {
 	}
 
 	if list, lerr := s.K8sManager.Client.Resource(k8s.SandboxGVR).Namespace(namespace).List(ctx, v1.ListOptions{
-		LabelSelector: "sandbox.gemini.google.com/type=" + factorycli.RunSandboxType,
+		LabelSelector: factorycli.LabelSandboxType + "=" + factorycli.RunPrefix,
 	}); lerr == nil {
 		boardEngine, _, _ := unstructured.NestedString(board.Object, "spec", "sandbox", "engine")
 		sandboxes := []gin.H{}
@@ -276,8 +276,8 @@ func (s *Server) getBoardRunbooks(c *gin.Context) {
 			engine := sandboxEngine(annotations, engineOrDefault(boardEngine))
 			row := gin.H{
 				"name":      sb.GetName(),
-				"scenario":  annotations[factorycli.RunNameAnnotation],
-				"instance":  annotations[factorycli.RunNameAnnotation],
+				"scenario":  annotations[factorycli.AnnotationKeyID],
+				"instance":  annotations[factorycli.AnnotationKeyID],
 				"taskState": annotations[annoTaskState],
 				"engine":    engine,
 			}

@@ -31,10 +31,11 @@ const (
 	EngineAntigravity = "antigravity"
 )
 
-// ResearchEngineAnnotation is where `factory recipe research` records the
-// engine it set the sandbox up for, alongside its ready receipt.
-// Mirrored from factory, like the other research sandbox names.
-const ResearchEngineAnnotation = "sandbox.gemini.google.com/research-engine"
+// EngineAnnotation is where factory records the engine it set a scoped
+// sandbox (research's) up for, alongside its ready receipt. Mirrored from
+// factory, as factorycli.AnnotationEngine is: this package imports
+// nothing of repo-agent's.
+const EngineAnnotation = "sandbox.gemini.google.com/engine"
 
 // ResearchEngineFor is the engine a research sandbox is launched with
 // for a board on engine. acpd has no claude engine, so a claude board's
@@ -52,7 +53,7 @@ func ResearchEngineFor(engine string) string {
 // and the board may have been switched since. A sandbox older than the
 // annotation was set up for gemini.
 func ResearchEngine(annotations map[string]string) string {
-	if engine := annotations[ResearchEngineAnnotation]; engine != "" {
+	if engine := annotations[EngineAnnotation]; engine != "" {
 		return engine
 	}
 	return EngineGemini

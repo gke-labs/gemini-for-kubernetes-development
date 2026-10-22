@@ -75,16 +75,6 @@ func fillEnvResources(opts *DevSandboxOptions) {
 	}
 }
 
-// RunSandboxName is a run's own sandbox, run-<repo>-<hash of its key>
-// (KeyedSandboxName). One sandbox per run, whose phases all run there —
-// the PVC holds the deployment's state (kubeconfig, built artifacts, the
-// serving process), so the sandbox is the handle to the deployment. It is
-// never another item's (a PR's): a run outlives what it deploys until it
-// is torn down.
-func RunSandboxName(repo, key string) string {
-	return KeyedSandboxName("run", repo, key)
-}
-
 // DeployerServiceAccount is the per-namespace KSA the research and
 // run sandboxes run as. Direct Workload Identity federation makes it
 // a GCP principal (principal://…/subject/ns/<ns>/sa/factory-deployer) the
@@ -107,94 +97,6 @@ func ensureDeployerServiceAccount(ctx context.Context, kubeClient *clients.Kuber
 		return fmt.Errorf("creating %s service account: %w", DeployerServiceAccount, cerr)
 	}
 	return nil
-}
-
-// RunSandboxType is a run sandbox's sandbox.gemini.google.com/type, and
-// RunNameAnnotation names the run it is: the board controller excludes these
-// from slot counting and idle-pause — a run's sandbox hosts living
-// deployments, it is not a task slot.
-const (
-	RunSandboxType    = "run"
-	RunNameAnnotation = "sandbox.gemini.google.com/run-name"
-)
-
-// EnsureRunSandbox creates (or finds) a run's own sandbox (RunSandboxName),
-// as the deployer service account, whose Workload Identity reaches the
-// member's project.
-//
-// prefix starts its name ("" for run's own).
-func EnsureRunSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, repoName, prefix, run, cloneURL, htmlURL, image, diskSize, storageClass, ephemeralStorage string, secrets []SecretMount, envs []EnvVar, user string) (string, error) {
-	name := RunSandboxName(repoName, run)
-	if prefix != "" {
-		name = KeyedSandboxName(prefix, repoName, run)
-	}
-
-	sb, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
-	switch {
-	case err == nil && terminating(sb):
-		// Reusing a sandbox that is being deleted means waiting for a
-		// pod that will never be ready. Wait for the name to free up
-		// and fall through to creating a fresh one.
-		if werr := awaitSandboxGone(ctx, kubeClient, namespace, name); werr != nil {
-			return "", werr
-		}
-	case err == nil:
-		prepareReusedSandbox(ctx, kubeClient, namespace, sb, user, image)
-		return name, nil
-	case !strings.Contains(err.Error(), "not found"):
-		return "", fmt.Errorf("checking sandbox existence: %w", err)
-	}
-	if err := ensureDeployerServiceAccount(ctx, kubeClient, namespace); err != nil {
-		return "", err
-	}
-
-	if diskSize == "" {
-		diskSize = "10Gi"
-	}
-
-	opt := AgentSandboxOptions{
-		DevSandboxOptions: DevSandboxOptions{
-			Name:      name,
-			Namespace: namespace,
-			Labels: map[string]string{
-				"sandbox.gemini.google.com/type":    RunSandboxType,
-				"factory.gemini.google.com/managed": "true",
-				"factory.gemini.google.com/user":    user,
-			},
-			Annotations: map[string]string{
-				"repo":            repoName,
-				"cloneURL":        cloneURL,
-				"htmlURL":         htmlURL,
-				RunNameAnnotation: run,
-			},
-			Image:                 image,
-			Replicas:              1,
-			WorkspaceDiskSize:     diskSize,
-			WorkspaceStorageClass: storageClass,
-			EphemeralStorage:      ephemeralStorage,
-			Secrets:               secrets,
-			Env:                   envs,
-			ServiceAccountName:    DeployerServiceAccount,
-		},
-	}
-
-	fillEnvResources(&opt.DevSandboxOptions)
-	// Run environments build images and compile big module graphs; on
-	// Autopilot the pod is entitled by its REQUESTS, so the code-task
-	// defaults (500m/2Gi) make builds crawl. Raised only when neither
-	// flags, config, nor SANDBOX_* env chose values.
-	if opt.CPURequest == "" {
-		opt.CPURequest = "2"
-	}
-	if opt.MemoryRequest == "" {
-		opt.MemoryRequest = "4Gi"
-	}
-	sbObj, svc := NewAgentSandbox(opt)
-
-	if err := createSandbox(ctx, kubeClient, namespace, sbObj, svc); err != nil {
-		return "", err
-	}
-	return name, nil
 }
 
 const (

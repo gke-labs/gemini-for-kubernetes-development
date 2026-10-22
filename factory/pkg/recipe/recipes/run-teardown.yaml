@@ -23,9 +23,14 @@ task-type: run
 # never another item's: a run outlives what it deploys until it is torn
 # down. Sized for building images unless the caller chose.
 sandbox:
-  kind: run
-  disk: 30Gi
+  prefix: run               # run-<repo>-<hash of --sandbox-key>: one per run, every phase
+  scope: key
+  cpu-request: "2"          # runs build images and compile big module graphs
+  cpu-limit: "4"
+  memory-request: 4Gi
+  memory-limit: 8Gi
   ephemeral-storage: 10Gi
+  disk: 30Gi
 
 inputs:
   run:

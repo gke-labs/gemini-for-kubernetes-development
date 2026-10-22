@@ -92,7 +92,7 @@ func (t *taskSessionConn) cwd() string {
 // agent fresh, and says so (loaded false).
 func (t *taskSessionConn) engine() string {
 	annotations := t.sandbox.GetAnnotations()
-	if annotations[researchSessionIDAnnotation] != "" {
+	if researchSessionOf(t.sandbox) != "" {
 		return acpd.ResearchEngine(annotations)
 	}
 	return sandboxEngine(annotations, "gemini")
@@ -271,7 +271,7 @@ func (s *Server) getTaskSession(c *gin.Context) {
 	}
 	// A research conversation's name, and its id for renaming and
 	// deleting it.
-	if id := annotations[researchSessionIDAnnotation]; id != "" {
+	if id := researchSessionOf(conn.sandbox); id != "" {
 		body["research"], body["title"] = id, annotations[research.TitleAnnotation]
 	}
 	session, err := conn.client.GetSession(ctx, conn.task)

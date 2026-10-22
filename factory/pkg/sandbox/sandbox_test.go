@@ -374,7 +374,7 @@ func TestSuspendSandbox(t *testing.T) {
 // The ready receipt carries the engine the setup prepared for, and is a
 // patch: annotations someone else wrote meanwhile (the board's kickoff)
 // survive it.
-func TestMarkResearchReadyRecordsTheEngine(t *testing.T) {
+func TestMarkReadyRecordsTheEngine(t *testing.T) {
 	scheme := runtime.NewScheme()
 	fakeDynamic := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(scheme, map[schema.GroupVersionResource]string{
 		k8s.SandboxGVR:            "SandboxList",
@@ -395,8 +395,8 @@ func TestMarkResearchReadyRecordsTheEngine(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := sandbox.MarkResearchReady(ctx, kubeClient, "ns", "rsch-repo-1a2b3c4d", "antigravity"); err != nil {
-		t.Fatalf("MarkResearchReady: %v", err)
+	if err := sandbox.MarkReady(ctx, kubeClient, "ns", "rsch-repo-1a2b3c4d", "antigravity"); err != nil {
+		t.Fatalf("MarkReady: %v", err)
 	}
 
 	got, err := fakeDynamic.Resource(k8s.SandboxGVR).Namespace("ns").Get(ctx, "rsch-repo-1a2b3c4d", metav1.GetOptions{})
@@ -404,10 +404,10 @@ func TestMarkResearchReadyRecordsTheEngine(t *testing.T) {
 		t.Fatal(err)
 	}
 	annotations := got.GetAnnotations()
-	if annotations[sandbox.AnnotationResearchEngine] != "antigravity" {
-		t.Errorf("engine annotation = %q, want antigravity", annotations[sandbox.AnnotationResearchEngine])
+	if annotations[sandbox.AnnotationEngine] != "antigravity" {
+		t.Errorf("engine annotation = %q, want antigravity", annotations[sandbox.AnnotationEngine])
 	}
-	if annotations[sandbox.AnnotationResearchReady] == "" {
+	if annotations[sandbox.AnnotationReady] == "" {
 		t.Error("no ready receipt")
 	}
 	if annotations["kickoff"] != "kept" {

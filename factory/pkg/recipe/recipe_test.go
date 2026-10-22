@@ -1882,8 +1882,8 @@ func TestBuiltinRunRecipes(t *testing.T) {
 		if !rec.RunsOn(OnRepo) || rec.RunsOn(OnIssue) || rec.RunsOn(OnPR) || rec.TaskType != "run" || rec.TaskOutput != nil {
 			t.Fatalf("%s: on %v, task-type %q, task-output %+v", rec.Name, rec.On, rec.TaskType, rec.TaskOutput)
 		}
-		if sb := rec.Sandbox; sb == nil || sb.Kind != SandboxRun || sb.Disk != "30Gi" || sb.EphemeralStorage != "10Gi" {
-			t.Errorf("%s: sandbox %+v, want its own run sandbox at 30Gi/10Gi", rec.Name, rec.Sandbox)
+		if sb := rec.Sandbox; sb == nil || sb.Prefix != "run" || !sb.Keyed() || sb.Disk != "30Gi" || sb.EphemeralStorage != "10Gi" || sb.CPURequest != "2" {
+			t.Errorf("%s: sandbox %+v, want the run's own, keyed, 30Gi/10Gi, 2 CPU", rec.Name, rec.Sandbox)
 		}
 		var kinds []string
 		for _, s := range rec.Start.Steps {
@@ -1939,25 +1939,6 @@ func TestResourcePrefix(t *testing.T) {
 	for repo, want := range map[string]string{"in-cluster-storage": "ics-r1", "k8s-config-connector": "kcc-r1", "granule": "granule-r1", "verylongname": "verylong-r1", "My_Repo": "mr-r1"} {
 		if got := ResourcePrefix(repo, "r1"); got != want {
 			t.Errorf("ResourcePrefix(%s) = %s, want %s", repo, got, want)
-		}
-	}
-}
-
-// A run sandbox is a repository recipe's, named by the run input it
-// requires; no other kind of sandbox is declared.
-func TestSandboxDeclValidation(t *testing.T) {
-	ok := "name: a\non: [repo]\nsandbox: {kind: run}\ninputs: {run: {required: true}}\nstart: {steps: [{run: x}]}"
-	if _, err := Parse([]byte(ok)); err != nil {
-		t.Fatal(err)
-	}
-	for name, y := range map[string]string{
-		"kind":     "name: a\non: [repo]\nsandbox: {kind: pr}\ninputs: {run: {required: true}}\nstart: {steps: [{run: x}]}",
-		"no input": "name: a\non: [repo]\nsandbox: {kind: run}\nstart: {steps: [{run: x}]}",
-		"optional": "name: a\non: [repo]\nsandbox: {kind: run}\ninputs: {run: {}}\nstart: {steps: [{run: x}]}",
-		"on a pr":  "name: a\non: [repo, pr]\nsandbox: {kind: run}\ninputs: {run: {required: true}}\nstart: {steps: [{run: x}]}",
-	} {
-		if _, err := Parse([]byte(y)); err == nil {
-			t.Errorf("%s: parsed", name)
 		}
 	}
 }
@@ -2131,29 +2112,44 @@ func TestBuiltinRunStepsComeAfterTheCheckout(t *testing.T) {
 	}
 }
 
-// A recipe on a repository declares its sandbox kind, and only such a
-// recipe declares one: a known kind, a short prefix, and sizes that are
-// quantities, for a kind they apply to.
+// A recipe on a repository declares its sandbox, and only such a recipe
+// does: a special kind with nothing else, or a scoped sandbox with its
+// prefix, its scope and every size.
 func TestSandboxDecl(t *testing.T) {
-	ok := "name: r\non: [repo]\nsandbox: {kind: research, prefix: kcc, cpu-request: '8', memory-limit: 32Gi, disk: 100Gi}\nstart: {steps: [{ask: a}]}\n"
-	rec, err := Parse([]byte(ok))
-	if err != nil || rec.Sandbox.Kind != SandboxResearch || rec.Sandbox.SandboxPrefix() != "kcc" || rec.Sandbox.CPURequest != "8" || rec.Sandbox.Disk != "100Gi" {
-		t.Fatalf("sized = %+v, %v", rec, err)
+	full := "cpu-request: '4', cpu-limit: '8', memory-request: 12Gi, memory-limit: 16Gi, ephemeral-storage: 10Gi, disk: 40Gi"
+	rec, err := Parse([]byte("name: r\non: [repo]\nsandbox: {prefix: kcc, scope: key, " + full + "}\nstart: {steps: [{ask: a}]}\n"))
+	if err != nil || rec.Sandbox.Prefix != "kcc" || !rec.Sandbox.Keyed() || rec.Sandbox.CPURequest != "4" || rec.Sandbox.Disk != "40Gi" {
+		t.Fatalf("scoped = %+v, %v", rec, err)
 	}
-	if d := (&SandboxDecl{Kind: SandboxResearch}); d.SandboxPrefix() != "rsch" {
-		t.Errorf("research's prefix = %s, want rsch", d.SandboxPrefix())
+	if rec, err := Parse([]byte("name: r\non: [repo]\nsandbox: {prefix: shared, scope: repo, " + full + "}\nstart: {steps: [{ask: a}]}\n")); err != nil || rec.Sandbox.Keyed() {
+		t.Errorf("repo scope = %+v, %v", rec, err)
 	}
 	for name, tc := range map[string]struct{ yaml, want string }{
-		"repo, no sandbox": {"name: r\non: [repo]\nstart: {steps: [{ask: a}]}\n", "declares its sandbox: kind"},
-		"repo, no kind":    {"name: r\non: [repo]\nsandbox: {cpu-request: '8'}\nstart: {steps: [{ask: a}]}\n", `sandbox kind "" is not one of`},
-		"on an issue":      {"name: r\non: [issue]\nsandbox: {kind: research}\nstart: {steps: [{ask: a}]}\n", "sandbox: is for a recipe on: [repo]"},
-		"not a size":       {"name: r\non: [repo]\nsandbox: {kind: research, memory-limit: lots}\nstart: {steps: [{ask: a}]}\n", "sandbox memory-limit"},
-		"other kind":       {"name: r\non: [repo]\nsandbox: {kind: big}\nstart: {steps: [{ask: a}]}\n", "is not one of: agent, research, run, warm"},
-		"warm sized":       {"name: r\non: [repo]\nsandbox: {kind: warm, disk: 1Gi}\nstart: {steps: [{ask: a}]}\n", "not sized by its recipe"},
-		"bad prefix":       {"name: r\non: [repo]\nsandbox: {kind: research, prefix: Bad-Prefix}\nstart: {steps: [{ask: a}]}\n", "sandbox prefix"},
+		"repo, no sandbox": {"name: r\non: [repo]\nstart: {steps: [{ask: a}]}\n", "declares its sandbox:"},
+		"on an issue":      {"name: r\non: [issue]\nsandbox: {kind: warm}\nstart: {steps: [{ask: a}]}\n", "sandbox: is for a recipe on: [repo]"},
+		"no prefix":        {"name: r\non: [repo]\nsandbox: {scope: key, " + full + "}\nstart: {steps: [{ask: a}]}\n", "sandbox prefix"},
+		"bad scope":        {"name: r\non: [repo]\nsandbox: {prefix: p, scope: item, " + full + "}\nstart: {steps: [{ask: a}]}\n", "sandbox scope"},
+		"a size missing":   {"name: r\non: [repo]\nsandbox: {prefix: p, scope: key, cpu-request: '4'}\nstart: {steps: [{ask: a}]}\n", "declares no cpu-limit"},
+		"not a size":       {"name: r\non: [repo]\nsandbox: {prefix: p, scope: key, cpu-request: '4', cpu-limit: '8', memory-request: 1Gi, memory-limit: lots, ephemeral-storage: 1Gi, disk: 1Gi}\nstart: {steps: [{ask: a}]}\n", "sandbox memory-limit"},
+		"other kind":       {"name: r\non: [repo]\nsandbox: {kind: research}\nstart: {steps: [{ask: a}]}\n", "is not one of: warm, agent"},
+		"warm sized":       {"name: r\non: [repo]\nsandbox: {kind: warm, disk: 1Gi}\nstart: {steps: [{ask: a}]}\n", "declares no disk"},
+		"bad prefix":       {"name: r\non: [repo]\nsandbox: {prefix: Bad-Prefix, scope: key, " + full + "}\nstart: {steps: [{ask: a}]}\n", "sandbox prefix"},
 	} {
 		if _, err := Parse([]byte(tc.yaml)); err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("%s: %v, want %q", name, err, tc.want)
 		}
+	}
+	// A recipe a task kept from before scoped sandboxes runs where it ran.
+	for yaml, want := range map[string]string{
+		"name: research\non: [repo]\nstart: {steps: [{ask: a}]}\n":                            "rsch",
+		"name: r\non: [repo]\nsandbox: {kind: research}\nstart: {steps: [{ask: a}]}\n":        "rsch",
+		"name: r\non: [repo]\nsandbox: {kind: run, disk: 30Gi}\nstart: {steps: [{ask: a}]}\n": "run",
+	} {
+		if rec, err := ParseKept([]byte(yaml)); err != nil || rec.Sandbox.Prefix != want || !rec.Sandbox.Keyed() {
+			t.Errorf("kept %q = %+v, %v; want prefix %s", yaml, rec, err, want)
+		}
+	}
+	if rec, err := ParseKept([]byte("name: warm\non: [repo]\nstart: {steps: [{run: x}]}\n")); err != nil || rec.Sandbox.Kind != SandboxWarm {
+		t.Errorf("kept warm = %+v, %v", rec, err)
 	}
 }

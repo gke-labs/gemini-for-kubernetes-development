@@ -1,0 +1,86 @@
+package sandbox_test
+
+import (
+	"context"
+	"testing"
+
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/k8s"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/sandbox"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+)
+
+// A scoped sandbox is the size its recipe's sandbox: declares, all of it;
+// the SANDBOX_* environment the caller's flags set does not size it. Its
+// labels and annotations are the generic ones, whatever its prefix.
+func TestScopedSandbox(t *testing.T) {
+	ns := "u"
+	kc := prClients(t, ns)
+	ensure := func(t *testing.T, s sandbox.Scoped) *unstructured.Unstructured {
+		t.Helper()
+		name, err := sandbox.EnsureScopedSandbox(context.Background(), kc, ns, s, "k8s-config-connector", "clone", "html", "", "", nil, nil, "barney-s")
+		if err != nil {
+			t.Fatalf("EnsureScopedSandbox: %v", err)
+		}
+		sb, err := kc.DynamicClient.Resource(k8s.SandboxGVR).Namespace(ns).Get(context.Background(), name, metav1.GetOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return sb
+	}
+	size := func(sb *unstructured.Unstructured) map[string]string {
+		containers, _, _ := unstructured.NestedSlice(sb.Object, "spec", "podTemplate", "spec", "containers")
+		res := containers[0].(map[string]interface{})["resources"].(map[string]interface{})
+		get := func(kind, name string) string {
+			v, _, _ := unstructured.NestedFieldNoCopy(res, kind, name)
+			s, _ := v.(string)
+			return s
+		}
+		claims, _, _ := unstructured.NestedSlice(sb.Object, "spec", "volumeClaimTemplates")
+		pvc, _, _ := unstructured.NestedString(claims[0].(map[string]interface{}), "spec", "resources", "requests", "storage")
+		return map[string]string{
+			"cpu": get("requests", "cpu") + "/" + get("limits", "cpu"),
+			"mem": get("requests", "memory") + "/" + get("limits", "memory"),
+			"eph": get("limits", "ephemeral-storage"),
+			"pvc": pvc,
+		}
+	}
+	// What a caller's --cpu-request and the like would set: ignored.
+	t.Setenv("SANDBOX_CPU_REQUEST", "500m")
+	t.Setenv("SANDBOX_MEMORY_LIMIT", "2Gi")
+
+	big := sandbox.Size{Disk: "100Gi", CPURequest: "8", CPULimit: "16", MemoryRequest: "32Gi", MemoryLimit: "48Gi", EphemeralStorage: "8Gi"}
+	sb := ensure(t, sandbox.Scoped{Prefix: "rsch", Scope: "key", Key: "s1", Size: big})
+	if got := size(sb); got["cpu"] != "8/16" || got["mem"] != "32Gi/48Gi" || got["eph"] != "8Gi" || got["pvc"] != "100Gi" {
+		t.Errorf("the recipe's sandbox: = %v", got)
+	}
+	if sb.GetName() != sandbox.ScopedSandboxName("rsch", "k8s-config-connector", "s1") {
+		t.Errorf("name = %s", sb.GetName())
+	}
+	labels, annotations := sb.GetLabels(), sb.GetAnnotations()
+	if labels[sandbox.LabelType] != "rsch" || labels[sandbox.LabelScope] != "key" || labels[sandbox.LabelKey] != sandbox.ShortID("s1") || annotations[sandbox.AnnotationKeyID] != "s1" {
+		t.Errorf("labels %v, annotations %v", labels, annotations)
+	}
+	if sa, _, _ := unstructured.NestedString(sb.Object, "spec", "podTemplate", "spec", "serviceAccountName"); sa != sandbox.DeployerServiceAccount {
+		t.Errorf("service account = %q", sa)
+	}
+
+	small := sandbox.Size{Disk: "30Gi", CPURequest: "2", CPULimit: "4", MemoryRequest: "4Gi", MemoryLimit: "8Gi", EphemeralStorage: "10Gi"}
+	sb = ensure(t, sandbox.Scoped{Prefix: "tools", Scope: "repo", Size: small})
+	if sb.GetName() != "tools-k8s-config-connector" || sb.GetLabels()[sandbox.LabelScope] != "repo" {
+		t.Errorf("a repo-scoped sandbox: %s %v", sb.GetName(), sb.GetLabels())
+	}
+	if got := size(sb); got["cpu"] != "2/4" || got["pvc"] != "30Gi" {
+		t.Errorf("repo scope size = %v", got)
+	}
+
+	for name, s := range map[string]sandbox.Scoped{
+		"no prefix":        {Scope: "key", Key: "k"},
+		"keyed, no key":    {Prefix: "rsch", Scope: "key"},
+		"repo, with a key": {Prefix: "rsch", Scope: "repo", Key: "k"},
+	} {
+		if _, err := sandbox.EnsureScopedSandbox(context.Background(), kc, ns, s, "r", "", "", "", "", nil, nil, ""); err == nil {
+			t.Errorf("%s: made", name)
+		}
+	}
+}
