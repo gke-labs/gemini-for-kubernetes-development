@@ -12,7 +12,7 @@ import (
 // {{pr-labels}} as PRLabels: the CLI labels the PR itself, when it opens
 // it, rather than with the labels of the moment the rule was decided),
 // and the rule's phase. The runner then runs what the rule says
-// (api.RecipeTask.For). r is the decided rule, for its inputs as written.
+// (api.RecipeArgs). r is the decided rule, for its inputs as written.
 func Task(task *api.QueueTask, d rules.Decision, r *rules.Rule) {
 	if d.Outcome != rules.OutcomeRun || d.Recipe == "" {
 		return

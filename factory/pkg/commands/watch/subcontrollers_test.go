@@ -64,6 +64,8 @@ func TestWatcher_DispatchOnce_UsesWatcherAdapters(t *testing.T) {
 		Type:       api.TypeIssueFix,
 		Number:     42,
 		URL:        "https://github.com/test-owner/test-repo/issues/42",
+		Rule:       "fix",
+		Recipe:     "fix",
 		EnqueuedAt: time.Now(),
 	}
 	if err := w.queueMgr.Enqueue("task-issue-42.yaml", task); err != nil {
@@ -84,6 +86,39 @@ func TestWatcher_DispatchOnce_UsesWatcherAdapters(t *testing.T) {
 	// Given repo "test-repo", an issue-fix task for #42 resolves to "fix-test-repo-42"
 	if w.sandboxLocks.IsBusy("fix-test-repo-42") {
 		t.Error("expected the sandbox lease to be released after the worker completed")
+	}
+}
+
+// A task that carries no recipe runs only what the engine decides for it
+// at start: when the item cannot be read, nothing decides it, and it is
+// dropped rather than run (or failed for want of a recipe).
+func TestWatcher_DispatchOnce_DropsAnUnstampedTaskItCannotDecide(t *testing.T) {
+	w := newTestWatcher(t, t.TempDir())
+
+	runner := &stubRunner{}
+	w.dispatcher = w.newDispatcher(runner)
+
+	task := &api.QueueTask{
+		Type:       api.TypeIssueFix,
+		Number:     42,
+		URL:        "https://github.com/test-owner/test-repo/issues/42",
+		EnqueuedAt: time.Now(),
+	}
+	if err := w.queueMgr.Enqueue("task-issue-42.yaml", task); err != nil {
+		t.Fatalf("Enqueue failed: %v", err)
+	}
+
+	w.dispatcher.DispatchOnce(context.Background())
+	w.Wait()
+
+	if got := runner.invocations(); len(got) != 0 {
+		t.Fatalf("an unstamped task the engine could not decide ran: %v", got)
+	}
+	if inc, proc, _ := w.queueMgr.GetCounts(); inc != 0 || proc != 0 {
+		t.Errorf("counts = %d incoming, %d processing; want it dropped", inc, proc)
+	}
+	if v := w.rulesSummary.View(); v.ByRule["fix"].Dropped != 1 || !strings.Contains(v.ByRule["fix"].LastDrop, "carries no recipe") {
+		t.Errorf("the drop is not tallied: %+v", v.ByRule["fix"])
 	}
 }
 

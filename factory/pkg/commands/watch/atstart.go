@@ -10,6 +10,7 @@ import (
 
 	"k8s.io/klog/v2"
 
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/act"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/api"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/watch/rules"
 )
@@ -51,7 +52,10 @@ func taskRule(filename string) (rule, kind string, num int) {
 // holds it, an earlier rule takes the item, it gives up) drops it, and so
 // does the rule being disabled (the emergency switch stops queued work
 // too). A task whose facts cannot be read runs, as it would without the
-// check.
+// check. A task that carries no recipe (queued before the rules stamped
+// their tasks, or by hand) is stamped with the engine's decision when it
+// decides the rule, and dropped when its facts cannot be read: the runner
+// runs only what a rule decided (api.RecipeArgs).
 func (c *watcherTaskCoordinator) Redecide(ctx context.Context, filename string, task *api.QueueTask) (bool, string) {
 	w := c.w
 	rule, kind, num := taskRule(filename)
@@ -70,6 +74,11 @@ func (c *watcherTaskCoordinator) Redecide(ctx context.Context, filename string, 
 		return false, ""
 	}
 	if err != nil {
+		if task.Recipe == "" {
+			why := fmt.Sprintf("it carries no recipe and #%d could not be read: %v", num, err)
+			w.rulesSummary.Dropped(rule, why)
+			return true, why
+		}
 		klog.Warningf("Deciding %s again before it starts: reading #%d: %v; running it", filename, num, err)
 		return false, ""
 	}
@@ -113,7 +122,8 @@ func gatesOnly(rule string, task *api.QueueTask) string {
 }
 
 // redecide is Redecide on facts read: whether the set no longer decides
-// rule on the item, the task's own presence taken out, and why.
+// rule on the item, the task's own presence taken out, and why. A task it
+// still decides that carries no recipe is stamped with the decision.
 func redecide(set rules.Set, rule string, task *api.QueueTask, it rules.Item, env rules.Env) (bool, string) {
 	if g, ok := rules.GateOf(it, env); ok {
 		return true, "the item " + g.Why
@@ -131,6 +141,9 @@ func redecide(set rules.Set, rule string, task *api.QueueTask, it rules.Item, en
 		}
 		switch {
 		case st.Decision != nil && st.Decision.Outcome == rules.OutcomeRun:
+			if task.Recipe == "" {
+				act.Task(task, *st.Decision, set.Named(rule))
+			}
 			return false, ""
 		case st.Decision != nil:
 			return true, fmt.Sprintf("the rules now decide %s %s", rule, st.Decision.Outcome)

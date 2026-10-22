@@ -423,9 +423,13 @@ workflow-missing keeps its handler, whose comment carries the load error;
 step 3b, done: a task the engine decided carries its rule, recipe, apply,
 inputs (a `{{pr-labels}}` input as `PRLabels`, the CLI's `--pr-labels`) and
 `policy.phase` (`act.Task`), and the runner runs those
-(`api.RecipeTask.For`); the type's table keeps only the run name, sandbox
-and recorded type; for every prebaked recipe rule the command is today's
-exactly, and the phases the handlers'. Which bot runs it stays
+(`api.RecipeArgs`); for every prebaked recipe rule the command was the
+type table's exactly, and the phases the handlers'. Part C, done: the
+type's table (`api.RecipeTask`) keeps only the run name and the sandbox
+(a credentials: clone recipe's own); the recipe, apply and inputs come only
+from the task's stamp, and a task queued without one (before an upgrade,
+by hand) is stamped at start with the engine's decision, or dropped when
+its item cannot be read. Which bot runs it stays
 `SelectUser`; step 3c, done: on an issue rule the engine decides, the
 issue scanner asks its policy first on the cheap facts (`Set.Held`: runs,
 queue, updated-at; a workflow's cooldown) instead of its own `inCooldown`

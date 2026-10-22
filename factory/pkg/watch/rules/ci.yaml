@@ -1,6 +1,6 @@
 # Mirrors prs/handlers.go handlePRInvestigate: a PR whose checks fail is
 # investigated and fixed by its author (care-ci --apply --action
-# post-replies, api/recipe.go). It runs again on a new head, after a
+# post-replies, its run: below). It runs again on a new head, after a
 # failed run, on a PR assigned to the pool explicitly, or 2h after the
 # last. After 3 attempts since the last commit, trusted human comment or
 # pause it gives up with the stop label (investigationAttempts). Third of

@@ -2,6 +2,7 @@ package dispatcher
 
 import (
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -11,10 +12,11 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/watch/rules"
 )
 
-// A task the engine decided runs its rule's recipe, apply and inputs; for
-// every prebaked rule that runs a recipe, that is today's command
-// exactly, so nothing changes when the runner starts reading them.
-func TestDecidedTaskRunsTodaysCommand(t *testing.T) {
+// A task the engine decided runs its rule's recipe, apply and inputs - for
+// every prebaked rule that runs a recipe, the command the dispatcher's
+// recipe table ran before the rules named it - and a task no rule decided
+// runs nothing.
+func TestDecidedTaskRunsItsRulesRecipe(t *testing.T) {
 	set, err := rules.Builtin()
 	if err != nil {
 		t.Fatal(err)
@@ -35,12 +37,18 @@ func TestDecidedTaskRunsTodaysCommand(t *testing.T) {
 		typ  api.TaskType
 		url  string
 		it   rules.Item
+		run  []string
 	}{
-		{"comments", api.TypePRComments, "https://github.com/o/r/pull/7", pr(func(it *rules.Item) { it.NewTrustedFeedback = true })},
-		{"conflict", api.TypePRIterate, "https://github.com/o/r/pull/7", pr(func(it *rules.Item) { it.Mergeable = &no })},
-		{"ci", api.TypePRInvestigate, "https://github.com/o/r/pull/7", pr(func(it *rules.Item) { it.Checks = "failing" })},
-		{"review", api.TypePRReview, "https://github.com/o/r/pull/7", pr(func(*rules.Item) {})},
-		{"fix", api.TypeIssueFix, "https://github.com/o/r/issues/12", rules.Item{Kind: rules.OnIssue, Number: 12, Labels: []string{"overseer"}, UpdatedAt: now}},
+		{"comments", api.TypePRComments, "https://github.com/o/r/pull/7", pr(func(it *rules.Item) { it.NewTrustedFeedback = true }),
+			[]string{"care-comments", "comments", "--apply", "--action", "post-replies"}},
+		{"conflict", api.TypePRIterate, "https://github.com/o/r/pull/7", pr(func(it *rules.Item) { it.Mergeable = &no }),
+			[]string{"care-rebase", "iterate", "--apply", "--action", "post-replies"}},
+		{"ci", api.TypePRInvestigate, "https://github.com/o/r/pull/7", pr(func(it *rules.Item) { it.Checks = "failing" }),
+			[]string{"care-ci", "investigate", "--apply", "--action", "post-replies"}},
+		{"review", api.TypePRReview, "https://github.com/o/r/pull/7", pr(func(*rules.Item) {}),
+			[]string{"review", "review", "--apply", "--action", "submit-review"}},
+		{"fix", api.TypeIssueFix, "https://github.com/o/r/issues/12", rules.Item{Kind: rules.OnIssue, Number: 12, Labels: []string{"overseer"}, UpdatedAt: now},
+			[]string{"fix", "fix", "--apply", "--action", "open-pr", "--pr-labels", "--input", "draft=false"}},
 	} {
 		t.Run(tc.rule, func(t *testing.T) {
 			var d rules.Decision
@@ -59,9 +67,16 @@ func TestDecidedTaskRunsTodaysCommand(t *testing.T) {
 				t.Fatalf("the decision was not put on the task: %+v", decided)
 			}
 			r := testCLIRunner(t.TempDir())
-			want, got := r.BuildArgs(plain, "ada-coder-bot"), r.BuildArgs(&decided, "ada-coder-bot")
-			if !slices.Equal(want, got) {
-				t.Errorf("command differs:\ntoday   %q\ndecided %q", want, got)
+			if args := r.BuildArgs(plain, "ada-coder-bot"); args != nil {
+				t.Errorf("a task no rule decided runs %q", args)
+			}
+			rt, _ := api.RecipeTaskOf(tc.typ)
+			want := append([]string{"recipe", tc.run[0], "--url", tc.url, "--run-name", rt.RunName(plain)}, tc.run[2:]...)
+			if got := r.BuildArgs(&decided, "ada-coder-bot"); len(got) < len(want) || !slices.Equal(got[:len(want)], want) {
+				t.Errorf("command = %q, want it to start %q", got, want)
+			}
+			if !strings.HasPrefix(rt.RunName(plain), tc.run[1]+"-") {
+				t.Errorf("run name %s, want it to start %s-", rt.RunName(plain), tc.run[1])
 			}
 			if decided.Phase != handlerPhase[tc.rule] {
 				t.Errorf("phase = %d, want the handler's %d", decided.Phase, handlerPhase[tc.rule])
