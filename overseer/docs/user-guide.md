@@ -200,6 +200,23 @@ Rather than relying on a single bot account, tasks are routed to specialized per
 - **Automated reviews** run on PRs that carry the `overseer/review` label (directly or on a parent issue); leaving that label off keeps reviews human-only. Every mode (`issueMode`, `prMode`, `chores.mode`) also takes `dryrun`: evaluate and log what would be done, change nothing.
 - **`chores.mode: enabled`**: Instructs Overseer to run periodic maintenance routines defined in repository `.agents/*.md` workflows (such as dependency upgrades or automated release formatting). `chores.include` schedules only the listed chores and `chores.exclude` skips some (by name, file name or path, globs allowed; exclude wins).
 
+#### 7. The Repository's Own Recipes (`repoRecipe`)
+Overseer runs factory's built-in recipes (fix, care-ci, review, …). `spec.repoRecipe` lets the repository's `.agents/recipes/<name>.yaml` run too:
+
+```yaml
+spec:
+  repoRecipe:
+    mode: replace        # off (default) | augment | replace
+    gitCommit: latest    # a commit SHA, or latest (the default branch's head; the default)
+```
+
+- **`off`** (or unset): factory's recipes only.
+- **`augment`**: the repository's recipes run too, under names of their own; a file named as a built-in (`fix.yaml`) is ignored.
+- **`replace`**: the repository's recipe of a name runs in place of factory's, built-ins included. The watch rules name recipes by name, so `.agents/recipes/fix.yaml` becomes what the overseer runs to fix an issue.
+- **`gitCommit`** pins what runs: with a SHA, a change merged to the default branch is not used until you move the pin. With `latest`, every merge to the default branch takes effect on the next task.
+
+`replace` hands the repository's maintainers what the overseer runs with bot credentials; pin `gitCommit` to a reviewed commit for an unattended overseer.
+
 ---
 
 ## 3. Deployment & Verification

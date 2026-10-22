@@ -554,6 +554,78 @@ func TestResolveRepoRecipe(t *testing.T) {
 	}
 }
 
+// The operator's FACTORY_REPO_RECIPE_MODE: off reads nothing from the
+// repository; augment is today's, at the commit (a built-in's name stays
+// the built-in's); replace runs the repository's recipe of any name first,
+// factory's when it has none.
+func TestRepoRecipeModes(t *testing.T) {
+	files := map[string]string{
+		".agents/recipes/fix.yaml":        "name: fix\non: [issue]\nstart: {steps: [{run: kcc-fix}]}\n",
+		".agents/recipes/explain-pr.yaml": "name: explain-pr\non: [pr]\nstart: {steps: [{ask: explain}]}\n",
+		".agents/recipes/misnamed.yaml":   "name: other\nstart: {steps: [{run: x}]}\n",
+	}
+	var read []string
+	repo := func(_ context.Context, path string) ([]byte, error) {
+		read = append(read, path)
+		if s, ok := files[path]; ok {
+			return []byte(s), nil
+		}
+		return nil, os.ErrNotExist
+	}
+	ctx := context.Background()
+	builtinFix := func(r *recipe.Recipe) bool { return len(r.Start.Steps) > 1 }
+
+	t.Setenv(EnvRepoRecipeMode, "off")
+	read = nil
+	if _, r, err := resolveRecipe(ctx, "fix", repo); err != nil || !builtinFix(r) {
+		t.Errorf("off: fix = %+v, %v", r, err)
+	}
+	if _, _, err := resolveRecipe(ctx, "explain-pr", repo); err == nil || len(read) != 0 {
+		t.Errorf("off: explain-pr %v, read %v; want unknown, nothing read", err, read)
+	}
+
+	t.Setenv(EnvRepoRecipeMode, "augment")
+	if _, r, err := resolveRecipe(ctx, "fix", repo); err != nil || !builtinFix(r) {
+		t.Errorf("augment: fix = %+v, %v; want the built-in", r, err)
+	}
+	if _, r, err := resolveRecipe(ctx, "explain-pr", repo); err != nil || r.Name != "explain-pr" {
+		t.Errorf("augment: explain-pr = %+v, %v", r, err)
+	}
+
+	t.Setenv(EnvRepoRecipeMode, "replace")
+	if _, r, err := resolveRecipe(ctx, "fix", repo); err != nil || builtinFix(r) || r.Start.Steps[0].Run != "kcc-fix" {
+		t.Errorf("replace: fix = %+v, %v; want the repository's", r, err)
+	}
+	if _, r, err := resolveRecipe(ctx, "review", repo); err != nil || r.Name != "review" {
+		t.Errorf("replace: review (no repository file) = %+v, %v; want the built-in", r, err)
+	}
+	if _, _, err := resolveRecipe(ctx, "misnamed", repo); err == nil || !strings.Contains(err.Error(), "not misnamed as its file is") {
+		t.Errorf("replace: misnamed %v", err)
+	}
+}
+
+// A repository's files are read at FACTORY_REPO_RECIPE_COMMIT's commit
+// when it names one, at the default branch for latest or unset.
+func TestRepoRecipeCommit(t *testing.T) {
+	var refs []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		refs = append(refs, r.URL.Query().Get("ref"))
+		fmt.Fprint(w, `{"type":"file","encoding":"base64","content":"eDogMQ=="}`)
+	}))
+	defer srv.Close()
+	gh := githubv39.NewClient(nil)
+	gh.BaseURL, _ = url.Parse(srv.URL + "/")
+	for _, commit := range []string{"", "latest", "0123abc"} {
+		t.Setenv(EnvRepoRecipeCommit, commit)
+		if _, err := githubRepoFile(gh, "o", "r")(context.Background(), ".agents/recipes/x.yaml"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if strings.Join(refs, ",") != ",,0123abc" {
+		t.Errorf("refs = %q, want the default branch twice, then 0123abc", refs)
+	}
+}
+
 // A run that left a full conversation marks its task.json rotated and
 // keeps everything else in it, the session it continued included.
 func TestMarkSpoolRotated(t *testing.T) {

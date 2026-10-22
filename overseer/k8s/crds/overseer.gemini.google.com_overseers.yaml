@@ -89,6 +89,20 @@ spec:
                     - dryrun
                     type: string
                 type: object
+              repoRecipe:
+                properties:
+                  gitCommit:
+                    maxLength: 40
+                    pattern: ^(latest|[0-9a-f]{7,40})$
+                    type: string
+                  mode:
+                    default: "off"
+                    enum:
+                    - "off"
+                    - augment
+                    - replace
+                    type: string
+                type: object
               repoURL:
                 type: string
               robotAccount:

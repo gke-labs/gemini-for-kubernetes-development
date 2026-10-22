@@ -19,6 +19,35 @@ import (
 // default branch.
 const repoRecipesDir = ".agents/recipes"
 
+// The operator's say over the target repository's own recipes (the
+// Overseer's spec.repoRecipe), as environment the watch's commands
+// inherit:
+//
+//   - EnvRepoRecipeMode: off (factory's recipes only), augment (the
+//     repository's recipes too, under names of their own; a file named as a
+//     built-in is ignored) or replace (the repository's recipe of a name
+//     before factory's, a built-in's name included). Unset is today's CLI
+//     and board behaviour: built-ins first, and the repository's recipes
+//     under names of their own, read at the default branch.
+//   - EnvRepoRecipeCommit: the commit .agents/recipes is read at, a SHA or
+//     latest (the default branch's head, also when unset).
+const (
+	EnvRepoRecipeMode   = "FACTORY_REPO_RECIPE_MODE"
+	EnvRepoRecipeCommit = "FACTORY_REPO_RECIPE_COMMIT"
+)
+
+func repoRecipeMode() string {
+	return strings.TrimSpace(os.Getenv(EnvRepoRecipeMode))
+}
+
+// repoRecipeCommit is EnvRepoRecipeCommit's value: "latest" when unset.
+func repoRecipeCommit() string {
+	if c := strings.TrimSpace(os.Getenv(EnvRepoRecipeCommit)); c != "" {
+		return c
+	}
+	return "latest"
+}
+
 // repoRecipeNameRE is a repository recipe's name, and its file's.
 var repoRecipeNameRE = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 
@@ -27,10 +56,15 @@ var repoRecipeNameRE = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 type repoFile func(ctx context.Context, path string) ([]byte, error)
 
 // githubRepoFile reads owner/repo's files through gh, at the default
-// branch: what has been reviewed and merged, never a pull request's head.
+// branch: what has been reviewed and merged, never a pull request's head;
+// at EnvRepoRecipeCommit's commit when that names one.
 func githubRepoFile(gh *githubv39.Client, owner, repo string) repoFile {
+	var opts *githubv39.RepositoryContentGetOptions
+	if c := repoRecipeCommit(); c != "latest" {
+		opts = &githubv39.RepositoryContentGetOptions{Ref: c}
+	}
 	return func(ctx context.Context, path string) ([]byte, error) {
-		fc, _, resp, err := gh.Repositories.GetContents(ctx, owner, repo, path, nil)
+		fc, _, resp, err := gh.Repositories.GetContents(ctx, owner, repo, path, opts)
 		if resp != nil && resp.StatusCode == http.StatusNotFound {
 			return nil, os.ErrNotExist
 		}
@@ -48,7 +82,9 @@ func githubRepoFile(gh *githubv39.Client, owner, repo string) repoFile {
 // resolveRecipe loads the recipe arg names: a file when it looks like one
 // (a path, or a name ending in .yaml), else the built-in of that name,
 // else readRepo's .agents/recipes/<arg>.yaml — the target repository's
-// own. With no readRepo, a name is a built-in's.
+// own. With no readRepo, or EnvRepoRecipeMode off, a name is a built-in's.
+// In replace mode the repository's recipe of that name comes first,
+// whatever the name (overrideRecipe).
 func resolveRecipe(ctx context.Context, arg string, readRepo repoFile) ([]byte, *recipe.Recipe, error) {
 	if strings.ContainsRune(arg, '/') || strings.HasSuffix(arg, ".yaml") || strings.HasSuffix(arg, ".yml") {
 		data, err := os.ReadFile(arg)
@@ -60,6 +96,15 @@ func resolveRecipe(ctx context.Context, arg string, readRepo repoFile) ([]byte, 
 			return nil, nil, fmt.Errorf("%s: %w", arg, err)
 		}
 		return data, rec, nil
+	}
+	if repoRecipeMode() == "off" {
+		readRepo = nil
+	}
+	if readRepo != nil && repoRecipeMode() == "replace" && repoRecipeNameRE.MatchString(arg) {
+		data, rec, ok, err := overrideRecipe(ctx, arg, readRepo)
+		if ok || err != nil {
+			return data, rec, err
+		}
 	}
 	if data, rec, err := recipe.Builtin(arg); err == nil || readRepo == nil {
 		return data, rec, err
@@ -80,6 +125,29 @@ func resolveRecipe(ctx context.Context, arg string, readRepo repoFile) ([]byte, 
 		return nil, nil, fmt.Errorf("%s: %w", path, err)
 	}
 	return data, rec, nil
+}
+
+// overrideRecipe is the repository's .agents/recipes/<name>.yaml at
+// EnvRepoRecipeCommit's commit, when it has one (ok): in replace mode the
+// operator handed the repository its recipes, so it may take any name, a
+// built-in's included, and is held only to being named as its file is.
+func overrideRecipe(ctx context.Context, name string, readRepo repoFile) (data []byte, rec *recipe.Recipe, ok bool, err error) {
+	path := repoRecipesDir + "/" + name + ".yaml"
+	data, err = readRepo(ctx, path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil, false, nil
+	}
+	if err != nil {
+		return nil, nil, false, err
+	}
+	if rec, err = recipe.Parse(data); err != nil {
+		return nil, nil, false, fmt.Errorf("%s at %s: %w", path, repoRecipeCommit(), err)
+	}
+	if rec.Name != name {
+		return nil, nil, false, fmt.Errorf("%s at %s: recipe is named %s, not %s as its file is", path, repoRecipeCommit(), rec.Name, name)
+	}
+	fmt.Fprintf(os.Stderr, "Using the repository's recipe %s (%s at %s)\n", name, path, repoRecipeCommit())
+	return data, rec, true, nil
 }
 
 // parseRepoRecipe parses a repository's recipe file name.yaml. It must
