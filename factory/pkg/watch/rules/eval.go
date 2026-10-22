@@ -13,12 +13,9 @@ import (
 // journal). Deciding makes no calls: the same Item always gives the same
 // decisions, which is what the replay and the summary check compare.
 type Item struct {
-	// Kind is the rule kind the item is for: OnIssue, OnPR, OnSchedule or
-	// OnEvent.
+	// Kind is the rule kind the item is for: OnIssue or OnPR.
 	Kind   string
 	Number int
-	// Name names a schedule's agent definition, or an event's.
-	Name string
 
 	Labels    []string
 	Assignees []string
@@ -59,10 +56,6 @@ type Item struct {
 	// LastTrustedActivity is the last time a trusted human acted on it.
 	LastTrustedActivity time.Time
 	Closes              []Closing
-
-	// Schedules: the definition's schedule is due. Events: which one.
-	Due   bool
-	Event string
 
 	// The overseer's history of the item.
 	// TaskActive is a task of the item queued or running: a group decides
@@ -272,7 +265,7 @@ func (w When) holds(r *Rule, it Item, env Env, runs []PastRun) bool {
 		got  bool
 	}{
 		{w.ReviewedAtHead, it.ReviewedAtHead}, {w.ChangesRequested, it.ChangesRequested}, {w.Approved, it.Approved},
-		{w.Draft, it.Draft}, {w.Due, it.Due},
+		{w.Draft, it.Draft},
 	} {
 		if b.want != nil && *b.want != b.got {
 			return false
@@ -286,9 +279,6 @@ func (w When) holds(r *Rule, it Item, env Env, runs []PastRun) bool {
 		if d <= 0 || it.LastTrustedActivity.IsZero() || env.Now.Sub(it.LastTrustedActivity) < d {
 			return false
 		}
-	}
-	if w.Event != "" && w.Event != it.Event {
-		return false
 	}
 
 	if len(w.AnyOf) > 0 {

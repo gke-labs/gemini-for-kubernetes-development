@@ -13,8 +13,8 @@ func TestBuiltinRulesParseAndValidate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Builtin: %v", err)
 	}
-	want := []string{"chore", "ci", "comments", "conflict", "fix", "inactive",
-		"inherit-labels", "nudge", "ready", "ready-unreview", "review", "workflow", "workflow-missing"}
+	want := []string{"ci", "comments", "conflict", "fix", "inactive",
+		"inherit-labels", "ready", "ready-unreview", "review", "workflow", "workflow-missing"}
 	var got []string
 	for _, r := range set {
 		got = append(got, r.Name)
@@ -120,8 +120,7 @@ func TestValidateErrors(t *testing.T) {
 		{"writes without order", "name: r\non: pr\nwhen: {labels: {any: [x]}}\nrun: {label: [y]}\n", ""},
 		{"exclusive writes without order", "name: r\non: pr\nexclusive: true\nwhen: {labels: {any: [x]}}\nrun: {label: [y]}\n", "needs an order"},
 		{"negative order", strings.Replace(base, "order: 1", "order: -1", 1), "want above 0"},
-		{"order on event", "name: r\non: event\norder: 1\nwhen: {event: linked-issue-closed}\nrun: {recipe: workflow}\n", "order and exclusive are for rules on issue or pr"},
-		{"event without event", "name: r\non: event\nwhen: {}\nrun: {recipe: workflow}\n", "needs when.event"},
+		{"a rule on events", "name: r\non: event\nwhen: {}\nrun: {recipe: workflow}\n", `on: "event" is not one of issue, pr`},
 
 		// from: gone; on and when say which items a rule takes.
 		{"from", strings.Replace(base, "when:", "from: [labelled, assigned]\nwhen:", 1), "field from not found"},

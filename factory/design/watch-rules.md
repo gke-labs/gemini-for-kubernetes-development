@@ -14,8 +14,10 @@ watch as it was; "As built" is the watch now.
 - **The rules.** Prebaked YAML files in `factory/pkg/watch/rules/`
   (embedded), one ordered list per kind: on issues workflow-missing,
   workflow, fix; on PRs inherit-labels, inactive, comments, conflict, ci,
-  review, ready, ready-unreview; chore and nudge
-  describe the scheduler and the linked-issue nudge. `when:` says which
+  review, ready, ready-unreview. Scheduled chores (the chore scheduler,
+  `chores.mode`) and the linked-issue nudge are code, not rules: the
+  `chore` and `nudge` files only described them and nothing consulted
+  them, so they were deleted. `when:` says which
   items a rule takes, `run:` the recipe (with `apply:` and `inputs:`) or
   the writes, `policy:` the pacing (cooldown, dedupe, give-up, phase).
 - **The gates** are code (`rules.Gates`): stop label, closed,

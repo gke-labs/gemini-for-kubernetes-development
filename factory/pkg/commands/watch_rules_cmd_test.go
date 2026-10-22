@@ -34,7 +34,7 @@ func TestWatchRulesTable(t *testing.T) {
 		names = append(names, strings.Fields(l)[0])
 	}
 	// Issues, then PRs, each in the order the engine walks them, then the rest.
-	want := "workflow-missing workflow fix inherit-labels inactive comments conflict ci review ready ready-unreview chore nudge"
+	want := "workflow-missing workflow fix inherit-labels inactive comments conflict ci review ready ready-unreview"
 	if strings.Join(names, " ") != want {
 		t.Errorf("rows = %v, want %s", names, want)
 	}
@@ -59,7 +59,7 @@ func TestWatchRulesYAMLAndJSON(t *testing.T) {
 	if err := json.Unmarshal([]byte(runWatchRules(t, "-o", "json", "--url", "https://github.com/o/r")), &fromJSON); err != nil {
 		t.Fatal(err)
 	}
-	if len(fromYAML) != 13 || len(fromJSON) != 13 {
+	if len(fromYAML) != 11 || len(fromJSON) != 11 {
 		t.Fatalf("yaml %d rules, json %d", len(fromYAML), len(fromJSON))
 	}
 	if fromYAML[2]["name"] != "fix" || fromJSON[2]["name"] != "fix" {

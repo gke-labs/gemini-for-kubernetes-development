@@ -98,7 +98,7 @@ func NewSinkRecorder(sink func(Record)) *Recorder {
 // for its time, and that was written less than RecordRepeatEvery ago; if
 // not, rec becomes the item's last record. Called with r.mu held.
 func (r *Recorder) repeat(rec Record) bool {
-	key := fmt.Sprintf("%s/%s/%d/%s", rec.Scanner, rec.Item.Kind, rec.Item.Number, rec.Item.Name)
+	key := fmt.Sprintf("%s/%s/%d", rec.Scanner, rec.Item.Kind, rec.Item.Number)
 	rec.At, rec.Env.Now = time.Time{}, time.Time{}
 	b, err := json.Marshal(rec)
 	if err != nil {

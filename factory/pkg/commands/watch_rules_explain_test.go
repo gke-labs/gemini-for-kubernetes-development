@@ -35,7 +35,7 @@ func TestWatchRulesFlow(t *testing.T) {
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetErr(&bytes.Buffer{})
 	cmd.SetArgs([]string{"--flow", "comment"})
-	if err := cmd.Execute(); err == nil || !strings.Contains(err.Error(), "want pr, issue") {
+	if err := cmd.Execute(); err == nil || !strings.Contains(err.Error(), "want pr or issue") {
 		t.Errorf("--flow comment: %v", err)
 	}
 }

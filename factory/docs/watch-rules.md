@@ -85,7 +85,7 @@ linked to the issue for fix. A rule does not say which; see
 |---|---|---|
 | `name` | string | Unique in the set; the file is `<name>.yaml`. |
 | `description` | string | What the rule is for, in a line. |
-| `on` | `issue`, `pr`, `schedule`, `event` | The kind of item. `schedule` is an `.agents/` agent definition whose schedule is due; `event` is something the watch derives rather than lists (today `linked-issue-closed`). |
+| `on` | `issue`, `pr` | The kind of item. Scheduled chores and the linked-issue nudge are not rules (below). |
 | `enabled` | `true`, `false`; unset is on | A rule shipped off says `enabled: false`. See [Turning rules on and off](#turning-rules-on-and-off). |
 | `order` | a number above 0 | The rule's place among the rules on its kind of item, lower first. A rule without one goes after those with one; a rule that takes the item needs one, and no two rules on a kind share one. See [Order](#order). |
 | `exclusive` | `true`, `false`; unset: a recipe rule `true`, GitHub writes `false` | Whether the rule takes the item: of the rules that do, only the first that holds is decided. See [Order](#order). |
@@ -157,16 +157,16 @@ the merge queue get nothing from any rule.
 | `approved` | `true`, `false` | it is approved (or LGTM'd) |
 | `inactive-for` | a duration, or `{{pr-inactivity-timeout}}` | no trusted human has acted on it for that long (the overseer's `prInactivityTimeout`; 0 is never) |
 
-### Schedules and events
+### Chores and the nudge are not rules
 
-| on | predicate | holds when |
-|---|---|---|
-| `schedule` | `due: true` | the agent definition's schedule is due |
-| `event` | `event: linked-issue-closed` | the sandbox GC confirmed an issue closed (an issue linking it gets the event) |
-
-A rule on `event` needs `when.event`. An event is a reason to act now: a
-rule on one is not held back by another rule's cooldown on the same task
-(`nudge` steps a workflow at once, inside the `workflow` rule's cooldown).
+- **Scheduled chores:** the chore scheduler runs an `.agents/<name>.md`
+  whose `schedule:` is due, as the `agent` recipe. The Overseer's
+  `chores.mode` (enabled, disabled, dryrun) switches them.
+- **The linked-issue nudge:** when the sandbox GC confirms an issue closed,
+  a workflow on an open issue that links it takes its next step at once,
+  inside the `workflow` rule's cooldown. The step is a workflow task: just
+  before it starts it is held to the gates, and turning the `workflow`
+  rule off drops it.
 
 ### `any-of`
 
@@ -459,7 +459,7 @@ Rules are checked strictly when they load:
 
 ## Seeing how the rules apply
 
-`factory watch rules --flow [pr|issue|schedule|event]` draws a kind's rules
+`factory watch rules --flow [pr|issue]` draws a kind's rules
 in the order the engine walks them: the gates, then each rule with its
 `when`, what holds it back (`held`: dedupe and cooldown), its give-up, and
 what it does. `●` marks the rules that take the item.
@@ -560,8 +560,6 @@ the suite CI runs.
 | `inherit-labels` | pr | copies the closing issues' labels onto the PR, ahead of the rules that take it |
 | `inactive` | pr | (no timeout by default, so it never holds) pauses a PR nobody looked at |
 | `comments` ... `ready-unreview` | pr | PR care, in [order](#order) |
-| `chore` | schedule | runs a scheduled agent on the repository |
-| `nudge` | event | steps a workflow when an issue it links closes |
 
 Each file starts with a `# Mirrors` comment naming the code of today's watch
 it describes.
