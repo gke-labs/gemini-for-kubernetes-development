@@ -1,0 +1,94 @@
+# `factory recipe run-teardown --url <repo> --run <run>`: the teardown: the agent
+# removes what the run created, preferring its generated teardown script.
+#
+# A run, in its own sandbox (run-<repo>-<run>), owns a branch,
+# runs/<run> (factory/design/run-branches.md), checked out as a worktree
+# at .factory-run/ in the checkout, and pushed to the member's fork (or,
+# for a repository they cannot fork, kept in the sandbox alone:
+# local-only): runbook.md, the procedure; the scripts generated from it;
+# the receipts, its results. run-plan, run-deploy and
+# run-teardown are its three phases.
+#
+# The deterministic parts are lib.sh's (pkg/tasks), as named steps:
+# runs-remote (origin made the member's fork, or the run local-only),
+# run-prepare (the runs branch, the pinned target) and run-finish (one
+# commit of everything the phase left, pushed, and result.json). The
+# agent's shell gets the member's GCP project and region and the run's
+# resource prefix.
+name: run-teardown
+label: Tear down
+on: [repo]
+task-type: run
+# Its own sandbox, run-<repo>-<run>, kept for all the run's phases and
+# never another item's: a run outlives what it deploys until it is torn
+# down. Sized for building images unless the caller chose.
+sandbox:
+  prefix: run               # run-<repo>-<hash of --sandbox-key>: one per run, every phase
+  cpu-request: "2"          # runs build images and compile big module graphs
+  cpu-limit: "4"
+  memory-request: 4Gi
+  memory-limit: 8Gi
+  ephemeral-storage: 10Gi
+  disk: 30Gi
+
+inputs:
+  run:
+    description: The run's identity and directory, e.g. deploy-gke-k8s1
+    required: true
+  intent:
+    description: Anything the owner wants watched during teardown
+
+agent-env:
+  RUN_NAME: "{{ .Inputs.run }}"
+  RUN_RESOURCE_PREFIX: "{{ resourcePrefix .Inputs.repo_name .Inputs.run }}"
+  GOOGLE_CLOUD_PROJECT: "{{ .Inputs.gcp_project }}"
+  CLOUDSDK_CORE_PROJECT: "{{ .Inputs.gcp_project }}"
+  CLOUDSDK_COMPUTE_REGION: "{{ .Inputs.gcp_region }}"
+
+start:
+  steps:
+    - uses: setup-git
+    - uses: setup-repo
+    - uses: runs-remote
+    - run: sleep 5 # lib.sh's HACK: avoid git lock issues
+    - uses: checkout-default-branch
+    - uses: configure-engine
+    - uses: run-prepare
+      with: {phase: teardown}
+    - ask: |
+        You are tearing down the run "{{ .Inputs.run }}" for the repository
+        {{ .Inputs.repo_name }} ({{ .Inputs.repo_url }}). Everything it owns is in
+        .factory-run/, a worktree of its own branch, runs/{{ .Inputs.run }} —
+        runbook.md is the procedure,
+        params.env the resolved parameters, teardown.sh the generated script,
+        and the receipts record what each execution left running. If there
+        is a target.env, the checkout is the pull request commit it pins, the
+        one the deploy built.
+        {{ if .Inputs.intent }}
+        The owner's instruction for this teardown: {{ .Inputs.intent }}
+        {{ end }}
+        1. Prefer the deterministic path: execute teardown.sh (it sources
+           params.env). If it fails, follow runbook.md's Teardown section and
+           repair the script so the next teardown is deterministic.
+
+        2. Read the newest receipt in the run's directory — its "left
+           RUNNING" section is the checklist of what must come down. Verify
+           each item is actually gone (gcloud and kubectl queries, not
+           assumptions), and hunt for stragglers named or labeled for this
+           run: ${RESOURCE_PREFIX} and repo-agent-instance=${RESOURCE_PREFIX}.
+
+        3. If you had to repair teardown.sh, reconcile runbook.md's Teardown
+           section to match — once, at the end, same rule as a deploy. A
+           teardown that needed a manual step the procedure does not mention
+           will need it again next time.
+
+        4. Write receipt-<UTC yyyymmdd-hhmm>-teardown.md in the run's
+           directory: verdict on the first line (TORN-DOWN / PARTIAL /
+           BLOCKED), what was removed with the verifying evidence, and
+           anything that remains and why. If you amended runbook.md, list the
+           changes under "## Procedure amended" with the reason for each.
+
+        Do not commit or push — the task harness commits and pushes when you
+        finish. Finish with one paragraph: verdict and anything that remains.
+    - uses: run-finish
+      with: {phase: teardown}

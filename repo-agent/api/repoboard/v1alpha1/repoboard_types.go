@@ -276,6 +276,24 @@ type RepoBoardSpec struct {
 
 	// +kubebuilder:validation:Optional
 	Sandbox SandboxSpec `json:"sandbox,omitempty"`
+
+	// RepoRecipe is how the repository's own recipes (.agents/recipes)
+	// run on this board.
+	// +kubebuilder:validation:Optional
+	RepoRecipe RepoRecipeSpec `json:"repoRecipe,omitempty"`
+}
+
+// RepoRecipeSpec is how a board runs the repository's own recipes, read at
+// its default branch (factory --repo-recipes).
+type RepoRecipeSpec struct {
+	// Mode is off (factory's recipes only), augment (the repository's
+	// recipes too, under names of their own; a file named as one of
+	// factory's is not listed) or replace (the repository's recipe of a
+	// name in place of factory's, for any name, factory's included).
+	// Unset is augment.
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:validation:Enum=off;augment;replace
+	Mode string `json:"mode,omitempty"`
 }
 
 // BoardCounts are cheap badge numbers; the board itself is computed live by
@@ -360,11 +378,21 @@ type BoardRecipe struct {
 	// as factory recipe run --recipe <name>.
 	// +kubebuilder:validation:Optional
 	Source string `json:"source,omitempty"`
+	// Replaces is set on a repository's recipe that stands in for the
+	// built-in of its name (spec.repoRecipe.mode replace): it runs as
+	// factory recipe <name>, as the built-in would.
+	// +kubebuilder:validation:Optional
+	Replaces bool `json:"replaces,omitempty"`
 }
 
 // IsBuiltin reports whether the recipe ships with factory rather than
 // with the board's repository.
 func (r BoardRecipe) IsBuiltin() bool { return r.Source == "" || r.Source == "builtin" }
+
+// HasCommand reports whether factory has a command of the recipe's name
+// (factory recipe <name>): a built-in, or a repository recipe in one's
+// place; any other runs as factory recipe run --recipe <name>.
+func (r BoardRecipe) HasCommand() bool { return r.IsBuiltin() || r.Replaces }
 
 // BoardRecipeApplicableWhen is which items a recipe applies to.
 type BoardRecipeApplicableWhen struct {

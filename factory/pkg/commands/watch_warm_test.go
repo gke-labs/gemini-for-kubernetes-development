@@ -55,7 +55,8 @@ func TestWarmScriptSources(t *testing.T) {
 }
 
 func TestTheCatalogHasNoWarm(t *testing.T) {
-	infos, err := builtinRecipeInfos()
+	builtins, err := builtinCatalog()
+	infos := mergeCatalog(builtins, nil, false)
 	if err != nil {
 		t.Fatal(err)
 	}

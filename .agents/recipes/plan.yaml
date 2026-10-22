@@ -1,0 +1,138 @@
+# factory recipe plan --url <issue> [--feedback …] [--instruction …] [--apply]:
+# an implementation plan for an issue, in the issue's sandbox. The plan is
+# the task's result: a Plan task output, which `factory apply` (or
+# --apply) posts on the issue, and whose run: fix starts the fix recipe
+# with it as fix's plan input (from: Plan). It is also left at
+# /workspaces/plan-issue-<n>.md, for the next plan run to revise.
+#
+# Run again, it revises the plan it finds there, against --feedback if
+# given. The agent writes the plan to a file of its task, so after a
+# conversation in its session (Continue session) it rewrites the plan
+# when asked, and the task's result follows (taskoutput.Refresh).
+name: plan
+on: [issue]
+task-type: plan
+
+inputs:
+  feedback:
+    description: Maintainer feedback to revise the previous plan against
+  instructions:
+    type: instructions
+    description: Additional planning instructions the agent must follow
+
+context: |
+  You are a senior engineer preparing an implementation plan for a GitHub
+  issue. A human maintainer will review, refine, and approve this plan
+  before any code is written; a later fix run will follow the approved
+  plan.
+
+  You must not change anything: do NOT modify or create files in the
+  repository (the result file you are asked to write is outside it), do
+  NOT run git write operations (commit, branch, push), and do NOT post
+  anything to GitHub (no comments, labels, or assignments).
+
+  The repository is already cloned in the current directory.
+
+start:
+  steps:
+    - uses: setup-git
+    - uses: setup-repo
+    - run: sleep 5 # lib.sh's HACK: avoid git lock issues
+    - uses: checkout-default-branch
+    - uses: configure-engine
+    # The plan a previous run left, revised rather than started over.
+    - run: cp "/workspaces/plan-issue-${INPUT_ISSUE_NUMBER}.md" "$TASK_DIR/prior-plan.md" 2>/dev/null || touch "$TASK_DIR/prior-plan.md"
+
+    - ask: |
+        Investigate this issue. Do not write the plan yet.
+
+        <issue_url>{{ .Inputs.issue_url }}</issue_url>
+        <issue_number>{{ .Inputs.issue_number }}</issue_number>
+        <issue_title>{{ .Inputs.issue_title }}</issue_title>
+        <issue_body>
+        {{ .Inputs.issue_body }}
+        </issue_body>
+
+        1. Read the issue and its comments: `gh issue view {{ .Inputs.issue_number }} --comments`.
+        2. Explore the relevant parts of the codebase: find the files,
+           functions, and tests the change would touch. Ground every step of
+           your plan in the actual code, not in guesses.
+        3. Where the issue references other issues or PRs, read those too:
+           `gh issue view <n>` / `gh pr view <n>`.
+        {{ with file "prior-plan.md" }}
+        A previous version of your plan exists. Revise it: keep what the
+        feedback does not dispute, change what it does, and do not silently
+        drop plan sections.
+        <previous_plan>
+        {{ . }}
+        </previous_plan>
+        {{ end }}
+        {{- with .Inputs.feedback }}
+        The maintainer's feedback:
+        <feedback>
+        {{ . }}
+        </feedback>
+        {{ end }}
+        {{- with .Inputs.instructions }}
+        Additional planning instructions you MUST follow:
+        <instructions>
+        {{ . }}
+        </instructions>
+        {{ end }}
+        Summarise what you found in a few lines.
+
+    - ask: |
+        Now write the plan to the file {{ output "plan-output.md" }}, as
+        markdown, with no top-level title heading, in exactly these sections:
+
+        ## Summary
+        2-3 sentences: what the issue asks for and the shape of the fix.
+
+        ## Approach
+        The chosen approach and why, including alternatives you rejected and
+        the reason. Name the actual packages/files involved.
+
+        ## Steps
+        A numbered list of concrete implementation steps. Each step names the
+        files it touches. Keep steps small enough that a reviewer can veto one
+        step without invalidating the rest.
+
+        ## Risks
+        What could go wrong: behavior changes, migration concerns, blast
+        radius.
+
+        ## Test plan
+        How the change will be verified: which tests to add or update, and any
+        manual verification worth doing.
+
+        Write the whole file with your file tool (if it refuses the path, with
+        the shell), replacing anything in it. Whenever later in this
+        conversation you are asked to change the plan or to save it, write
+        that file again, whole, in the same sections. Then say in a line or
+        two that it is written and what it proposes.
+      expects: plan-output.md
+
+    # The next plan run revises the plan it finds there: a link, so a plan
+    # rewritten later in the conversation is the one it finds.
+    - run: |
+        test -s "$TASK_DIR/plan-output.md" || { echo "the plan is empty: the agent wrote no $TASK_DIR/plan-output.md" >&2; exit 1; }
+        ln -sfn "$TASK_DIR/plan-output.md" "/workspaces/plan-issue-${INPUT_ISSUE_NUMBER}.md"
+
+outputs:
+  - plan-output.md
+
+task-output:
+  kind: Plan
+  from: plan-output.md
+  # What can be done with the result: whoever shows it builds its controls
+  # from these (factory apply --action does the writes and the fix).
+  actions:
+    - verb: edit
+      field: spec.markdown
+      format: markdown
+    - verb: comment
+      label: Post plan
+    - verb: run
+      run: fix
+      label: Fix with this plan
+    - verb: reject

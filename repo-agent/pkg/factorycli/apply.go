@@ -148,7 +148,9 @@ type ApplyOptions struct {
 	// Doc is the task output to apply (ComposeTaskOutput).
 	Doc string
 	// Action is the write: label, comment or push-notes.
-	Action      string
+	Action string
+	// RepoRecipes is the board's repository recipe mode (RecipeOptions).
+	RepoRecipes string
 	GithubToken string
 	Timeout     time.Duration
 }
@@ -174,7 +176,7 @@ func (r *Runner) StartApply(key string, opts ApplyOptions) bool {
 		r.fail(key, err)
 		return true
 	}
-	args := []string{"apply", "-f", name, "--action", opts.Action}
+	args := append([]string{"apply", "-f", name, "--action", opts.Action}, repoRecipesArgs(opts.RepoRecipes)...)
 	started := r.startWithPreflight(key, args, opts.GithubToken, timeout, &preflight{
 		harvest: func(_ context.Context, out string, err error) (string, error) {
 			os.Remove(name)
@@ -191,13 +193,13 @@ func (r *Runner) StartApply(key string, opts ApplyOptions) bool {
 // in namespace, within another invocation: the action a run applies once
 // it ends. A Change's open-pr finds the sandbox to alias to the PR it
 // opens in the namespace.
-func (r *Runner) applyDocIn(ctx context.Context, doc, action, namespace, githubToken string) (string, error) {
+func (r *Runner) applyDocIn(ctx context.Context, doc, action, namespace, repoRecipes, githubToken string) (string, error) {
 	name, err := writeTaskOutput(doc)
 	if err != nil {
 		return "", err
 	}
 	defer os.Remove(name)
-	args := []string{"apply", "-f", name, "--action", action}
+	args := append([]string{"apply", "-f", name, "--action", action}, repoRecipesArgs(repoRecipes)...)
 	if namespace != "" {
 		args = append(args, "--namespace", namespace)
 	}

@@ -65,7 +65,7 @@ func TestAutoRulesAreValidatedAgainstTheCatalog(t *testing.T) {
 		{Recipe: "care", On: "pr"}, // care starts on my-pr only
 		{Recipe: "fix", On: "issue", When: boardv1alpha1.AutoWhen{ReviewRequestedFromOwner: true}},
 	}
-	catalog, _, _ := (&fakeLauncher{}).Recipes(context.Background(), "", "")
+	catalog, _, _ := (&fakeLauncher{}).Recipes(context.Background(), "", "", "")
 	valid, errs := validRules(rules, catalog)
 	if len(valid) != 1 || valid[0].Recipe != "summarize" {
 		t.Errorf("valid = %+v, want summarize alone", valid)

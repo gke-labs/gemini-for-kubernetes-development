@@ -343,7 +343,8 @@ func TestCheckApplicable(t *testing.T) {
 // recipe list describes the built-ins as a board reads them: where each
 // runs and its result.
 func TestBuiltinRecipeInfos(t *testing.T) {
-	infos, err := builtinRecipeInfos()
+	builtins, err := builtinCatalog()
+	infos := mergeCatalog(builtins, nil, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -693,4 +694,76 @@ func TestApplyFailedMark(t *testing.T) {
 	}
 	sb.failWrites = true
 	markApplyFailed(ctx, sb, "v", "", errors.New("x")) // only reported
+}
+
+// The board's catalog follows the repository recipe mode: augment lists a
+// repository's recipes after the built-ins, a built-in's name refused;
+// replace puts a repository recipe of a built-in's name in its place and
+// leaves warm and agent out; a repository's session group is held with
+// the built-ins it joins.
+func TestMergeCatalog(t *testing.T) {
+	builtins, err := builtinCatalog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := func(name, y string, parse func(string, []byte) (*recipe.Recipe, error)) catalogEntry {
+		t.Helper()
+		path := ".agents/recipes/" + name + ".yaml"
+		rec, err := parse(name, []byte(y))
+		if err != nil {
+			return catalogEntry{info: RecipeInfo{Name: name, Source: path, Error: err.Error()}}
+		}
+		info := recipeInfo(rec)
+		info.Source = path
+		return catalogEntry{info, rec}
+	}
+	source := func(infos []RecipeInfo) map[string]string {
+		m := map[string]string{}
+		for _, i := range infos {
+			if i.Error != "" {
+				m[i.Name+"!"] = i.Error
+				continue
+			}
+			m[i.Name] = i.Source
+		}
+		return m
+	}
+	triage, _, _ := recipe.Builtin("triage")
+	care, _, _ := recipe.Builtin("care-ci")
+	warm, _, _ := recipe.Builtin("warm")
+	own := "name: mine\non: [issue]\nstart: {steps: [{ask: a}]}\n"
+
+	got := source(mergeCatalog(builtins, []catalogEntry{entry("triage", string(triage), parseRepoRecipe), entry("mine", own, parseRepoRecipe)}, false))
+	if got["triage"] != "builtin" || got["mine"] != ".agents/recipes/mine.yaml" || !strings.Contains(got["triage!"], "built-in recipe's name") {
+		t.Errorf("augment = %v", got)
+	}
+
+	replaced := mergeCatalog(builtins, []catalogEntry{entry("triage", string(triage), parseReplacingRecipe)}, true)
+	if i := slices.IndexFunc(replaced, func(r RecipeInfo) bool { return r.Name == "triage" }); i < 0 || !replaced[i].Replaces {
+		t.Errorf("a replacing triage is not marked so: %+v", replaced)
+	}
+	got = source(mergeCatalog(builtins, []catalogEntry{
+		entry("triage", string(triage), parseReplacingRecipe),
+		entry("care-ci", string(care), parseReplacingRecipe),
+		entry("warm", string(warm), parseReplacingRecipe),
+	}, true))
+	if got["triage"] != ".agents/recipes/triage.yaml" || got["care-ci"] != ".agents/recipes/care-ci.yaml" || got["care"] != "builtin" {
+		t.Errorf("replace = %v", got)
+	}
+	if _, ok := got["warm"]; ok {
+		t.Errorf("replace lists warm: %v", got)
+	}
+
+	// care-ci on PRs rather than my PRs breaks the care group: the
+	// built-in comes back, the repository's is not a recipe.
+	broken := strings.Replace(string(care), "\non: [my-pr]\n", "\non: [pr]\n", 1)
+	got = source(mergeCatalog(builtins, []catalogEntry{entry("care-ci", broken, parseReplacingRecipe)}, true))
+	if got["care-ci"] != "builtin" || !strings.Contains(got["care-ci!"], "session care") {
+		t.Errorf("a broken group = %v", got)
+	}
+	// So does a repository's own group without its default.
+	got = source(mergeCatalog(builtins, []catalogEntry{entry("deploy-check", "name: deploy-check\non: [issue]\nsession: deploy\nstart: {steps: [{ask: a}]}\n", parseRepoRecipe)}, false))
+	if _, ok := got["deploy-check"]; ok || !strings.Contains(got["deploy-check!"], "no recipe is named deploy") {
+		t.Errorf("a repository group = %v", got)
+	}
 }

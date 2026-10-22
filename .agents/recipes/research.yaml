@@ -1,0 +1,99 @@
+# factory recipe research --url <repository> --topic "…" [--session ID]:
+# a conversation about a repository, in a sandbox of its own (one per
+# session). The start clones the repository and asks the member's
+# question; the member keeps talking in the task's session afterwards
+# (Continue session). Asked to save notes, the agent writes the
+# conversation up as the task's Notes result, which `factory apply`
+# pushes to research/notes on the member's fork.
+#
+# The member works in the session as themselves: setup-git leaves their
+# GitHub credentials in the sandbox (credentials: full), and setup-repo
+# makes origin their fork when one can be made, upstream the repository,
+# so the agent can change files, commit and push a branch when asked.
+# The session runs with nobody approving its tools, so what it may do is
+# what the member's token may.
+name: research
+on: [repo]
+sandbox:
+  prefix: rsch              # rsch-<repo>-<hash of --sandbox-key>: one per session
+  cpu-request: "4"          # a session builds and tests the whole repository
+  cpu-limit: "8"
+  memory-request: 12Gi
+  memory-limit: 16Gi
+  ephemeral-storage: 10Gi   # GKE Autopilot's most
+  disk: 40Gi
+task-type: research
+
+inputs:
+  topic:
+    description: What the member wants to understand
+    required: true
+
+context: |
+  You are helping a member of the project understand and work on the
+  repository checked out in the current directory. Answer from the code,
+  and say plainly when you are guessing.
+
+  git and gh work as the member. In the checkout, `origin` is the
+  member's fork when one could be made and `upstream` is the repository.
+  When the member asks, change files, commit, and push a branch to
+  origin; never push to upstream's default branch. Post nothing to GitHub
+  (comments, reviews, pull requests, labels) unless the member asks.
+
+start:
+  steps:
+    - uses: setup-git
+    - uses: setup-repo
+    - uses: configure-engine
+    - ask: |
+        {{ .Inputs.topic }}
+
+        For context: the repository {{ .Inputs.repo_owner }}/{{ .Inputs.repo_name }}
+        ({{ .Inputs.url }}) is checked out in front of you, and that is what
+        the question is about.
+
+        Investigate it in the source — read the relevant packages and trace
+        the flows rather than answering from general knowledge. Use web
+        search where the question calls for comparison with another project
+        or for ecosystem context the checkout cannot supply.
+
+        Answer here in the conversation. Tables for comparisons, a Mermaid
+        diagram where structure is the point, and file:line references for
+        anything you assert about this code. Say plainly what you could not
+        determine.
+
+        Write no notes now. Whenever later in this conversation you are asked
+        to save notes, write this conversation up as a note to the file
+        {{ output "notes.md" }}, whole, replacing anything in it, with your
+        file tool (if it refuses the path, with the shell), and say in a line
+        that it is written. The note is for someone who was not here, reading
+        it months from now:
+
+        - Markdown only, nothing else in the file. Open with a `#` heading
+          that names what it is about, then a short summary, then the
+          findings.
+        - Self-contained prose: no "as discussed above", no reference to
+          turns or to this instruction. Keep the file:line references,
+          command lines and concrete names: they are the part worth saving.
+        - Fold in what the conversation later corrected rather than
+          repeating the first answer. Say plainly what is still unresolved
+          rather than rounding it off into a conclusion.
+        - No tokens, keys or other credentials: the note is pushed to a
+          branch on the member's fork on GitHub.
+
+outputs:
+  - notes.md
+
+# The notes are there once someone asks for them: until then the task has
+# no result, and once the agent writes them it does (taskoutput.Refresh).
+task-output:
+  kind: Notes
+  from: notes.md
+  optional: true
+  actions:
+    - verb: edit
+      field: spec.markdown
+      format: markdown
+    - verb: push-notes
+      label: Save to research/notes
+    - verb: reject

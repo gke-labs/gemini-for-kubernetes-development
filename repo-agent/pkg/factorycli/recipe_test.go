@@ -3,6 +3,7 @@ package factorycli
 import (
 	"context"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -297,7 +298,7 @@ func TestRecipesCarryOnFinishAndTimeout(t *testing.T) {
  {"name":"fix","label":"Fix","kind":"Change","onFinish":"open-pr","timeout":"3h"}]
 JSON
 ;;`)
-	recipes, _, err := newRunner(bin, &fakeProber{}).Recipes(context.Background(), "", "")
+	recipes, _, err := newRunner(bin, &fakeProber{}).Recipes(context.Background(), "", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -324,7 +325,7 @@ func TestRecipesOfARepository(t *testing.T) {
  {"name":"broken","source":".agents/recipes/broken.yaml","error":"recipe is named x, not broken as its file is"}]
 JSON
 ;;`)
-	recipes, skipped, err := newRunner(bin, &fakeProber{}).Recipes(context.Background(), "https://github.com/o/r", "tok")
+	recipes, skipped, err := newRunner(bin, &fakeProber{}).Recipes(context.Background(), "https://github.com/o/r", "", "tok")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -346,5 +347,23 @@ JSON
 	opts.Recipe, opts.RepoRecipe = "review", false
 	if args := strings.Join(recipeArgs(opts, time.Minute), " "); !strings.HasPrefix(args, "recipe review --run-name") || !strings.Contains(args, "--instruction be brief") {
 		t.Errorf("built-in args = %q", args)
+	}
+}
+
+// A board's repository recipe mode reaches every factory command it runs
+// as --repo-recipes, and none is passed for factory's default.
+func TestRepoRecipesArgs(t *testing.T) {
+	args := recipeArgs(RecipeOptions{Recipe: "triage", RepoRecipes: "replace"}, time.Hour)
+	if !slices.Contains(args, "--repo-recipes=replace") {
+		t.Errorf("recipe args %v lack --repo-recipes=replace", args)
+	}
+	if args := recipeArgs(RecipeOptions{Recipe: "triage"}, time.Hour); slices.ContainsFunc(args, func(a string) bool { return strings.HasPrefix(a, "--repo-recipes") }) {
+		t.Errorf("recipe args %v pass a mode nobody set", args)
+	}
+	// A repository recipe in a built-in's place runs as the built-in's
+	// command; any other repository recipe as recipe run --recipe.
+	if !(boardv1alpha1.BoardRecipe{Name: "triage", Source: ".agents/recipes/triage.yaml", Replaces: true}).HasCommand() ||
+		(boardv1alpha1.BoardRecipe{Name: "mine", Source: ".agents/recipes/mine.yaml"}).HasCommand() {
+		t.Error("HasCommand is wrong")
 	}
 }

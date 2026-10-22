@@ -108,6 +108,7 @@ func (r *Reconciler) ensureWatches(ctx context.Context, work *workState, reqs []
 			GithubToken: token,
 			Engine:      boardEngine(work.board),
 			Disclose:    work.board.Spec.Policy.Disclose,
+			RepoRecipes: work.board.Spec.RepoRecipe.Mode,
 		}) {
 			logger.Info("launched factory pr watch", "pr", spec.Number, "namespace", spec.Member, "board", board)
 		}

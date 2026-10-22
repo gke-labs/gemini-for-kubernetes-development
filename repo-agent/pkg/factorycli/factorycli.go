@@ -127,6 +127,8 @@ type RunOptions struct {
 	GithubToken string
 	Timeout     time.Duration
 	Engine      string
+	// RepoRecipes is the board's repository recipe mode (RecipeOptions).
+	RepoRecipes string
 }
 
 // StartRun launches a run's phase: `factory recipe run-<mode>`, in the
@@ -145,6 +147,7 @@ func (r *Runner) StartRun(key string, opts RunOptions) bool {
 		"--run", opts.Name,
 		"--sandbox-key", opts.Name,
 	}
+	args = append(args, repoRecipesArgs(opts.RepoRecipes)...)
 	if opts.Intent != "" && opts.Mode != "deploy" {
 		// Deploy executes a plan the owner already reviewed; taking
 		// fresh instructions there would change what was approved, and
@@ -237,6 +240,8 @@ type PRWatchOptions struct {
 	// Disclose is factory's --disclose: whether what the agent posts says
 	// an agent wrote it. Always passed, because factory defaults it on.
 	Disclose bool
+	// RepoRecipes is the board's repository recipe mode (RecipeOptions).
+	RepoRecipes string
 }
 
 // Result records the outcome of a finished invocation.
@@ -265,7 +270,7 @@ type Launcher interface {
 	StartApply(key string, opts ApplyOptions) bool
 	// Recipes is the catalog of recipes factory runs, in the board's
 	// order: the built-ins, and with repoURL that repository's own.
-	Recipes(ctx context.Context, repoURL, token string) ([]boardv1alpha1.BoardRecipe, []string, error)
+	Recipes(ctx context.Context, repoURL, repoRecipes, token string) ([]boardv1alpha1.BoardRecipe, []string, error)
 	// AgentsTrees is the tree SHA of each folder under repoURL's .agents/
 	// (factory peek): whether its recipes changed, in one call.
 	AgentsTrees(ctx context.Context, repoURL, token string) (map[string]string, error)
@@ -367,6 +372,7 @@ func (r *Runner) StartPRWatch(key string, opts PRWatchOptions) bool {
 		"--timeout", timeout.String(),
 		"--abort-on-cancel=false",
 	}
+	args = append(args, repoRecipesArgs(opts.RepoRecipes)...)
 	if opts.Engine != "" {
 		args = append(args, "--engine", opts.Engine)
 	}

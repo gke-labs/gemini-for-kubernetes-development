@@ -1,0 +1,146 @@
+# factory recipe care-iterate --url <PR> --instruction …: changes a
+# pull request of yours as the instruction asks.
+#
+# The PR must be yours: authored by you, its head a branch on your fork
+# (on: [my-pr]); factory pr adopt takes over one that is not. It runs in
+# the PR's fix sandbox (the fix's that opened it, or one made for the PR),
+# in session care (design/recipe-sessions.md): care, care-comments,
+# care-ci, care-rebase and care-iterate share one conversation there, the
+# first run opening it and every later one continuing it, whichever it is
+# (--new-session opens a new one). Each run takes the PR as it is now:
+# factory hands it the PR's push facts (INPUT_PUSHED_*: fork, branch, the
+# base it branched from, head) and its title and body. The agent commits
+# and never pushes; the push step pushes to the PR's branch on your fork,
+# leased against the head the PR had, so a commit someone else pushed
+# meanwhile is never overwritten. Its Change carries the replies and
+# report post-replies posts on the PR.
+name: care-iterate
+label: Iterate
+on: [my-pr]
+session: care
+
+inputs:
+  instruction:
+    description: What to change in the pull request
+    required: true
+
+context: |
+  You are an automated coding agent. You look after a pull request: you
+  keep it mergeable, and answer its reviewers. A human maintainer reviews
+  your commits.
+
+  You commit, and that is all you write. Do NOT run `git push`, do NOT
+  open, edit or comment on pull requests or issues, and do NOT add labels:
+  when you are done, factory pushes your commits to the pull request's
+  branch on the member's fork, and posts the replies you write.
+
+  The repository is checked out in the current directory, on the pull
+  request's branch. The git remote "origin" is the member's fork,
+  "upstream" the repository. `gh` is authenticated, to read issues and
+  pull requests. Do not run `git config --global`: in this environment it
+  overwrites /dev/null and breaks git for the rest of the run.
+
+start:
+  steps:
+    - uses: setup-git
+    - uses: setup-fork
+    - run: sleep 5 # lib.sh's HACK: avoid git lock issues
+    - uses: configure-engine
+    # The branch to push and the head to lease against: a commit someone
+    # else pushed to the PR since is never overwritten.
+    - run: |
+        test -n "${INPUT_PUSHED_BRANCH}" && test -n "${INPUT_PUSHED_HEAD}" || { echo "nothing pushed to this PR is known; there is no branch to work on" >&2; exit 1; }
+        printf '%s\n' "${INPUT_PUSHED_BRANCH}" > "$TASK_DIR/branch"
+        printf '%s\n' "${INPUT_PUSHED_BASE}" > "$TASK_DIR/base"
+        printf '%s' "${INPUT_PUSHED_HEAD}" > "$TASK_DIR/lease"
+        printf '%s' "${INPUT_PR_URL##*/}" > "$TASK_DIR/pr"
+        if [ "$(git symbolic-ref --short -q HEAD)" != "${INPUT_PUSHED_BRANCH}" ]; then
+          # The PR's branch, from the fork, the first time.
+          git rev-parse -q --verify "refs/heads/${INPUT_PUSHED_BRANCH}" >/dev/null ||
+            git fetch origin "refs/heads/${INPUT_PUSHED_BRANCH}:refs/heads/${INPUT_PUSHED_BRANCH}"
+          git checkout "${INPUT_PUSHED_BRANCH}"
+        fi
+    # The PR as it is now: the sandbox may be the fix's that opened the
+    # PR, its branch behind what was pushed since, or ahead with commits
+    # never pushed by an earlier run.
+    - run: |
+        git fetch origin "refs/heads/${INPUT_PUSHED_BRANCH}"
+        git reset --hard "${INPUT_PUSHED_HEAD}"
+
+    - ask: |
+        You look after this pull request:
+        https://github.com/{{ .Inputs.repo_owner }}/{{ .Inputs.repo_name }}/pull/{{ file "pr" }}
+        "{{ .Inputs.pr_title }}". Its branch is checked out, at
+        {{ file "lease" }}, the PR's head now.
+
+        Change the pull request as this instruction asks, and commit the
+        change:
+
+        <instruction>
+        {{ .Inputs.instruction }}
+        </instruction>
+
+        Keep the history clean. If the instruction needs no change, say so
+        and commit nothing.
+
+        Commit, never push; do NOT comment on GitHub yourself: factory
+        posts the replies you write next.
+        {{- if eq .Inputs.disclose "true" }}
+        Commit messages may say that an agent wrote the change.
+        {{- else }}
+        Do not say anywhere — commit messages or files — that an agent or AI
+        wrote this, and do not add Co-authored-by or similar trailers.
+        {{- end }}
+        When you are done, say briefly what you did.
+    - ask: |
+        Now write the result to the file {{ output "change.yaml" }}, as YAML
+        in EXACTLY this structure, with nothing else in the file:
+
+        change:
+          replies:
+            - inReplyTo: 123456789
+              body: |
+                Your answer to that comment: what you changed, or why not.
+          report: |
+            For the PR's reviewers: what you did, such as what conflicted
+            and how you resolved it, or which checks failed, why, and what
+            you changed.
+
+        Rules:
+        - inReplyTo is the number of a review comment or a comment you
+          answer, from its heading in the comments you were given; a
+          review's number is answered with a comment quoting the review.
+          One reply per comment you answer; none if you answered none.
+        - Leave out report if there is nothing to report, and write
+          `change: {}` if there is nothing at all.
+        - Add `title:` and `body:` (the whole new description, keeping its
+          `Fixes #…` line, if it has one) only if the pull request's no
+          longer fit.
+        {{- if eq .Inputs.disclose "true" }}
+        - Each reply and the report says it was written by an AI coding agent.
+        {{- else }}
+        - Do not say anywhere that an agent or AI wrote this.
+        {{- end }}
+
+        Write the whole file with your file tool (if it refuses the path, with
+        the shell), replacing anything in it, then say in a line that it is
+        written.
+      expects: change.yaml
+    - uses: push
+
+outputs:
+  - change.yaml
+
+task-output:
+  kind: Change
+  # Applied by a board's runner when the run ends.
+  on-finish: post-replies
+  from: change.yaml
+  preview: spec.report
+  actions:
+    - verb: edit
+      field: spec
+      format: yaml
+    - verb: post-replies
+      label: Post replies
+    - verb: reject

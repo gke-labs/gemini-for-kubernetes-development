@@ -1,0 +1,139 @@
+# factory recipe adopt --url <PR> [--strategy reuse|reimplement]
+# [--close true]: adopts someone else's pull request as yours. reuse (the
+# default) takes it as it is: its head goes to a branch on your fork
+# (adopt-pr-<n>) and no agent runs. reimplement has the agent redo the
+# change on the default branch as it is now, from the PR's title,
+# description and diff (adopt-reimplement-pr-<n>). Either way the
+# result's open-pr opens it as your PR, which comments on the original
+# with a link (and closes it, with --close true).
+#
+# It runs in the PR's fix sandbox; open-pr aliases that to the new PR, so
+# the adopted PR's care runs there, on its branch. `factory pr adopt
+# open|close` runs it and applies open-pr.
+name: adopt
+label: Adopt
+on: [pr]
+
+inputs:
+  strategy:
+    description: reuse (the PR's commits) or reimplement (the agent redoes the change)
+    default: reuse
+  close:
+    description: Close the original PR once adopted, true or false
+    default: "false"
+  instructions:
+    type: instructions
+    description: Additional instructions the agent must follow (reimplement)
+
+context: |
+  You are an automated coding agent. You adopt a pull request someone
+  else opened: you implement the same change yourself, on the latest
+  default branch, and your commits become a pull request that a human
+  maintainer reviews.
+
+  You commit, and that is all you write. Do NOT run `git push`, do NOT
+  open, edit or comment on pull requests or issues, and do NOT add labels:
+  when you are done, factory pushes your commits to the member's fork and
+  opens the pull request.
+
+  The repository is checked out in the current directory, on the branch
+  you work on, made from the latest default branch. The git remote
+  "origin" is the member's fork, "upstream" the repository. `gh` is
+  authenticated, to read issues and pull requests. Do not run `git config
+  --global`: in this environment it overwrites /dev/null and breaks git
+  for the rest of the run.
+
+start:
+  steps:
+    - uses: setup-git
+    - uses: setup-fork
+    # run: steps run in the checkout, which setup-fork makes (clones)
+    # on a sandbox that has none yet: the input check comes after it.
+    - run: |
+        case "${INPUT_STRATEGY}" in reuse|reimplement) ;; *) echo "strategy ${INPUT_STRATEGY} is neither reuse nor reimplement" >&2; exit 1 ;; esac
+    - run: sleep 5 # lib.sh's HACK: avoid git lock issues
+    # reuse: the PR's head as a branch of yours, from the repository's
+    # pull/<n>/head (the head, wherever it lives); the base is where it
+    # branched off the default branch.
+    - if: '{{ eq .Inputs.strategy "reuse" }}'
+      run: |
+        branch="adopt-pr-${INPUT_PR_NUMBER}"
+        git fetch upstream "+pull/${INPUT_PR_NUMBER}/head:refs/remotes/upstream/adopt-${INPUT_PR_NUMBER}" "${INPUT_PR_BASE}"
+        git checkout -B "${branch}" "refs/remotes/upstream/adopt-${INPUT_PR_NUMBER}"
+        printf '%s\n' "${branch}" > "$TASK_DIR/branch"
+        git merge-base HEAD "upstream/${INPUT_PR_BASE}" > "$TASK_DIR/base"
+    # reimplement: a branch from the default branch as it is now, the
+    # PR's diff for the ask, and the agent.
+    - if: '{{ eq .Inputs.strategy "reimplement" }}'
+      uses: configure-engine
+    - if: '{{ eq .Inputs.strategy "reimplement" }}'
+      uses: checkout-default-branch
+    - if: '{{ eq .Inputs.strategy "reimplement" }}'
+      run: |
+        branch="adopt-reimplement-pr-${INPUT_PR_NUMBER}"
+        git checkout -B "${branch}"
+        printf '%s\n' "${branch}" > "$TASK_DIR/branch"
+        git rev-parse HEAD > "$TASK_DIR/base"
+        gh pr diff "${INPUT_PR_NUMBER}" --repo "${INPUT_REPO_OWNER}/${INPUT_REPO_NAME}" > "$TASK_DIR/pr.diff"
+    - if: '{{ eq .Inputs.strategy "reimplement" }}'
+      ask: |
+        Adopt this pull request: implement the same change on the
+        default branch as it is now, and commit it.
+
+        <pr_url>{{ .Inputs.pr_url }}</pr_url>
+        <pr_title>{{ .Inputs.pr_title }}</pr_title>
+        <pr_description>
+        {{ .Inputs.pr_body }}
+        </pr_description>
+        <pr_diff>
+        {{ file "pr.diff" }}
+        </pr_diff>
+        {{- with .Inputs.instructions }}
+
+        Additional instructions you MUST follow:
+        <instructions>
+        {{ . }}
+        </instructions>
+        {{- end }}
+
+        Take the diff as what the change does, not as a patch to apply:
+        the default branch may have moved since. Make the change, build
+        and test what it touches, and commit, with clean commits.
+        {{- if eq .Inputs.disclose "true" }}
+        Commit messages may say that an agent wrote the change.
+        {{- else }}
+        Do not say anywhere — commit messages or files — that an agent or AI
+        wrote this, and do not add Co-authored-by or similar trailers.
+        {{- end }}
+        Commit, never push. When you are done, say briefly what you did.
+    - run: |
+        # The Change is factory's, never an agent's: what is adopted, and
+        # whether the original closes.
+        python3 - <<'PY'
+        import json, os
+        body = "This Pull Request was adopted from original PR %s\n\n---\n### Original Description:\n%s" % (os.environ["INPUT_PR_URL"], os.environ.get("INPUT_PR_BODY", ""))
+        change = {"change": {
+            "title": "adopt: " + os.environ["INPUT_PR_TITLE"],
+            "body": body,
+            "adopts": os.environ["INPUT_PR_URL"],
+            "closeAdopted": os.environ.get("INPUT_CLOSE", "false") == "true",
+        }}
+        with open(os.path.join(os.environ["TASK_DIR"], "change.yaml"), "w") as f:
+            json.dump(change, f)  # JSON is YAML
+        PY
+    - uses: push
+
+outputs:
+  - change.yaml
+
+task-output:
+  kind: Change
+  from: change.yaml
+  preview: spec.title
+  actions:
+    - verb: edit
+      field: spec
+      format: yaml
+    - verb: open-pr
+      label: Open adopted PR
+    - verb: reject

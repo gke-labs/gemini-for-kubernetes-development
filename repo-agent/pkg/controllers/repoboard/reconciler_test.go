@@ -158,7 +158,7 @@ func (f *fakeLauncher) StartApply(key string, opts factorycli.ApplyOptions) bool
 // Recipes is the built-ins as factory lists them, in the board's order,
 // with what they apply when a run ends and their timeouts, and summarize: a recipe the board has no pass of its own for, on issues
 // and PRs, writing a Summary.
-func (f *fakeLauncher) Recipes(_ context.Context, repoURL, _ string) ([]boardv1alpha1.BoardRecipe, []string, error) {
+func (f *fakeLauncher) Recipes(_ context.Context, repoURL, _, _ string) ([]boardv1alpha1.BoardRecipe, []string, error) {
 	f.mu.Lock()
 	f.listed = append(f.listed, repoURL)
 	f.mu.Unlock()

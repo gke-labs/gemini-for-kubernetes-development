@@ -163,7 +163,7 @@ func (r *Reconciler) ensureApplies(ctx context.Context, work *workState, reqs []
 			logger.Error(err, "apply executor has no token", "executor", spec.Member, "sandbox", spec.Sandbox)
 			continue
 		}
-		if r.Factory.StartApply(key, factorycli.ApplyOptions{Doc: doc, Action: spec.Apply.Action, GithubToken: token}) {
+		if r.Factory.StartApply(key, factorycli.ApplyOptions{Doc: doc, Action: spec.Apply.Action, RepoRecipes: work.board.Spec.RepoRecipe.Mode, GithubToken: token}) {
 			logger.Info("launched factory apply", "sandbox", spec.Sandbox, "run", spec.Apply.Run, "action", spec.Apply.Action, "member", spec.Member)
 		}
 	}
