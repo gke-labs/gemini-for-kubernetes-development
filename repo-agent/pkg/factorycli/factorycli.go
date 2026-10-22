@@ -105,27 +105,10 @@ func RunbookInstance(runbook, instance string) string {
 	return runbook
 }
 
-// RunSandboxName mirrors factory's: a run's own sandbox,
-// run-<repo>-<run>, budgeted for the -lb DNS cap.
+// RunSandboxName mirrors factory's: a run's own sandbox, keyed by its
+// instance (factory --sandbox-key), run-<repo slug>-<short hash>.
 func RunSandboxName(repo, instance string) string {
-	slugify := func(s string) string {
-		s = strings.ToLower(s)
-		var b strings.Builder
-		for _, r := range s {
-			if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' {
-				b.WriteRune(r)
-			} else {
-				b.WriteRune('-')
-			}
-		}
-		return strings.Trim(b.String(), "-")
-	}
-	suffix := slugify(instance)
-	slug := slugify(repo)
-	if budget := 60 - len("run-") - len(suffix) - 1; len(slug) > budget {
-		slug = strings.Trim(slug[:budget], "-")
-	}
-	return "run-" + slug + "-" + suffix
+	return KeyedSandboxName("run", repo, instance)
 }
 
 // RunOptions parameterize `factory run <mode>` — planning, deploying
@@ -167,6 +150,7 @@ func (r *Runner) StartRun(key string, opts RunOptions) bool {
 		"--timeout", timeout.String(),
 		"--abort-on-cancel=false",
 		"--run", opts.Name,
+		"--sandbox-key", opts.Name,
 	}
 	if opts.Intent != "" && opts.Mode != "deploy" {
 		// Deploy executes a plan the owner already reviewed; taking

@@ -6,6 +6,8 @@
 # runs it in the sandbox warm-<repo>, never one restored from a snapshot.
 name: warm
 on: [repo]
+sandbox:
+  kind: warm
 credentials: clone       # the token reaches the clone step and nothing else
 inputs:
   script:

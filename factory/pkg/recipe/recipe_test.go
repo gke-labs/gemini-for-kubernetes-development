@@ -2131,18 +2131,26 @@ func TestBuiltinRunStepsComeAfterTheCheckout(t *testing.T) {
 	}
 }
 
-// A sandbox: without a kind sizes a recipe's conversation sandbox: only
-// for a recipe on a repository, and only with quantities.
-func TestSandboxSizeDecl(t *testing.T) {
-	ok := "name: r\non: [repo]\nsandbox: {cpu-request: '8', memory-limit: 32Gi, disk: 100Gi}\nstart: {steps: [{ask: a}]}\n"
+// A recipe on a repository declares its sandbox kind, and only such a
+// recipe declares one: a known kind, a short prefix, and sizes that are
+// quantities, for a kind they apply to.
+func TestSandboxDecl(t *testing.T) {
+	ok := "name: r\non: [repo]\nsandbox: {kind: research, prefix: kcc, cpu-request: '8', memory-limit: 32Gi, disk: 100Gi}\nstart: {steps: [{ask: a}]}\n"
 	rec, err := Parse([]byte(ok))
-	if err != nil || rec.Sandbox.CPURequest != "8" || rec.Sandbox.MemoryLimit != "32Gi" || rec.Sandbox.Disk != "100Gi" || rec.Sandbox.Kind != "" {
+	if err != nil || rec.Sandbox.Kind != SandboxResearch || rec.Sandbox.SandboxPrefix() != "kcc" || rec.Sandbox.CPURequest != "8" || rec.Sandbox.Disk != "100Gi" {
 		t.Fatalf("sized = %+v, %v", rec, err)
 	}
+	if d := (&SandboxDecl{Kind: SandboxResearch}); d.SandboxPrefix() != "rsch" {
+		t.Errorf("research's prefix = %s, want rsch", d.SandboxPrefix())
+	}
 	for name, tc := range map[string]struct{ yaml, want string }{
-		"on an issue": {"name: r\non: [issue]\nsandbox: {cpu-request: '8'}\nstart: {steps: [{ask: a}]}\n", "for a recipe on: [repo]"},
-		"not a size":  {"name: r\non: [repo]\nsandbox: {memory-limit: lots}\nstart: {steps: [{ask: a}]}\n", "sandbox memory-limit"},
-		"other kind":  {"name: r\non: [repo]\nsandbox: {kind: big}\nstart: {steps: [{ask: a}]}\n", "is not one of: run"},
+		"repo, no sandbox": {"name: r\non: [repo]\nstart: {steps: [{ask: a}]}\n", "declares its sandbox: kind"},
+		"repo, no kind":    {"name: r\non: [repo]\nsandbox: {cpu-request: '8'}\nstart: {steps: [{ask: a}]}\n", `sandbox kind "" is not one of`},
+		"on an issue":      {"name: r\non: [issue]\nsandbox: {kind: research}\nstart: {steps: [{ask: a}]}\n", "sandbox: is for a recipe on: [repo]"},
+		"not a size":       {"name: r\non: [repo]\nsandbox: {kind: research, memory-limit: lots}\nstart: {steps: [{ask: a}]}\n", "sandbox memory-limit"},
+		"other kind":       {"name: r\non: [repo]\nsandbox: {kind: big}\nstart: {steps: [{ask: a}]}\n", "is not one of: agent, research, run, warm"},
+		"warm sized":       {"name: r\non: [repo]\nsandbox: {kind: warm, disk: 1Gi}\nstart: {steps: [{ask: a}]}\n", "not sized by its recipe"},
+		"bad prefix":       {"name: r\non: [repo]\nsandbox: {kind: research, prefix: Bad-Prefix}\nstart: {steps: [{ask: a}]}\n", "sandbox prefix"},
 	} {
 		if _, err := Parse([]byte(tc.yaml)); err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("%s: %v, want %q", name, err, tc.want)

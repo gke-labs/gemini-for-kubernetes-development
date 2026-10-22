@@ -18,7 +18,7 @@ func TestResearchSandboxSize(t *testing.T) {
 		t.Helper()
 		ns := "u"
 		kc := prClients(t, ns)
-		name, err := sandbox.EnsureResearchSandbox(context.Background(), kc, ns, "k8s-config-connector", "s1", "", "", "", "", want, nil, nil, "")
+		name, err := sandbox.EnsureResearchSandbox(context.Background(), kc, ns, "k8s-config-connector", "", "s1", "", "", "", "", want, nil, nil, "")
 		if err != nil {
 			t.Fatalf("EnsureResearchSandbox: %v", err)
 		}

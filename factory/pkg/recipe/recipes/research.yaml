@@ -14,6 +14,8 @@
 # what the member's token may.
 name: research
 on: [repo]
+sandbox:
+  kind: research
 task-type: research
 
 inputs:

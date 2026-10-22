@@ -228,7 +228,7 @@ func overrideRecipe(ctx context.Context, name string, readRepo repoFile) (data [
 // parseRepoRecipe parses a repository's recipe file name.yaml. It must
 // be named as its file is, may not take a built-in's name — the overseer
 // and every board rely on those meaning what they do — and may not
-// declare yet a sandbox kind of its own (it may size its conversation's): a run sandbox runs as the deployer
+// declare yet a sandbox kind other than research (which it may size): a run sandbox runs as the deployer
 // service account, which reaches the member's GCP project, and a
 // repository recipe gets that only once a board allows it.
 func parseRepoRecipe(name string, data []byte) (*recipe.Recipe, error) {
@@ -241,8 +241,8 @@ func parseRepoRecipe(name string, data []byte) (*recipe.Recipe, error) {
 		return nil, fmt.Errorf("recipe is named %s, not %s as its file is", rec.Name, name)
 	case isBuiltin(name):
 		return nil, fmt.Errorf("%s is a built-in recipe's name; a repository's recipe cannot take it", name)
-	case rec.Sandbox != nil && rec.Sandbox.Kind != "":
-		return nil, fmt.Errorf("a repository's recipe cannot declare a sandbox kind (%s) yet; a sandbox: without one only sizes its conversation's sandbox", rec.Sandbox.Kind)
+	case rec.Sandbox != nil && rec.Sandbox.Kind != recipe.SandboxResearch:
+		return nil, fmt.Errorf("a repository's recipe runs in a research sandbox (sandbox: {kind: research}), not a %s one, yet", rec.Sandbox.Kind)
 	case builtinSession(rec.Session):
 		return nil, fmt.Errorf("session %s is a built-in group's; a repository's recipe cannot join its conversation", rec.Session)
 	}

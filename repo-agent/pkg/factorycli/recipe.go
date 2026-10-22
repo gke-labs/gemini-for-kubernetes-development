@@ -29,7 +29,7 @@ type RecipeOptions struct {
 	// SandboxName is the sandbox the run's task output is read back from;
 	// empty lets factory find it by URL.
 	SandboxName string
-	// Session names a repository recipe's sandbox (factory --session),
+	// Session names a repository recipe's sandbox (factory --sandbox-key),
 	// made if missing; empty for an issue's or a PR's.
 	Session string
 	// Namespace the task (and its sandbox) runs in; factory resolves the
@@ -147,7 +147,7 @@ func recipeArgs(opts RecipeOptions, timeout time.Duration) []string {
 		"--abort-on-cancel=false",
 	)
 	if opts.Session != "" {
-		args = append(args, "--session", opts.Session)
+		args = append(args, "--sandbox-key", opts.Session)
 	}
 	if opts.Detached {
 		args = append(args, "--detached")
