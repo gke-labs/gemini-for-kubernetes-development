@@ -1,0 +1,28 @@
+# Mirrors prs/handlers.go handlePRInvestigate: a PR whose checks fail is
+# investigated and fixed by its author (care-ci --apply --action
+# post-replies, its run: below). It runs again on a new head, after a
+# failed run, on a PR assigned to the pool explicitly, or 2h after the
+# last. After 3 attempts since the last commit, trusted human comment or
+# pause it gives up with the stop label (investigationAttempts). Third of
+# the PR rules that take the item (prs/scanner.go evaluate).
+name: ci
+description: Investigate and fix failing checks
+on: pr
+order: 30
+when:
+  author: pool
+  checks: failing
+run:
+  recipe: care-ci
+  apply: post-replies
+  start-comment: "🤖 AI Factory started investigating CI check failures for this pull request.\n\nNote: We recommend waiting for the 'ready-for-human' label before leaving review comments. Comments added while the system is actively working may be associated with outdated commits once a new commit is pushed, causing them to be ignored."
+policy:
+  cooldown:
+    success: 2h
+    reset-on: [head]
+    skip-when: {assignee: pool}
+  give-up:
+    attempts: 3
+    since: [head, human, pause]
+    comment: Pausing after 3 attempts to fix the failing checks.
+  phase: 3

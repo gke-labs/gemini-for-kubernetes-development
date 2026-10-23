@@ -1,0 +1,31 @@
+# Mirrors prs/handlers.go handlePRComments: new feedback from a trusted
+# human on the PR, or a last comments run on this head that failed, is
+# answered by its author and the replies posted (care-comments --apply
+# --action post-replies, its run: below), as often as new feedback comes:
+# one queued task at a time, not once per head. After 3 failed runs since
+# the head, a trusted human's last comment or the last pause, it gives up:
+# the stop label and a pause comment (the handler's retry limit: new
+# feedback is always answered; a run that keeps failing is not retried
+# forever). First of the PR rules that take the item (prs/scanner.go
+# evaluate).
+name: comments
+description: Answer new trusted feedback on the PR
+on: pr
+order: 10
+when:
+  author: pool
+  any-of:
+    - feedback: new-trusted
+    - last-run: failed
+run:
+  recipe: care-comments
+  apply: post-replies
+  acknowledge: feedback
+  start-comment: "🤖 AI Factory started addressing review feedback for this pull request."
+policy:
+  give-up:
+    attempts: 3
+    since: [head, human, pause]
+    failed: true
+    comment: Pausing after 3 attempts to address the feedback on this commit.
+  phase: 1

@@ -1,0 +1,32 @@
+# Mirrors prs/handlers.go handlePRReview, gated by prs/labels.go
+# shouldAutoReviewPR and isPRApprovedOrLGTM: a green PR with no pending
+# trusted feedback, not approved, whose head the automated reviewer has
+# not reviewed, and that wants a review - */review on itself, or, while
+# it is not ready-for-human, on an issue it closes - is reviewed and the
+# review submitted (review --apply --action submit-review,
+# its run: below), once per head. Fourth of the PR rules that take the
+# item (prs/scanner.go evaluate). The review instructions are the overseer's,
+# passed by the engine.
+name: review
+description: Review a green PR that wants a review
+on: pr
+order: 40
+when:
+  author: pool
+  checks: green
+  feedback: none
+  approved: false
+  reviewed-at-head: false
+  any-of:
+    - labels: {all: ["*/review"]}
+    - labels: {none: ["*/ready-for-human"]}
+      closes: {labels: {all: ["*/review"]}}
+run:
+  recipe: review
+  apply: submit-review
+  inputs:
+    instructions: "{{review-instructions}}"
+  start-comment: "🤖 AI Factory started reviewing this pull request in a sandbox."
+policy:
+  dedupe: head
+  phase: 1

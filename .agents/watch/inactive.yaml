@@ -1,0 +1,17 @@
+# Mirrors prs/history.go pauseIfInactive: a PR with no trusted human
+# activity for the overseer's prInactivityTimeout is paused, once: a
+# comment and the stop label.
+#
+# On, and a no-op until the overseer sets prInactivityTimeout (0, the
+# default, is never): inactive-for holds only for a timeout above 0. KCC
+# sets 14 days.
+name: inactive
+description: Pause a PR nobody has looked at
+on: pr
+order: 7
+when:
+  author: pool
+  inactive-for: "{{pr-inactivity-timeout}}"
+run:
+  stop:
+    comment: Pausing this PR after a period without activity.

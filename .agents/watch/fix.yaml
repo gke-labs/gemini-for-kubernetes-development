@@ -1,0 +1,57 @@
+# Mirrors issues/scanner.go queueTask (with queueTasks) and issues/scan.go
+# scanAssigned / adoptCreatedIssues: an open issue the overseer is pointed
+# at - labelled with the trigger, assigned to the pool, or opened by the
+# watcher's own login - not a fan-out's parent, with no closing or
+# linked PR and no workflow named in its body, updated since its last fix
+# ended, is fixed and the PR opened ready (its run: below: fix --apply
+# --action open-pr --pr-labels --input draft=false). The 10m / 20m cooldowns are the scanner's after a success
+# / a failure.
+#
+# After 3 failed runs since a trusted human last spoke on the issue or it
+# was last paused, it gives up: the stop label and a comment. A fix that
+# fails the same way every time (the agent finds nothing to change, and
+# the push has nothing to push) would otherwise retry after every failure
+# cooldown; a human's comment or taking the stop label off starts the
+# count again. Only the engine gives up (the scanner retried forever).
+#
+# An issue without the trigger label gets it when its task is queued
+# (applyTriggerLabel), and the coder the dispatcher picks is assigned when
+# the task starts (the claim, which unassigns the watcher). Adoption wrote
+# the same two things earlier - the label, and the watcher as a parking
+# assignee - so an issue the watcher opened is tracked like a labelled
+# one and is this rule's, rather than a rule of its own.
+name: fix
+description: Fix an issue the overseer is pointed at and open the PR
+on: issue
+order: 20
+when:
+  # pointed at: the trigger label, a pool assignee, or opened by the
+  # watcher (the issue listings'; the engine's own, so a decision outside
+  # a scan - the dispatcher's at start - holds the same)
+  any-of:
+    - labels: {any: ["{{trigger}}"]}
+    - assignee: pool
+    - opened-by: watcher
+  fanout: false
+  linked-pr: none
+  # No open PR connected to it on its timeline either (a read of its own,
+  # made only when the rest holds); a workflow's steps open PRs that do.
+  connected-pr: none
+  workflow: none
+run:
+  recipe: fix
+  apply: open-pr
+  inputs:
+    draft: "false"
+    labels: "{{pr-labels}}"
+  claim: true
+  start-comment: "🤖 AI Factory started fixing this issue in a sandbox."
+policy:
+  dedupe: update
+  cooldown: {success: 10m, failure: 20m}
+  give-up:
+    attempts: 3
+    since: [human, pause]
+    failed: true
+    comment: Pausing after 3 failed attempts to fix this issue.
+  phase: 3
