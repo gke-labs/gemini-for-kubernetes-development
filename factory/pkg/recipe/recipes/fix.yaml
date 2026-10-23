@@ -121,7 +121,9 @@ start:
           clean; squash or rebase if it is not.
         * Do not commit large binary files or build artifacts. Clean up
           what builds and tests leave behind (`make clean` if there is one)
-          before committing.
+          before committing. If disk space on `/workspaces` is low, run
+          `go clean -cache` or clean build artifacts; do NOT change
+          `GOCACHE` or `GOMODCACHE` to root partitions like `/root/.cache`.
         * In each commit body, add a line like "Issue: {{ .Inputs.issue_number }}", but not as
           the first line.
         {{- if eq .Inputs.disclose "true" }}
