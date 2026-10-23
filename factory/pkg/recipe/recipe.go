@@ -100,6 +100,16 @@ type Recipe struct {
 	// (unset) or CredentialsClone. Unlike task-type it is the runner's,
 	// which enforces it, so it reaches the sandbox.
 	Credentials string `yaml:"credentials,omitempty"`
+	// As is who a watch runs the recipe's task as, of factory's roles
+	// (config roles, an overseer's spec.roles): AsAuthor, the PR's own bot
+	// (the pool bot assigned to it, else its author: a recipe that pushes
+	// to the PR's branch, in that bot's fork); or a pool - coder, agent,
+	// reviewer - pinned to the item. What it does decides it, not the rule
+	// that runs it. Every built-in declares it, and so must a repository's
+	// recipe (which may say only author or coder). A runner without pools
+	// (the board, which runs as its member) does not read it. Like
+	// TaskOutput it is factory's.
+	As string `yaml:"as,omitempty"`
 	// Session is a tag (design/recipe-sessions.md): recipes with the same
 	// one, on one target, run into one conversation in its sandbox, and a
 	// board shows them as one group. A run continues the conversation the
@@ -420,6 +430,35 @@ func parse(data []byte, kept bool) (*Recipe, error) {
 	return &r, nil
 }
 
+// The roles a recipe runs as (Recipe.As).
+const (
+	AsAuthor   = "author"
+	AsCoder    = "coder"
+	AsAgent    = "agent"
+	AsReviewer = "reviewer"
+)
+
+// validateAs holds a recipe's as: one of the roles, author only for a
+// recipe on pull requests alone.
+func (r *Recipe) validateAs() error {
+	switch r.As {
+	case "", AsCoder, AsAgent, AsReviewer:
+		return nil
+	case AsAuthor:
+		for _, on := range r.On {
+			if on != OnPR && on != OnMyPR {
+				return fmt.Errorf("recipe %s: as author is for a recipe on pull requests, not on %s", r.Name, on)
+			}
+		}
+		if len(r.On) == 0 {
+			return fmt.Errorf("recipe %s: as author is for a recipe on pull requests (on: [pr])", r.Name)
+		}
+		return nil
+	default:
+		return fmt.Errorf("recipe %s: as %q is not one of: %s, %s, %s, %s", r.Name, r.As, AsAuthor, AsCoder, AsAgent, AsReviewer)
+	}
+}
+
 // validateSandbox holds a recipe's sandbox: required for a recipe on a
 // repository and only for one; a special kind declares nothing else, the
 // recipe's own its prefix and every size, as quantities.
@@ -473,6 +512,9 @@ func (r *Recipe) Validate() error {
 func (r *Recipe) validate(sandbox bool) error {
 	if r.Name == "" {
 		return fmt.Errorf("recipe has no name")
+	}
+	if err := r.validateAs(); err != nil {
+		return err
 	}
 	if sandbox {
 		if err := r.validateSandbox(); err != nil {
@@ -774,7 +816,7 @@ func ForSandbox(data []byte) ([]byte, error) {
 	}
 	m := doc.Content[0]
 	changed := false
-	for _, k := range []string{"label", "on", "task-output", "task-type", "session", "applicable-when", "sandbox", "timeout"} {
+	for _, k := range []string{"label", "on", "task-output", "task-type", "session", "applicable-when", "sandbox", "timeout", "as"} {
 		if dropKey(m, k) {
 			changed = true
 		}

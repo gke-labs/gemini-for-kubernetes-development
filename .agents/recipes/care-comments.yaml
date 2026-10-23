@@ -21,6 +21,7 @@
 name: care-comments
 label: Address comments
 on: [my-pr]
+as: author
 session: care
 
 inputs:

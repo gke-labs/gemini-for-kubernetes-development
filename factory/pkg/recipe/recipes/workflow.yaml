@@ -23,6 +23,7 @@
 name: workflow
 label: Workflow
 on: [issue]
+as: agent
 task-type: workflow
 
 inputs:

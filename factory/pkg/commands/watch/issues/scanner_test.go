@@ -160,7 +160,7 @@ func (s fakeSandboxes) IsTaskRunning(_ context.Context, name string) (bool, erro
 // fakeUsers pins every task to one account.
 type fakeUsers struct{ user string }
 
-func (u fakeUsers) SelectUser(context.Context, api.TaskType, int) (string, error) {
+func (u fakeUsers) SelectUser(context.Context, api.TaskType, string, int) (string, error) {
 	return u.user, nil
 }
 

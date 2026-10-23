@@ -18,6 +18,7 @@
 name: run-teardown
 label: Tear down
 on: [repo]
+as: coder
 task-type: run
 # Its own sandbox, run-<repo>-<run>, kept for all the run's phases and
 # never another item's: a run outlives what it deploys until it is torn

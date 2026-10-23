@@ -17,6 +17,7 @@
 name: care-iterate
 label: Iterate
 on: [my-pr]
+as: author
 session: care
 
 inputs:

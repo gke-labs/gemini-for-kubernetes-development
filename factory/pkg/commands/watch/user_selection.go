@@ -8,6 +8,7 @@ import (
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/api"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/k8s"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/recipe"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/klog/v2"
 )
@@ -19,66 +20,26 @@ import (
 // the factory role configuration and the cluster: an issue whose sandbox
 // already exists is pinned to the account that sandbox belongs to, so that a
 // resumed task keeps the credentials and the workspace it started with.
-func (w *Watcher) selectUserForTask(ctx context.Context, taskType api.TaskType, prNum int) (string, error) {
+func (w *Watcher) selectUserForTask(ctx context.Context, taskType api.TaskType, recipeName string, prNum int) (string, error) {
 	if w.cfg == nil || len(w.cfg.Roles) == 0 {
 		return "", nil // default fallback to factory-user
 	}
 
-	// 1. Determine role for task type
-	role := ""
-	for roleName, rCfg := range w.cfg.Roles {
-		for _, t := range rCfg.Tasks {
-			if strings.EqualFold(t, string(taskType)) {
-				role = roleName
-				break
-			}
-		}
-		if role != "" {
-			break
-		}
+	// 1. The role: what the task's recipe says it runs as - a pool, or
+	// author, the pool the PR's author is in - else, for a task with no
+	// recipe (a scheduled chore, a nudged workflow step queued before),
+	// its type's.
+	var role string
+	switch as := w.recipeAs(recipeName); as {
+	case "":
+		role = w.roleOfTaskType(ctx, taskType, prNum)
+	case recipe.AsAuthor:
+		role = w.authorRole(ctx, prNum)
+	default:
+		role = as
 	}
-
 	if role == "" {
-		switch {
-		case taskType == api.TypeAgentChore:
-			if rCfg, ok := w.cfg.Roles["agent"]; ok && len(rCfg.Users) > 0 {
-				role = "agent"
-			} else {
-				role = "coder"
-			}
-		case api.IsPRTask(taskType):
-			if prNum > 0 {
-				pr, _, err := w.ghClient.PullRequests.Get(ctx, w.Repo.Owner, w.Repo.Repo, prNum)
-				if err == nil {
-					author := pr.GetUser().GetLogin()
-					if author != "" {
-						inAgentPool := false
-						if agentCfg, ok := w.cfg.Roles["agent"]; ok {
-							for _, u := range agentCfg.Users {
-								if strings.EqualFold(u, author) {
-									inAgentPool = true
-									break
-								}
-							}
-						}
-						if inAgentPool {
-							role = "agent"
-						} else {
-							role = "coder"
-						}
-					}
-				}
-			}
-			if role == "" {
-				role = "coder"
-			}
-		case taskType == api.TypeIssueFix:
-			role = "coder"
-		case taskType == api.TypePRReview:
-			role = "reviewer"
-		default:
-			return "", nil // default fallback
-		}
+		return "", nil // default fallback
 	}
 
 	roleCfg, exists := w.cfg.Roles[role]
@@ -152,6 +113,13 @@ func (w *Watcher) selectUserForTask(ctx context.Context, taskType api.TaskType, 
 		return roleCfg.Users[idx], nil
 	}
 
+	// A reviewer is any of the pool: a different identity from the PR's,
+	// whoever wrote it.
+	if role == "reviewer" {
+		idx := time.Now().UnixNano() % int64(len(roleCfg.Users))
+		return roleCfg.Users[idx], nil
+	}
+
 	if prNum > 0 {
 		pr, _, err := w.ghClient.PullRequests.Get(ctx, w.Repo.Owner, w.Repo.Repo, prNum)
 		if err != nil {
@@ -160,16 +128,6 @@ func (w *Watcher) selectUserForTask(ctx context.Context, taskType api.TaskType, 
 		author := pr.GetUser().GetLogin()
 		if author == "" {
 			return "", fmt.Errorf("empty author login for PR %d", prNum)
-		}
-
-		if taskType == api.TypePRReview {
-			reviewerRoleCfg, ok := w.cfg.Roles["reviewer"]
-			if ok && len(reviewerRoleCfg.Users) > 0 {
-				idx := time.Now().UnixNano() % int64(len(reviewerRoleCfg.Users))
-				return reviewerRoleCfg.Users[idx], nil
-			}
-			idx := time.Now().UnixNano() % int64(len(roleCfg.Users))
-			return roleCfg.Users[idx], nil
 		}
 
 		inPool := false
@@ -186,4 +144,75 @@ func (w *Watcher) selectUserForTask(ctx context.Context, taskType api.TaskType, 
 	}
 
 	return "", nil
+}
+
+// roleOfTaskType is the role a task no rule decided runs as, by its type
+// (the factory config's roles.<role>.tasks, else the watch's own mapping);
+// "" for none.
+func (w *Watcher) roleOfTaskType(ctx context.Context, taskType api.TaskType, prNum int) string {
+	// 1. Determine role for task type
+	role := ""
+	for roleName, rCfg := range w.cfg.Roles {
+		for _, t := range rCfg.Tasks {
+			if strings.EqualFold(t, string(taskType)) {
+				role = roleName
+				break
+			}
+		}
+		if role != "" {
+			break
+		}
+	}
+
+	if role == "" {
+		switch {
+		case taskType == api.TypeAgentChore:
+			if rCfg, ok := w.cfg.Roles["agent"]; ok && len(rCfg.Users) > 0 {
+				role = "agent"
+			} else {
+				role = "coder"
+			}
+		case api.IsPRTask(taskType):
+			role = w.authorRole(ctx, prNum)
+		case taskType == api.TypeIssueFix:
+			role = "coder"
+		case taskType == api.TypePRReview:
+			role = "reviewer"
+		}
+	}
+	return role
+}
+
+// authorRole is the pool the PR's author is in: agent when the agent pool
+// has it, else coder.
+func (w *Watcher) authorRole(ctx context.Context, prNum int) string {
+	if prNum > 0 && w.ghClient != nil {
+		pr, _, err := w.ghClient.PullRequests.Get(ctx, w.Repo.Owner, w.Repo.Repo, prNum)
+		if err == nil {
+			if author := pr.GetUser().GetLogin(); author != "" {
+				for _, u := range w.cfg.Roles["agent"].Users {
+					if strings.EqualFold(u, author) {
+						return "agent"
+					}
+				}
+			}
+		}
+	}
+	return "coder"
+}
+
+// recipeAs is who the recipe named runs as (recipe.Recipe.As): the
+// repository's recipe of that name when the watch read one (RepoRecipeAs),
+// else factory's; "" for no recipe, or one neither has.
+func (w *Watcher) recipeAs(name string) string {
+	if name == "" {
+		return ""
+	}
+	if as, ok := w.repoRecipeAs[name]; ok {
+		return as
+	}
+	if _, rec, err := recipe.Builtin(name); err == nil {
+		return rec.As
+	}
+	return ""
 }

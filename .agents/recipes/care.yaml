@@ -20,6 +20,7 @@
 name: care
 label: Care
 on: [my-pr]
+as: author
 session: care
 
 inputs:

@@ -438,3 +438,41 @@ url: https://github.com/test-owner/test-repo/issues/102
 		t.Errorf("expected sandbox %s not to be busy", sbName)
 	}
 }
+
+// A task runs as its recipe's as: the PR's own bot for author, its
+// assignee when that is in the pool it names, else a bot of that pool - a
+// review queued with the PR's bot as assignee runs as a reviewer.
+func TestWatcherTaskCoordinator_SelectUser_RunsAs(t *testing.T) {
+	w := newTestWatcher(t, t.TempDir())
+	w.targetAssignee = "watcher-bot"
+	w.cfg = &config.FactoryConfig{Roles: map[string]config.RoleConfig{
+		"coder":    {Users: []string{"coder-bot"}},
+		"reviewer": {Users: []string{"review-bot"}},
+	}}
+	coordinator := &watcherTaskCoordinator{w: w}
+	for name, tc := range map[string]struct {
+		task *api.QueueTask
+		want string
+	}{
+		"author":                     {&api.QueueTask{Type: api.TypePRComments, Recipe: "care-comments", Assignee: "coder-bot", Number: 7}, "coder-bot"},
+		"a pool member":              {&api.QueueTask{Type: api.TypeIssueFix, Recipe: "fix", Assignee: "coder-bot", Number: 7}, "coder-bot"},
+		"reviewer, not the PR's bot": {&api.QueueTask{Type: api.TypePRReview, Recipe: "review", Assignee: "coder-bot", Number: 7}, "review-bot"},
+	} {
+		user, err := coordinator.SelectUser(context.Background(), tc.task)
+		if err != nil || user != tc.want {
+			t.Errorf("%s: %q, %v; want %q", name, user, err, tc.want)
+		}
+	}
+}
+
+// Who a recipe runs as is the repository's recipe of its name when the
+// watch read one, else factory's.
+func TestRecipeAs(t *testing.T) {
+	w := newTestWatcher(t, t.TempDir())
+	w.repoRecipeAs = map[string]string{"review": "coder", "deploy-preview": "author"}
+	for name, want := range map[string]string{"review": "coder", "deploy-preview": "author", "fix": "coder", "care-ci": "author", "workflow": "agent", "nope": "", "": ""} {
+		if got := w.recipeAs(name); got != want {
+			t.Errorf("recipeAs(%q) = %q, want %q", name, got, want)
+		}
+	}
+}

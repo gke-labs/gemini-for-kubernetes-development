@@ -119,7 +119,9 @@ type Listings interface {
 // and sandbox pinning live with the watcher, so the Scanner asks rather than
 // deciding.
 type UserSelector interface {
-	SelectUser(ctx context.Context, taskType api.TaskType, number int) (string, error)
+	// SelectUser is the bot a task of taskType running recipe runs as
+	// (the recipe's as).
+	SelectUser(ctx context.Context, taskType api.TaskType, recipe string, number int) (string, error)
 }
 
 // Config holds the tuning knobs of a Scanner.
@@ -548,7 +550,11 @@ func (s *Scanner) queueTask(ctx context.Context, issue *githubv39.Issue, refIssu
 		taskType = api.TypeAgentChore
 	}
 
-	taskAssignee := s.selectUser(ctx, taskType, num)
+	recipeName := ""
+	if r := s.rules.Set().Named(rule); r != nil {
+		recipeName = r.Run.Recipe
+	}
+	taskAssignee := s.selectUser(ctx, taskType, recipeName, num)
 
 	var task *api.QueueTask
 	if workflowName != "" {
@@ -719,11 +725,11 @@ func unavailableWorkflowComment(ruleComment string, wf issueWorkflow, stopLabel 
 
 // selectUser resolves the bot account the task runs as, falling back to the
 // watcher's own account when role selection cannot answer.
-func (s *Scanner) selectUser(ctx context.Context, taskType api.TaskType, num int) string {
+func (s *Scanner) selectUser(ctx context.Context, taskType api.TaskType, recipe string, num int) string {
 	if s.users == nil {
 		return s.cfg.TargetAssignee
 	}
-	assignee, err := s.users.SelectUser(ctx, taskType, num)
+	assignee, err := s.users.SelectUser(ctx, taskType, recipe, num)
 	if err != nil {
 		klog.Errorf("Failed to select user for issue #%d: %v", num, err)
 		return s.cfg.TargetAssignee

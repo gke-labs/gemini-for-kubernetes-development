@@ -2151,3 +2151,36 @@ func TestSandboxDecl(t *testing.T) {
 		t.Error("a kept recipe's other fields are not held")
 	}
 }
+
+// Every built-in says who a watch runs it as (as), and only a recipe on
+// pull requests alone runs as the PR's author; ForSandbox leaves it out.
+func TestBuiltinsDeclareAs(t *testing.T) {
+	for _, name := range BuiltinNames() {
+		data, rec, err := Builtin(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if rec.As == "" {
+			t.Errorf("%s declares no as", name)
+		}
+		stripped, err := ForSandbox(data)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(stripped), "\nas: ") {
+			t.Errorf("%s: the sandbox's recipe keeps as", name)
+		}
+	}
+	for name, y := range map[string]string{
+		"author on an issue": "name: a\non: [issue]\nas: author\nstart: {steps: [{ask: a}]}\n",
+		"author on anything": "name: a\nas: author\nstart: {steps: [{ask: a}]}\n",
+		"no such role":       "name: a\non: [pr]\nas: watcher\nstart: {steps: [{ask: a}]}\n",
+	} {
+		if _, err := Parse([]byte(y)); err == nil {
+			t.Errorf("%s: parsed", name)
+		}
+	}
+	if _, err := Parse([]byte("name: a\non: [pr, my-pr]\nas: author\nstart: {steps: [{ask: a}]}\n")); err != nil {
+		t.Errorf("author on PRs: %v", err)
+	}
+}

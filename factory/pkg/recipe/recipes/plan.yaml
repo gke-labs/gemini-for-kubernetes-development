@@ -11,6 +11,7 @@
 # when asked, and the task's result follows (taskoutput.Refresh).
 name: plan
 on: [issue]
+as: coder
 task-type: plan
 
 inputs:

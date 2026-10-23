@@ -286,6 +286,9 @@ func parseReplacingRecipe(name string, data []byte) (*recipe.Recipe, error) {
 	if rec.Name != name {
 		return nil, fmt.Errorf("recipe is named %s, not %s as its file is", rec.Name, name)
 	}
+	if rec.As == "" {
+		return nil, fmt.Errorf("recipe %s says not who runs it (as: author, coder, agent or reviewer)", name)
+	}
 	return rec, nil
 }
 
@@ -308,6 +311,11 @@ func parseRepoRecipe(name string, data []byte) (*recipe.Recipe, error) {
 		return nil, fmt.Errorf("a repository's recipe runs in a sandbox of its own (sandbox: {prefix, sizes}), not the %s one", rec.Sandbox.Kind)
 	case builtinSession(rec.Session):
 		return nil, fmt.Errorf("session %s is a built-in group's; a repository's recipe cannot join its conversation", rec.Session)
+	case rec.As == "":
+		return nil, fmt.Errorf("recipe %s says not who runs it (as: author or coder)", name)
+	case rec.As != recipe.AsAuthor && rec.As != recipe.AsCoder:
+		// The operator, not a repository, decides which bot does what.
+		return nil, fmt.Errorf("recipe %s: as %s: a repository's recipe runs as author or coder", name, rec.As)
 	}
 	return rec, nil
 }

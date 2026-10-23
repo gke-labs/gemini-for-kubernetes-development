@@ -371,15 +371,21 @@ generic-board-recipes.md, step 7) use the same vocabulary for their
   every give-up ends today.
 - **Cluster:** `delete`, `suspend`, `harvest` on sandboxes (GC).
 
-**No `as`.** A rule does not name the bot it runs as. The role follows
-from what runs: the recipe's task type, mapped by the overseer's `roles`
-configuration (fix a coder, review a reviewer, a workflow an agent, PR
-care the PR's own), and GitHub writes are the watcher's. Pinning (the
-bot that owns the item's sandbox, then the assignee, then any) is the
-engine's, for every rule. 2a-1 had an `as` per rule; nothing read it
-(the scanners' `selectUserForTask` decides), two rules running one
-recipe as different roles would be a mistake, and the operator, not a
-repository, decides which bot does what, so it is gone.
+**No `as` on a rule; the recipe says it.** A rule does not name the bot
+it runs as: the role follows from what runs. 2a-1 had an `as` per rule
+and it was dropped - nothing read it (the scanners' `selectUserForTask`
+decided, by task type), two rules running one recipe as different roles
+would be a mistake, and the operator, not a repository, decides which bot
+does what. Once the watch was made generic the task-type mapping had to
+go too, so (October 2026) the recipe declares it: `as:` `author` (the
+PR's own bot, whose fork holds its branch: the care recipes), or a pool
+of factory's roles, `coder`, `agent`, `reviewer`, pinned to the item (the
+bot that owns its sandbox, then a pool bot assigned to it, then any).
+Every built-in declares it; a repository's recipe must, and may say only
+`author` or `coder` (any, in replace mode, which hands the repository
+its recipes). Roles are factory's (its config's `roles:`, an overseer's
+`spec.roles`); a runner without pools, like the board, does not read it.
+GitHub writes are the watcher's.
 
 ### Policies
 

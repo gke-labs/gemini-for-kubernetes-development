@@ -23,6 +23,7 @@
 name: fix
 timeout: 3h
 on: [issue]
+as: coder
 task-type: fix
 
 inputs:

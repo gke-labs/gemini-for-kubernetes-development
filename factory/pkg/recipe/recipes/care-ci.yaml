@@ -18,6 +18,7 @@
 name: care-ci
 label: Fix CI
 on: [my-pr]
+as: author
 session: care
 
 inputs:

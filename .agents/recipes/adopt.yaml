@@ -13,6 +13,7 @@
 name: adopt
 label: Adopt
 on: [pr]
+as: coder
 
 inputs:
   strategy:

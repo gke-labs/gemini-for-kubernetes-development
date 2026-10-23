@@ -219,13 +219,16 @@ it](#who-runs-it)).
 ### Who runs it
 
 The bot a task runs as follows from what it runs, not from the rule: the
-overseer maps task types to roles (`roles.<role>.tasks` in its
-configuration), and without a mapping fix runs as a coder, review as a
-reviewer, a workflow or chore as an agent, and PR care as the PR's own
-role (agent if its author is in the agent pool, else coder). Within the
-role, the bot already pinned to the item's sandbox, then a pool bot
-assigned to it, goes first. A repository's rule cannot pick another bot.
-GitHub writes are always the watcher's own.
+recipe says, `as:`.
+
+| recipe `as` | who |
+|---|---|
+| `author` | the PR's own bot: the pool bot assigned to it, else its author (its branch is in that bot's fork). The care recipes |
+| `coder`, `agent`, `reviewer` | a bot of that pool of factory's roles (an overseer's `spec.roles`): the one pinned to the item's sandbox, then a pool bot assigned to it, else any; `agent` falls back to coder when there is no agent pool. fix and the other issue recipes coder, review reviewer, workflow agent |
+
+A repository's recipe must say it, and may say only `author` or `coder`
+(any in replace mode). A task with no recipe (a scheduled chore) runs as
+its type's role. GitHub writes are always the watcher's own.
 
 ### GitHub writes
 

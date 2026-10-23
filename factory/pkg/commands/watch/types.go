@@ -112,7 +112,13 @@ type Watcher struct {
 	// they came from ("" for none) - pkg/commands' repoWatchRules. Nil,
 	// factory's rules alone. Read once, when the watch starts.
 	RepoRules func(ctx context.Context, base rules.Set) (rules.Set, string, error)
+	// RepoRecipeAs is who the repository's own recipes (.agents/recipes)
+	// run as, by name, as the repository recipe mode lets them in
+	// (pkg/commands' repoRecipeAs). Nil, factory's recipes alone. Read once,
+	// when the watch starts.
+	RepoRecipeAs func(ctx context.Context) (map[string]string, error)
 
+	repoRecipeAs map[string]string
 	cfg          *config.FactoryConfig
 	triggerLabel string
 	ghClient     *githubv39.Client
@@ -195,6 +201,7 @@ func (w *Watcher) initComponents() {
 	w.reconciler = w.newReconciler()
 	w.chores = w.newChoreScheduler()
 	w.sharedScan = w.newSharedScan()
+	w.repoRecipeAs = w.loadRepoRecipeAs()
 	w.rulesControl = w.newRulesControl()
 	w.rulesSummary = w.newRulesSummary()
 	w.rulesRecorder = rules.NewRecorder(w.RulesRecord, rules.DefaultRecordBytes, w.rulesSummary)
@@ -250,6 +257,23 @@ func (w *Watcher) newRulesControl() *rules.Control {
 	}
 	klog.Infof("Watch %s", c)
 	return c
+}
+
+// loadRepoRecipeAs reads who the repository's recipes run as
+// (RepoRecipeAs); none, with a warning, when that fails: their tasks then
+// run as their type's role.
+func (w *Watcher) loadRepoRecipeAs() map[string]string {
+	if w.RepoRecipeAs == nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	as, err := w.RepoRecipeAs(ctx)
+	if err != nil {
+		klog.Warningf("Reading who the repository's recipes run as: %v", err)
+		return nil
+	}
+	return as
 }
 
 // newRulesSummary tallies what the rules decide (rules.Summary), served on
