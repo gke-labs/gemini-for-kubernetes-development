@@ -56,16 +56,17 @@ func RuleRunName(t *QueueTask) string {
 }
 
 // RunNameOf is t's run name (factory --run-name): the one stamped on it
-// when it was queued (TaskQueueManager.Enqueue), else RuleRunName for a
-// rule task, ChoreRunName for an agent chore, "" for neither.
+// when it was queued (TaskQueueManager.Enqueue), else by what it runs -
+// ChoreRunName for an agent definition, RuleRunName for a rule's recipe -
+// "" for a task that runs neither.
 func RunNameOf(t *QueueTask) string {
 	switch {
 	case t.RunName != "":
 		return t.RunName
-	case IsRuleTask(t.Type):
-		return RuleRunName(t)
-	case t.Type == TypeAgentChore:
+	case t.AgentFile != "":
 		return ChoreRunName(t)
+	case t.Recipe != "":
+		return RuleRunName(t)
 	}
 	return ""
 }

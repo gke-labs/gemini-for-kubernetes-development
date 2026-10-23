@@ -288,18 +288,32 @@ func TestCLIRunner_Run_PropagatesExecutableResolutionError(t *testing.T) {
 }
 
 // Recovery requeues every task (Recover), which is only safe because
-// each one's command names its run: a recipe task's, or an agent chore's.
-func TestEveryTaskTypeNamesItsRun(t *testing.T) {
+// each one's command names its run, by what it runs: an agent definition
+// (agent create, a chore's run name) - even when its rule stamped a recipe
+// too, as a workflow step's does - else a rule's recipe.
+func TestEveryTaskNamesItsRun(t *testing.T) {
 	r := testCLIRunner(t.TempDir())
-	for _, typ := range []api.TaskType{api.TypeIssueRule, api.TypePRRule, api.TypeAgentChore} {
-		task := &api.QueueTask{Type: typ, URL: "https://github.com/o/r/pull/1", Number: 1, AgentFile: ".agents/x.md", Rule: "ci", Recipe: "r", EnqueuedAt: time.Unix(1760000000, 0)}
-		args := r.BuildArgs(task, "coder-bot")
-		want := api.ChoreRunName(task)
-		if api.IsRuleTask(typ) {
-			want = api.RuleRunName(task)
+	at := time.Unix(1760000000, 0)
+	for name, tc := range map[string]struct {
+		task    *api.QueueTask
+		command string
+		want    func(*api.QueueTask) string
+	}{
+		"a rule task":     {&api.QueueTask{Type: api.TypePRRule, URL: "https://github.com/o/r/pull/1", Number: 1, Rule: "ci", Recipe: "care-ci", EnqueuedAt: at}, "recipe", api.RuleRunName},
+		"a workflow step": {&api.QueueTask{Type: api.TypeAgentChore, URL: "https://github.com/o/r/issues/1", Number: 1, AgentFile: ".agents/workflows/x.md", Rule: "workflow", Recipe: "workflow", EnqueuedAt: at}, "agent", api.ChoreRunName},
+		"a chore":         {&api.QueueTask{Type: api.TypeAgentChore, URL: "https://github.com/o/r", AgentFile: ".agents/x.md", EnqueuedAt: at}, "agent", api.ChoreRunName},
+	} {
+		args := r.BuildArgs(tc.task, "coder-bot")
+		if len(args) == 0 || args[0] != tc.command {
+			t.Errorf("%s: BuildArgs %v, want factory %s", name, args, tc.command)
+			continue
 		}
-		if !slices.Contains(args, "--run-name") || args[slices.Index(args, "--run-name")+1] != want {
-			t.Errorf("%s: BuildArgs %v, want --run-name %s", typ, args, want)
+		if want := tc.want(tc.task); !slices.Contains(args, "--run-name") || args[slices.Index(args, "--run-name")+1] != want {
+			t.Errorf("%s: BuildArgs %v, want --run-name %s", name, args, want)
 		}
+	}
+	// Neither an agent definition nor a recipe: nothing to run.
+	if args := r.BuildArgs(&api.QueueTask{Type: api.TypePRRule, Number: 1}, "coder-bot"); args != nil {
+		t.Errorf("a task that runs nothing builds %v", args)
 	}
 }

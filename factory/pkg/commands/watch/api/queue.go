@@ -20,10 +20,6 @@ const (
 	TypeAgentChore TaskType = "agent-chore"
 )
 
-// IsRuleTask reports whether tasks of type t are a rule's: they run its
-// recipe, as factory recipe.
-func IsRuleTask(t TaskType) bool { return t == TypePRRule || t == TypeIssueRule }
-
 // RuleTaskFile is the task file of rule's task on a pull request (pr) or
 // an issue: task-pr-<n>-rule-<rule>.yaml, task-issue-<n>-rule-<rule>.yaml.
 func RuleTaskFile(pr bool, num int, rule string) string {

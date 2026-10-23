@@ -20,10 +20,10 @@ import (
 func TestRecover_RequeuesEveryTaskUnderItsRunName(t *testing.T) {
 	enqueued := time.Date(2026, 10, 11, 7, 0, 1, 0, time.UTC)
 	runName := func(task *api.QueueTask) string {
-		if api.IsRuleTask(task.Type) {
-			return api.RuleRunName(task)
+		if task.AgentFile != "" {
+			return api.ChoreRunName(task)
 		}
-		return api.ChoreRunName(task)
+		return api.RuleRunName(task)
 	}
 	for _, tc := range []struct {
 		name, file, body string

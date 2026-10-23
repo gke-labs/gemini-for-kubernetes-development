@@ -55,19 +55,24 @@ func NewCLIRunner(cfg CLIRunnerConfig) *CLIRunner {
 	}
 }
 
-// BuildArgs returns the factory CLI arguments for a task, or nil if the
-// task type is unknown or, for a recipe task, no rule decided it (no recipe).
+// BuildArgs returns the factory CLI arguments for a task, by what it says
+// it runs: an agent definition (AgentFile: a workflow's step, a chore) as
+// factory agent create, else the recipe the rule that decided it names as
+// factory recipe; nil for a task that carries neither (no rule decided
+// it). The run name is this enqueue's: a restarted watcher's recovered
+// task follows its run, or applies its result, and a task enqueued again
+// after a failure starts a new one.
 func (r *CLIRunner) BuildArgs(t *api.QueueTask, selectedUser string) []string {
 	var args []string
-	if api.IsRuleTask(t.Type) {
-		// The recipe the rule that decided t names, its result applied
-		// by the CLI as the user picked (--user); none without one. The
-		// run name is this enqueue's: a restarted watcher's recovered
-		// task follows its run, or applies its result, and a task
-		// enqueued again after a failure starts a new one.
-		if t.Recipe == "" {
-			return nil
+	switch {
+	case t.AgentFile != "":
+		args = []string{"agent", "create", "--url", t.URL, "--agent", t.AgentFile, "--run-name", api.RunNameOf(t)}
+		if t.SessionID != "" {
+			args = append(args, "--session-id", t.SessionID)
 		}
+		return r.withCommonArgs(args, selectedUser)
+	case t.Recipe != "":
+		// Its result applied by the CLI as the user picked (--user).
 		args = []string{"recipe", t.Recipe, "--url", t.URL, "--run-name", api.RunNameOf(t)}
 		if _, _, err := recipe.Builtin(t.Recipe); err != nil {
 			// A repository's recipe has no command of its name.
@@ -79,18 +84,7 @@ func (r *CLIRunner) BuildArgs(t *api.QueueTask, selectedUser string) []string {
 		}
 		return r.withCommonArgs(args, selectedUser)
 	}
-	switch t.Type {
-	case api.TypeAgentChore:
-		// Named as a recipe task's run is: a restarted watcher's
-		// recovered chore follows its run, or applies its result.
-		args = []string{"agent", "create", "--url", t.URL, "--agent", t.AgentFile, "--run-name", api.RunNameOf(t)}
-		if t.SessionID != "" {
-			args = append(args, "--session-id", t.SessionID)
-		}
-	default:
-		return nil
-	}
-	return r.withCommonArgs(args, selectedUser)
+	return nil
 }
 
 // withCommonArgs appends the flags every task's command takes: the
@@ -139,10 +133,7 @@ func (r *CLIRunner) withCommonArgs(args []string, selectedUser string) []string 
 func (r *CLIRunner) Run(ctx context.Context, taskFilename string, task *api.QueueTask, selectedUser string) error {
 	args := r.BuildArgs(task, selectedUser)
 	if args == nil {
-		if api.IsRuleTask(task.Type) {
-			return fmt.Errorf("task %s carries no recipe: no rule decided it", taskFilename)
-		}
-		return fmt.Errorf("unknown task type: %s", task.Type)
+		return fmt.Errorf("task %s carries no recipe: no rule decided it", taskFilename)
 	}
 
 	executable, err := r.resolveExecutable()

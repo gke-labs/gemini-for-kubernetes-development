@@ -1122,7 +1122,7 @@ func TestTaskQueueManager_HasActiveIssueTask(t *testing.T) {
 func TestEnqueueStampsTheRunName(t *testing.T) {
 	mgr, _ := setupTestQueueManager(t)
 	at := time.Unix(1700000000, 0)
-	if err := mgr.Enqueue("task-pr-7-rule-ci.yaml", &api.QueueTask{Type: api.TypePRRule, Rule: "ci", Number: 7, CommitSHA: "abcdef123", EnqueuedAt: at}); err != nil {
+	if err := mgr.Enqueue("task-pr-7-rule-ci.yaml", &api.QueueTask{Type: api.TypePRRule, Rule: "ci", Recipe: "care-ci", Number: 7, CommitSHA: "abcdef123", EnqueuedAt: at}); err != nil {
 		t.Fatal(err)
 	}
 	if err := mgr.Enqueue("task-pr-8-rule-review.yaml", &api.QueueTask{Type: api.TypePRRule, Number: 8, EnqueuedAt: at, RunName: "kept-8"}); err != nil {
