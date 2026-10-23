@@ -6,9 +6,10 @@ task:
     priority: medium
     phase: 3
     createdAt: 2026-10-20T10:00:00Z
-    triggerEventTime: 2026-10-20T11:00:00Z
-    triggerReason: RuleDecided
-    triggerNotes: The triage-2 rule decided to run
+    triggerEventTime: 2026-10-20T10:00:00Z
+    triggerReason: IssueCreated
+    triggerNotes: 'Issue #7 created at 2026-10-20T10:00:00Z with trigger label ''factory'''
+    assignee: bot1
     status: Pending
     rule: triage-2
     recipe: triage
