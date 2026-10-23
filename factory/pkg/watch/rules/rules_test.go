@@ -2,6 +2,7 @@ package rules
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -354,5 +355,60 @@ func TestRevisitAndReviewInstructions(t *testing.T) {
 	}
 	if !set.Named("review").Run.Asks(ReviewInstructions) || set.Named("conflict").Policy.Revisit != "every-scan" {
 		t.Error("the prebaked review does not ask for instructions, or conflict is not revisited")
+	}
+}
+
+// Facts read on demand: Needs asks for an unknown fact only for a rule
+// that could decide on what is known - fix needs the connected PR, a
+// workflow's step its definition's cooldown (after a success) then the
+// definition - and nothing for an item no rule can decide (a task of it
+// active); deciding, a condition on a fact not read fails, so nothing is
+// decided on it.
+func TestNeedsAndUnknownFacts(t *testing.T) {
+	set, err := Builtin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	env := Env{Trigger: "overseer", Prefixes: []string{"overseer"}, Now: now}
+	issue := Item{Kind: OnIssue, Number: 7, Labels: []string{"overseer"}, UpdatedAt: now.Add(-time.Hour),
+		Unknown: []string{FactConnectedPR}}
+	if got := strings.Join(set.Needs(issue, env), ","); got != FactConnectedPR {
+		t.Errorf("fix needs %q, want %s", got, FactConnectedPR)
+	}
+	if d := set.Decide(issue, env); len(d) != 0 {
+		t.Errorf("decided %v on a connected PR not read", d)
+	}
+	known := issue
+	known.Unknown = nil
+	if d := set.Decide(known, env); len(d) != 1 || d[0].Rule != "fix" {
+		t.Errorf("read, none connected: decided %v, want fix", d)
+	}
+	connected := known
+	connected.ConnectedPR = "open"
+	if d := set.Decide(connected, env); len(d) != 0 {
+		t.Errorf("a connected PR: decided %v, want nothing", d)
+	}
+	active := issue
+	active.TaskActive = true
+	if got := set.Needs(active, env); len(got) != 0 {
+		t.Errorf("a task of the issue active: needs %v, want nothing read", got)
+	}
+
+	// The scanner asks without workflow-missing, whose fact it reads for
+	// the workflow rule alone (its handler is its own).
+	set = slices.DeleteFunc(slices.Clone(set), func(r *Rule) bool { return r.Name == "workflow-missing" })
+	ended := now.Add(-54 * time.Minute)
+	wf := Item{Kind: OnIssue, Number: 8, Labels: []string{"overseer"}, UpdatedAt: now.Add(-time.Hour), Workflow: "greenfield",
+		Runs:    []PastRun{{Rule: "workflow", StartedAt: ended.Add(-time.Minute), EndedAt: ended}},
+		Unknown: []string{FactWorkflowCooldown, FactWorkflowDefinition, FactConnectedPR}}
+	if got := strings.Join(set.Needs(wf, env), ","); got != FactWorkflowCooldown+","+FactWorkflowDefinition {
+		t.Errorf("a workflow's step needs %q, want its cooldown then its definition (not the connected PR)", got)
+	}
+	held := wf
+	held.WorkflowCooldown = 2 * time.Hour
+	held.Unknown = []string{FactWorkflowDefinition, FactConnectedPR}
+	if got := set.Needs(held, env); len(got) != 0 {
+		t.Errorf("cooling down: needs %v, want nothing more read", got)
 	}
 }

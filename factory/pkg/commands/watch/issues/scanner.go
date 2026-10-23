@@ -16,6 +16,7 @@ package issues
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -410,108 +411,146 @@ func (s *Scanner) queueTask(ctx context.Context, issue *githubv39.Issue, refIssu
 		return
 	}
 
-	// An issue may name a workflow in its description, in which case the task
-	// runs that definition instead of the standard fix. A workflow named by
-	// convention is identified from its path alone, so the gates keyed on its
-	// task name run before its definition is fetched: an issue whose workflow
-	// is already queued, running or cooling down costs no fetch here.
+	// The facts the listing and the queue give, for every rule on issues:
+	// the workflow the body names (identified from its path alone, so an
+	// issue whose workflow is queued, running or cooling down costs no
+	// fetch), each rule's runs and queued task, a task of the issue active.
 	wf := identifyWorkflow(ctx, s.gh, issue)
-	workflowPath, workflowName := wf.Path, wf.Name
-	filename := issueTaskFilename(num, workflowName)
-	rule := "fix"
-	if workflowName != "" {
-		rule = "workflow"
-	}
-	s.rec.Fill(func(it *rules.Item) { it.Workflow = workflowName })
-	s.recordRuns(rule, filename)
-	if s.carryOutRuleTasks(ctx, issue) {
-		return
-	}
-	if s.rules.Off(rule) {
-		klog.V(2).Infof("Skipping issue #%d: the %s rule is disabled", num, rule)
-		return
-	}
-
-	if s.queue.TaskExists(filename) {
-		s.rec.Fill(func(it *rules.Item) { it.Queued = append(it.Queued, rule) })
-		return
-	}
-	// One task per issue at a time, whatever the rule: a fix queued or
-	// running holds back a workflow its edited body now names, and the
-	// other way round (they run in different sandboxes, so nothing else
-	// would keep them apart). The rules hold back the same way
-	// (Item.TaskActive), as for a pull request.
-	if s.queue.HasActiveIssueTask(num) {
-		s.rec.Fill(func(it *rules.Item) { it.TaskActive = true })
-		klog.Infof("Skipping issue #%d: another task of the issue is queued or running", num)
-		return
-	}
-
-	// The rule's policy - cooldown, once per update, a give-up due - asked
-	// on these cheap facts before the reads below.
-	if s.engineHolds(ctx, issue, filename, workflowPath, workflowName, rule) {
-		return
-	}
-
-	wf = wf.check(ctx, s.gh)
-	switch wf.Status {
-	case common.WorkflowMissing, common.WorkflowUnusable:
-		s.rec.Fill(func(it *rules.Item) { it.WorkflowMissing = true })
-		// The engine's workflow-missing (off, or not decided: the issue is
-		// neither stopped nor stepped); its stop is the handler's, which
-		// posts the rule's comment with the definition and its load error.
-		d, ok := decisionOf(s.rules.Decide(*s.rec.Item, s.rulesEnv()), "workflow-missing")
-		if !ok {
-			klog.Infof("Skipping issue #%d: the rules engine does not decide workflow-missing", num)
-			return
+	s.rec.Fill(func(it *rules.Item) {
+		it.Workflow = wf.Name
+		s.fillIssueRuns(it, num, wf.Name)
+		it.TaskActive = s.queue.HasActiveIssueTask(num)
+		// The facts read only when a rule needs them (Set.Needs), in the
+		// order they cost.
+		it.Unknown = []string{rules.FactConnectedPR}
+		if wf.Name != "" {
+			it.Unknown = []string{rules.FactWorkflowCooldown, rules.FactWorkflowDefinition, rules.FactConnectedPR}
 		}
-		s.rec.Decided("workflow-missing", rules.OutcomeRun)
-		s.stopForUnavailableWorkflow(ctx, num, wf, d.Writes.Comment)
-		return
-	case common.WorkflowUnresolved:
-		// Whether the definition exists is unknown, so neither run it nor
-		// stop the issue; the next cycle will look again.
-		s.rec.Gated("fetching its workflow failed")
-		klog.Warningf("Skipping issue #%d this cycle: could not fetch its workflow %s: %v", num, wf.Path, wf.Err)
-		return
+	})
+
+	// Read what the rules that could decide need, one fact at a time,
+	// asking again after each: a rule that cannot decide whatever a fact
+	// says costs no read of it.
+	var timeline []*githubv39.Timeline
+	for {
+		needs := s.needsSet().Needs(*s.rec.Item, s.rulesEnv())
+		if len(needs) == 0 {
+			break
+		}
+		var err error
+		switch fact := needs[0]; fact {
+		case rules.FactWorkflowCooldown:
+			var cooldown time.Duration
+			if cooldown, err = common.GetWorkflowCooldown(ctx, s.gh, wf.Path); err != nil {
+				// Not the default: a cooldown not known holds the issue
+				// back this scan; the next reads it again.
+				s.rec.Gated("reading its workflow's cooldown failed")
+				klog.Warningf("Skipping issue #%d this cycle: %v", num, err)
+				return
+			}
+			s.rec.Fill(func(it *rules.Item) { it.WorkflowCooldown = cooldown })
+		case rules.FactWorkflowDefinition:
+			wf = wf.check(ctx, s.gh)
+			switch wf.Status {
+			case common.WorkflowMissing, common.WorkflowUnusable:
+				s.rec.Fill(func(it *rules.Item) { it.WorkflowMissing = true })
+			case common.WorkflowUnresolved:
+				// Whether the definition exists is unknown, so neither run
+				// it nor stop the issue; the next cycle will look again.
+				s.rec.Gated("fetching its workflow failed")
+				klog.Warningf("Skipping issue #%d this cycle: could not fetch its workflow %s: %v", num, wf.Path, wf.Err)
+				return
+			}
+		case rules.FactConnectedPR:
+			var connected bool
+			if timeline, connected, err = s.readConnectedPR(ctx, num); err != nil {
+				s.rec.Gated("checking the linked PR failed")
+				klog.Errorf("Failed to check linked PR for issue #%d: %v", num, err)
+				return
+			}
+			if connected {
+				s.rec.Fill(func(it *rules.Item) { it.ConnectedPR = "open" })
+				klog.Infof("Issue #%d has a linked PR according to the Timeline API.", num)
+			}
+		}
+		s.rec.Fill(func(it *rules.Item) {
+			it.Unknown = slices.DeleteFunc(it.Unknown, func(f string) bool { return f == needs[0] })
+		})
 	}
 
+	// The engine decides on what was read; each decision is carried out:
+	// workflow-missing's stop is its handler's, which posts the rule's
+	// comment with the definition and its load error; a recipe's rule (fix,
+	// a workflow's step, a repository's) is queueIssueRuleTask's; a rule
+	// that writes, writes.
+	s.recordSpoken(ctx, num)
+	var recipeRule string
+	for _, d := range s.rules.Decide(*s.rec.Item, s.rulesEnv()) {
+		r := s.rules.Set().Named(d.Rule)
+		switch {
+		case r == nil:
+		case d.Rule == "workflow-missing":
+			s.rec.Decided(d.Rule, d.Outcome)
+			s.stopForUnavailableWorkflow(ctx, num, wf, d.Writes.Comment)
+			return
+		case r.Run.Recipe != "":
+			// Carried out after every rule's writes: they label the issue
+			// first, as the task's run reads it.
+			if recipeRule == "" {
+				recipeRule = d.Rule
+			}
+		default:
+			s.rec.Decided(d.Rule, d.Outcome)
+			klog.Infof("Issue #%d: the rules engine decides %s %s: %+v", num, d.Rule, d.Outcome, d.Writes)
+			act.ApplyWrites(ctx, s.gh, num, d.Writes, s.cfg.TriggerLabel, s.cfg.DryRun)
+			if (d.Writes.Stop || d.Writes.Drop) && !s.cfg.DryRun {
+				_ = s.queue.RemovePendingTasksForNumber(num)
+			}
+			if d.Outcome == rules.OutcomeGiveUp || r.IsExclusive() {
+				return
+			}
+		}
+	}
+	if recipeRule != "" {
+		shape := issueTaskShape{}
+		if s.rules.Set().Named(recipeRule).Run.Recipe == "workflow" {
+			shape = issueTaskShape{workflowName: wf.Name, workflowPath: wf.Path}
+		}
+		s.queueIssueRuleTask(ctx, issue, recipeRule, shape, timeline)
+		return
+	}
+	s.noteCooldowns(issue, wf.Name)
+}
+
+// needsSet is the rule set Set.Needs is asked of: every rule but
+// workflow-missing, whose fact - a workflow definition that cannot be
+// loaded - is read for the workflow rule alone, when that one could step
+// the workflow (its handler is its own: stopForUnavailableWorkflow).
+func (s *Scanner) needsSet() rules.Set {
+	return slices.DeleteFunc(slices.Clone(s.rules.Set()), func(r *rules.Rule) bool { return r.Name == "workflow-missing" })
+}
+
+// readConnectedPR reads whether an open PR is connected to the issue on
+// its timeline, and the timeline (the trigger's too). Only a complete
+// timeline is trusted to prove there is none: a missing or truncated one
+// leaves HasLinkedPRWithTimeline to the Search API.
+func (s *Scanner) readConnectedPR(ctx context.Context, num int) ([]*githubv39.Timeline, bool, error) {
 	var timeline []*githubv39.Timeline
-	timelineComplete := false
+	complete := false
 	if s.gh.Ready() {
-		tl, complete, err := s.gh.ListIssueTimeline(ctx, num)
+		tl, ok, err := s.gh.ListIssueTimeline(ctx, num)
 		if err != nil {
 			klog.Warningf("Failed to list timeline for issue #%d: %v", num, err)
 		} else {
-			timeline = tl
-			timelineComplete = complete
+			timeline, complete = tl, ok
 		}
 	}
-
-	// Skip the linked-PR check for workflow triggers, which do not necessarily
-	// have a linked code PR.
-	if workflowName == "" {
-		// Only let the linked-PR check trust the timeline we already fetched if
-		// it is complete. A missing or truncated timeline cannot prove the
-		// absence of a linked PR, so pass nil and let HasLinkedPRWithTimeline
-		// fall back to the Search API.
-		var verifiedTimeline []*githubv39.Timeline
-		if timelineComplete {
-			verifiedTimeline = timeline
-		}
-		linked, err := s.gh.HasLinkedPRWithTimeline(ctx, num, verifiedTimeline)
-		if err != nil {
-			s.rec.Gated("checking the linked PR failed")
-			klog.Errorf("Failed to check linked PR for issue #%d: %v", num, err)
-			return
-		} else if linked {
-			s.rec.Fill(func(it *rules.Item) { it.LinkedPR = "open" })
-			klog.Infof("Skipping issue #%d because it has a linked PR according to the Timeline API.", num)
-			return
-		}
+	var verified []*githubv39.Timeline
+	if complete {
+		verified = timeline
 	}
-
-	s.queueIssueRuleTask(ctx, issue, rule, issueTaskShape{workflowName: workflowName, workflowPath: workflowPath}, timeline)
+	connected, err := s.gh.HasLinkedPRWithTimeline(ctx, num, verified)
+	return timeline, connected, err
 }
 
 // issueTaskShape is what a rule's task on an issue is, beyond what its
@@ -650,48 +689,6 @@ func (s *Scanner) queueIssueRuleTask(ctx context.Context, issue *githubv39.Issue
 	if err := s.queue.Enqueue(filename, task); err != nil {
 		klog.Errorf("Failed to queue task for issue #%d: %v", num, err)
 	}
-}
-
-// engineHolds is whether the rule's policy holds it back on the issue now
-// (rules.Set.Held), on the facts recorded so far and a workflow's cooldown
-// (read only after a run that succeeded: a failed run's cooldown is the
-// rule's own). A cooldown
-// is noted on the queue, for the overseer's work view, and logged once per
-// window.
-func (s *Scanner) engineHolds(ctx context.Context, issue *githubv39.Issue, filename, workflowPath, workflowName, rule string) bool {
-	last := s.queue.GetProcessedTask(filename)
-	if workflowName != "" && last != nil && last.Status != api.StatusFailed {
-		cooldown, err := common.GetWorkflowCooldown(ctx, s.gh, workflowPath)
-		if err != nil {
-			// Not the default: a cooldown not known holds the issue back
-			// this scan; the next reads it again.
-			s.rec.Gated("reading its workflow's cooldown failed")
-			klog.Warningf("Skipping issue #%d this cycle: %v", issue.GetNumber(), err)
-			return true
-		}
-		s.rec.Fill(func(it *rules.Item) { it.WorkflowCooldown = cooldown })
-	}
-	why, until := s.rules.Set().Held(rule, *s.rec.Item, s.rulesEnv())
-	if why == "" {
-		return false
-	}
-	if until.IsZero() || last == nil {
-		klog.V(2).Infof("Skipping issue #%d: the rules engine holds %s back: %s", issue.GetNumber(), rule, why)
-		return true
-	}
-	held := api.Cooldown{
-		FileName:        filename,
-		Number:          issue.GetNumber(),
-		URL:             issue.GetHTMLURL(),
-		Workflow:        workflowName,
-		Until:           until,
-		LastStatus:      last.Status,
-		LastCompletedAt: last.CompletedAt,
-	}
-	if s.queue.NoteCooldown(held) {
-		klog.Infof("Skipping issue #%d: the rules engine holds %s back: %s (until %s)", held.Number, rule, why, until.UTC().Format(time.RFC3339))
-	}
-	return true
 }
 
 // applyTriggerLabel adopts an issue that was picked up by assignment rather
