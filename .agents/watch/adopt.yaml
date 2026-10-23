@@ -1,0 +1,22 @@
+# This repository's own rule (not one of factory's): adopt a pull request
+# someone outside the pool opened, once a maintainer labels it
+# overseer/adopt. The adopt recipe with strategy reuse takes the PR's
+# commits as they are onto a branch of a pool coder's fork (no agent runs)
+# and open-pr opens it as the pool's PR, commenting on the original with a
+# link. The label is in the overseer's own namespace, so the watch lists
+# PRs by it (factory #2100); author: not-pool keeps the pool's own PRs out.
+name: adopt
+description: Adopt a PR someone outside the pool opened, labelled overseer/adopt (strategy reuse)
+on: pr
+order: 8
+when:
+  author: not-pool
+  labels: {any: ["{{trigger}}/adopt"]}
+run:
+  recipe: adopt
+  apply: open-pr
+  inputs:
+    strategy: reuse
+policy:
+  # once per head of the original PR: a new push to it adopts again
+  dedupe: head
