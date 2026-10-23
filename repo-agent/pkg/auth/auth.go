@@ -28,18 +28,22 @@ const (
 )
 
 type Authenticator struct {
-	OAuthConfig       *oauth2.Config
-	OAuthState        string
-	K8sManager        *k8s.Manager
-	AllowedUsers      []string
+	OAuthConfig  *oauth2.Config
+	OAuthState   string
+	K8sManager   *k8s.Manager
+	AllowedUsers []string
+	// AllowedOrgs are GitHub organizations whose members may sign in,
+	// beside AllowedUsers. Membership is checked at login.
+	AllowedOrgs       []string
 	AdminUsers        []string
 	bootstrappedUsers sync.Map
 }
 
-func NewAuthenticator(manager *k8s.Manager, allowedUsers []string, adminUsers []string) *Authenticator {
+func NewAuthenticator(manager *k8s.Manager, allowedUsers, allowedOrgs, adminUsers []string) *Authenticator {
 	a := &Authenticator{
 		K8sManager:   manager,
 		AllowedUsers: allowedUsers,
+		AllowedOrgs:  allowedOrgs,
 		AdminUsers:   adminUsers,
 	}
 	a.InitOAuth()
@@ -57,7 +61,7 @@ func (a *Authenticator) InitOAuth() {
 	a.OAuthConfig = &oauth2.Config{
 		ClientID:     clientID,
 		ClientSecret: clientSecret,
-		Scopes:       []string{"read:user", "user:email"},
+		Scopes:       []string{"read:user", "user:email", "read:org"},
 		Endpoint:     githuboauth.Endpoint,
 	}
 
@@ -68,8 +72,11 @@ func (a *Authenticator) InitOAuth() {
 	a.OAuthState = base64.URLEncoding.EncodeToString(b)
 }
 
+// IsUserAllowed reports whether the user is on the user allowlist, or
+// sign-in is not restricted at all (no users and no organizations listed).
+// A user who is not may still be allowed by organization (allowedOrg).
 func (a *Authenticator) IsUserAllowed(username string) bool {
-	if len(a.AllowedUsers) == 0 {
+	if len(a.AllowedUsers) == 0 && len(a.AllowedOrgs) == 0 {
 		return true // No restrictions
 	}
 	for _, allowed := range a.AllowedUsers {
@@ -78,6 +85,29 @@ func (a *Authenticator) IsUserAllowed(username string) bool {
 		}
 	}
 	return false
+}
+
+// allowedOrg returns the first allowed organization the user is a member
+// of, "" for none.
+func (a *Authenticator) allowedOrg(ctx context.Context, client *github.Client, username string) string {
+	for _, org := range a.AllowedOrgs {
+		if isOrgMember(ctx, client, org, username) {
+			return org
+		}
+	}
+	return ""
+}
+
+// isOrgMember asks with the user's own token, which sees a private
+// membership (read:org). An organization that restricts OAuth apps hides
+// that from an app it has not approved, so a public membership, which
+// anyone can see, counts too.
+func isOrgMember(ctx context.Context, client *github.Client, org, username string) bool {
+	if m, _, err := client.Organizations.GetOrgMembership(ctx, "", org); err == nil && m.GetState() == "active" {
+		return true
+	}
+	public, _, err := client.Organizations.IsPublicMember(ctx, org, username)
+	return err == nil && public
 }
 
 func (a *Authenticator) IsUserAdmin(username string) bool {
@@ -105,10 +135,11 @@ func (a *Authenticator) Login(c *gin.Context) {
 
 	scope := c.Query("scope")
 	if scope == "readwrite" {
-		localConf.Scopes = []string{"repo", "read:user", "user:email"}
+		localConf.Scopes = []string{"repo", "read:user", "user:email", "read:org"}
 	} else {
-		// Default to read-only
-		localConf.Scopes = []string{"read:user", "user:email"}
+		// Default to read-only. read:org lets the allowed-organization
+		// check see a private membership.
+		localConf.Scopes = []string{"read:user", "user:email", "read:org"}
 	}
 
 	url := localConf.AuthCodeURL(a.OAuthState, oauth2.AccessTypeOnline)
@@ -138,11 +169,15 @@ func (a *Authenticator) Callback(c *gin.Context) {
 
 	ghUser := strings.ToLower(user.GetLogin())
 
-	// Enforce allowlist for GitHub users
+	// Enforce allowlist for GitHub users, then allowed organizations
 	if !a.IsUserAllowed(ghUser) {
-		log.Info("Unauthorized GitHub user attempted to log in", "user", ghUser)
-		c.String(http.StatusForbidden, "Unauthorized GitHub user. Please contact administrator.")
-		return
+		org := a.allowedOrg(c.Request.Context(), client, ghUser)
+		if org == "" {
+			log.Info("Unauthorized GitHub user attempted to log in", "user", ghUser)
+			c.String(http.StatusForbidden, "Unauthorized GitHub user. Please contact administrator.")
+			return
+		}
+		log.Info("GitHub user allowed by organization", "user", ghUser, "org", org)
 	}
 
 	if err := k8s.BootstrapNamespace(c.Request.Context(), a.K8sManager.Clientset, ghUser); err != nil {
