@@ -142,7 +142,7 @@ func Wrap(k, raw string, target Target, source Source) (*Document, error) {
 	if !ok {
 		return nil, fmt.Errorf("unknown task output kind %q (known: %s)", k, strings.Join(KnownKinds(), ", "))
 	}
-	spec, err := kd.parse(raw)
+	spec, err := kd.parse(utf8JSON(raw))
 	if err != nil {
 		return nil, fmt.Errorf("%s output: %w", k, err)
 	}
@@ -151,6 +151,32 @@ func Wrap(k, raw string, target Target, source Source) (*Document, error) {
 		return nil, err
 	}
 	return doc, nil
+}
+
+// utf8JSON is raw as YAML can read it: an output written as JSON (a
+// recipe's step json.dump-ing it: JSON is YAML) re-encoded by Go, which
+// writes a character outside the Basic Multilingual Plane as UTF-8, where
+// Python's json escapes it as a surrogate pair (\ud83d\udc40) - a YAML
+// parser refuses those ("invalid Unicode character escape code"). Anything
+// else is left as it is.
+func utf8JSON(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if !strings.HasPrefix(trimmed, "{") || !json.Valid([]byte(trimmed)) {
+		return raw
+	}
+	dec := json.NewDecoder(strings.NewReader(trimmed))
+	dec.UseNumber()
+	var v any
+	if err := dec.Decode(&v); err != nil {
+		return raw
+	}
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(v); err != nil {
+		return raw
+	}
+	return buf.String()
 }
 
 // Marshal writes documents as a YAML stream.
