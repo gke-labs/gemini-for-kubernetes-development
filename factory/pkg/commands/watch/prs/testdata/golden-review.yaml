@@ -9,10 +9,12 @@ task:
     triggerEventTime: 2026-10-20T10:20:00Z
     triggerReason: PRReadyForReview
     triggerNotes: Automated review triggered; all CI checks passed at 2026-10-20T10:20:00Z for commit 0123456 (committer date 2026-10-20T10:00:00Z)
+    assignee: bot1
     status: Pending
     commitSHA: 0123456789abcdef
     instructions:
         - check the docs
+    as: reviewer
     startComment: "\U0001F916 AI Factory started reviewing this pull request in a sandbox."
     runName: review-10-0123456-<enqueued>
     rule: review

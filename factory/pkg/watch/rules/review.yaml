@@ -23,6 +23,7 @@ when:
       closes: {labels: {all: ["*/review"]}}
 run:
   recipe: review
+  as: reviewer
   apply: submit-review
   inputs:
     instructions: "{{review-instructions}}"

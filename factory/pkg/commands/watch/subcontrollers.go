@@ -118,7 +118,7 @@ func (w *Watcher) proposeFanout(ctx context.Context, n int) error {
 	if w.ProposeFanout == nil {
 		return fmt.Errorf("this watcher cannot run recipes")
 	}
-	user, err := w.selectUserForTask(ctx, api.TypeIssueFix, n)
+	user, err := w.selectUserForTask(ctx, api.TypeIssueFix, "coder", n)
 	if err != nil {
 		return fmt.Errorf("choosing the account for the fanout recipe on #%d: %w", n, err)
 	}
@@ -147,7 +147,7 @@ func (w *Watcher) newWarmWorkspaceController() *warmworkspace.Controller {
 		Warm: func(ctx context.Context) error {
 			// The account a fix would clone as: the repository may be
 			// private, and the watcher's own may be no coder's.
-			user, err := w.selectUserForTask(ctx, api.TypeIssueFix, 0)
+			user, err := w.selectUserForTask(ctx, api.TypeIssueFix, "coder", 0)
 			if err != nil {
 				return fmt.Errorf("choosing the account for the warm recipe: %w", err)
 			}
@@ -424,8 +424,8 @@ type watcherUserSelector struct {
 var _ issues.UserSelector = watcherUserSelector{}
 
 // SelectUser returns the bot account a task for the given entity should run as.
-func (s watcherUserSelector) SelectUser(ctx context.Context, taskType api.TaskType, number int) (string, error) {
-	return s.w.selectUserForTask(ctx, taskType, number)
+func (s watcherUserSelector) SelectUser(ctx context.Context, taskType api.TaskType, as string, number int) (string, error) {
+	return s.w.selectUserForTask(ctx, taskType, as, number)
 }
 
 // watcherTaskCoordinator adapts the watcher's GitHub interactions to the TaskCoordinator interface.
@@ -468,10 +468,30 @@ func shortSHA(sha string) string {
 func (c *watcherTaskCoordinator) SelectUser(ctx context.Context, task *api.QueueTask) (string, error) {
 	w := c.w
 	selectedUser := task.Assignee
-	if selectedUser == "" || (api.IsPRTask(task.Type) && strings.EqualFold(selectedUser, w.targetAssignee)) {
-		return w.selectUserForTask(ctx, task.Type, task.Number)
+	if selectedUser == "" || (api.IsPRTask(task.Type) && strings.EqualFold(selectedUser, w.targetAssignee)) || !w.inPool(task.As, selectedUser) {
+		return w.selectUserForTask(ctx, task.Type, task.As, task.Number)
 	}
 	return selectedUser, nil
+}
+
+// inPool reports whether user may run a task that runs as as: any user
+// for author (the PR's own bot) or a task no rule decided, else a member
+// of that pool - a review the PR's author was put on runs as a reviewer.
+func (w *Watcher) inPool(as, user string) bool {
+	if as == "" || as == rules.AsAuthor || w.cfg == nil {
+		return true
+	}
+	role, ok := w.cfg.Roles[as]
+	if !ok || len(role.Users) == 0 {
+		// No such pool: selection falls back as it would (agent to coder).
+		return true
+	}
+	for _, u := range role.Users {
+		if strings.EqualFold(u, user) {
+			return true
+		}
+	}
+	return false
 }
 
 // NotifyTaskStarted does on GitHub what the task's rule declares for its

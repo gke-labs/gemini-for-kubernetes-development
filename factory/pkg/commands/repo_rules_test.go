@@ -24,8 +24,8 @@ func TestComposeRepoWatchRules(t *testing.T) {
 	files := map[string][]byte{
 		"review.yaml":  []byte("name: review\nenabled: false\n"),
 		"ci.yaml":      []byte(strings.Replace(string(ci), "recipe: care-ci", "recipe: care", 1)),
-		"new-one.yaml": []byte("name: new-one\non: pr\norder: 90\nwhen: {checks: green}\nrun: {recipe: deploy-preview}\n"),
-		"typo.yaml":    []byte("name: typo\non: pr\norder: 91\nwhen: {checks: green}\nrun: {recipe: deploy-previw}\n"),
+		"new-one.yaml": []byte("name: new-one\non: pr\norder: 90\nwhen: {checks: green}\nrun: {recipe: deploy-preview, as: author}\n"),
+		"typo.yaml":    []byte("name: typo\non: pr\norder: 91\nwhen: {checks: green}\nrun: {recipe: deploy-previw, as: author}\n"),
 		"README.md":    []byte("not a rule"),
 	}
 	recipes := []string{"deploy-preview"}

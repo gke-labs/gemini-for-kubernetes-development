@@ -263,6 +263,9 @@ func reviewTrigger(_ context.Context, _ *Scanner, pc *prContext, _ string) taskO
 		notes = fmt.Sprintf("Automated review triggered for commit %s at %s", pc.shortSHA, eventTime.Format(time.RFC3339))
 	}
 	return taskOptions{
+		// Run as its rule's run.as (reviewer): the PR's bot, not in that
+		// pool, is not who runs it (SelectUser).
+		Assignee:         pc.taskAssignee,
 		TriggerEventTime: eventTime,
 		TriggerReason:    api.TriggerReasonPRReadyForReview,
 		TriggerNotes:     notes,

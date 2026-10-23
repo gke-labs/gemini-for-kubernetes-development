@@ -34,7 +34,7 @@ func TestHandlersQueueTheSameTasks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	repo, err := rules.LoadFiles(map[string][]byte{"preview.yaml": []byte("name: preview\non: pr\norder: 35\nwhen: {checks: green}\nrun: {recipe: summarize, apply: comment}\n")})
+	repo, err := rules.LoadFiles(map[string][]byte{"preview.yaml": []byte("name: preview\non: pr\norder: 35\nwhen: {checks: green}\nrun: {recipe: summarize, apply: comment, as: author}\n")})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -31,7 +31,7 @@ func TestQueueTasks_RepositoryRules(t *testing.T) {
 		task             string
 		fixed            bool
 	}{
-		{"a run that takes the issue", "triage-2.yaml", "name: triage-2\non: issue\norder: 1\nwhen: {labels: {all: [factory]}}\nrun: {recipe: triage}\n", "task-issue-7-rule-triage-2.yaml", false},
+		{"a run that takes the issue", "triage-2.yaml", "name: triage-2\non: issue\norder: 1\nwhen: {labels: {all: [factory]}}\nrun: {recipe: triage, as: coder}\n", "task-issue-7-rule-triage-2.yaml", false},
 		{"writes that do not take it", "tag.yaml", "name: tag\non: issue\nwhen: {labels: {all: [factory]}}\nrun: {label: [seen]}\n", "", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

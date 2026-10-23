@@ -19,6 +19,7 @@ when:
     - last-run: failed
 run:
   recipe: care-comments
+  as: author
   apply: post-replies
   acknowledge: feedback
   start-comment: "🤖 AI Factory started addressing review feedback for this pull request."

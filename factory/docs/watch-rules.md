@@ -206,26 +206,29 @@ A rule runs a recipe or makes GitHub writes, not both.
 | `recipe` | a built-in recipe (`fix`, `workflow`, `agent`, `care-comments`, `care-rebase`, `care-ci`, `review`, ...) |
 | `apply` | the action its task output is applied with when the run ends (`open-pr`, `post-replies`, `submit-review`); none leaves the output for a person |
 | `inputs` | the recipe's inputs, by name; values may use `{{trigger}}`, on issues `{{pr-labels}}`, and on PRs `{{review-instructions}}` |
+| `as` | who runs it: `author`, `coder`, `agent` or `reviewer` (required; see [Who runs it](#who-runs-it)) |
 | `claim` | issues: `true` assigns the issue to the task's bot when it starts, in the watcher's place (the prebaked fix and workflow) |
 | `acknowledge` | PRs: `feedback` marks the feedback the task answers as seen (👀) when it starts, and resolved (👍) or failed (😕) when it ends (the prebaked comments) |
 | `start-comment` | a comment the watcher posts on the item when the task starts |
 
 `claim`, `acknowledge` and `start-comment` are read from the rule again
 just before the task starts, so a task queued earlier does what the rule
-says now. The task is queued and runs in the item's sandbox. A rule does not say
-which bot runs it: that is the recipe's and the overseer's (see [Who runs
-it](#who-runs-it)).
+says now. The task is queued and runs in the item's sandbox.
 
 ### Who runs it
 
-The bot a task runs as follows from what it runs, not from the rule: the
-overseer maps task types to roles (`roles.<role>.tasks` in its
-configuration), and without a mapping fix runs as a coder, review as a
-reviewer, a workflow or chore as an agent, and PR care as the PR's own
-role (agent if its author is in the agent pool, else coder). Within the
-role, the bot already pinned to the item's sandbox, then a pool bot
-assigned to it, goes first. A repository's rule cannot pick another bot.
-GitHub writes are always the watcher's own.
+A rule that runs a recipe says who runs it, `run.as`:
+
+| `as` | who |
+|---|---|
+| `author` | the PR's own bot: the pool bot assigned to it, else its author (its branch is in that bot's fork). PR rules only |
+| `coder`, `agent`, `reviewer` | a bot of that pool of the overseer's (`spec.roles`): the one pinned to the item's sandbox, then a pool bot assigned to it, else any; `agent` falls back to coder when there is no agent pool |
+
+The prebaked rules: comments, conflict and ci `as: author`, review
+`as: reviewer`, fix `as: coder`, workflow `as: agent`. Which bots are in
+which pool is the operator's; a repository's rule may only say `author`
+or `coder`. A task no rule decided (a scheduled chore) runs as its type's
+role. GitHub writes are always the watcher's own.
 
 ### GitHub writes
 
