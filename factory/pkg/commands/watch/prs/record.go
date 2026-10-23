@@ -57,8 +57,11 @@ func prItemOf(prIssue *githubv39.Issue) rules.Item {
 }
 
 // fillPR adds what the pull request itself says.
+// A PR the listing had open but the read finds closed (closed in between)
+// is closed: the gate, not a stale listing, decides.
 func fillPR(it *rules.Item, pr *githubv39.PullRequest) {
 	it.Author, it.Head, it.Draft, it.Mergeable = pr.GetUser().GetLogin(), pr.GetHead().GetSHA(), pr.GetDraft(), pr.Mergeable
+	it.Closed = it.Closed || pr.GetState() == "closed"
 }
 
 // recordCloses adds the issues the pull request closes to the record.

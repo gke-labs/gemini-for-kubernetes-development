@@ -1501,6 +1501,9 @@ type prFixture struct {
 	inline []*githubv39.PullRequestComment
 	// refLabels are the labels of the issue the body's "Fixes #7" closes.
 	refLabels []string
+	// closed makes the pull request read closed, though the listing has it
+	// open (closed between the two).
+	closed bool
 
 	calls []string
 }
@@ -1557,7 +1560,7 @@ func (f *prFixture) route(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(&githubv39.PullRequest{
 			Number:    githubv39.Int(f.num),
 			Mergeable: mergeablePtr,
-			State:     githubv39.String("open"),
+			State:     githubv39.String(map[bool]string{true: "closed", false: "open"}[f.closed]),
 			Body:      githubv39.String(f.body),
 			User:      &githubv39.User{Login: githubv39.String("bot1")},
 			Head:      &githubv39.PullRequestBranch{SHA: githubv39.String(f.headSHA)},

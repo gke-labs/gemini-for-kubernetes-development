@@ -213,3 +213,44 @@ func TestEvaluate_RepositoryWriteRulesByOrder(t *testing.T) {
 		})
 	}
 }
+
+// A PR closed between the listing and the read (a human closing it with a
+// comment) is closed: no task for the comment, nothing more read, the
+// record gated.
+func TestEvaluate_ClosedSinceTheListing(t *testing.T) {
+	set, err := rules.Builtin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	control, err := rules.NewControl(nil, set)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := &prFixture{num: 41, headSHA: "sha-41", updated: time.Now(), closed: true, comments: []*githubv39.IssueComment{{
+		ID: githubv39.Int64(9), Body: githubv39.String("Closing as a duplicate"),
+		User:              &githubv39.User{Login: githubv39.String("alice")},
+		AuthorAssociation: githubv39.String("MEMBER"),
+		CreatedAt:         &[]time.Time{time.Now().Add(time.Hour)}[0],
+	}}}
+	dir := t.TempDir()
+	var rec rules.Record
+	s, _ := newTestScanner(t, dir, testOpts{
+		GitHub: f.start(t), BotUsers: []string{"bot1"}, GitHubLogin: "watcher", TriggerLabel: "factory",
+		AllowlistedUsers: []string{"alice"}, Recorder: rules.NewSinkRecorder(func(r rules.Record) { rec = r }), Rules: control,
+	})
+	f.mu.Lock()
+	listed := f.listingIssueLocked()
+	f.mu.Unlock()
+	s.evaluate(context.Background(), listed)
+	if entries, _ := os.ReadDir(filepath.Join(dir, "incoming")); len(entries) > 0 {
+		t.Errorf("queued %s for a closed PR", entries[0].Name())
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if slices.ContainsFunc(f.calls, func(c string) bool { return strings.Contains(c, "/comments") || strings.Contains(c, "/commits") }) {
+		t.Errorf("read on after the PR was found closed: %v", f.calls)
+	}
+	if !rec.Item.Closed || len(rec.Decided) > 0 {
+		t.Errorf("record: closed %t, decided %v", rec.Item.Closed, rec.Decided)
+	}
+}
