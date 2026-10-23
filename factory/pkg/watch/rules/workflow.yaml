@@ -7,10 +7,11 @@
 # runs the workflow recipe. There is no updated-since gate: a workflow
 # steps every cooldown while the issue is open. The success cooldown is
 # the workflow definition's own (10m when it sets none). An open PR that
-# closes the issue holds it back, as for fix (the scanner's open-PR check
-# comes before the workflow is identified); the timeline's linked PRs do
-# not, as the scanner reads them for fixes only. A definition that cannot
-# be loaded is workflow-missing's.
+# closes the issue holds it back (linked-pr, from the PR listing); a PR
+# only linked in the timeline does not, as the rule does not ask for
+# connected-pr (fix does). The definition (workflow: any) and its cooldown
+# are read only when the rule could otherwise step. A definition that
+# cannot be loaded is workflow-missing's.
 name: workflow
 description: Take a workflow's next step on the issue that names it
 on: issue
