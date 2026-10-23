@@ -994,7 +994,8 @@ named after the rule); writes and give-ups go through the same
 `ApplyWrites` as factory's. This repository's own `.agents/watch/` is a
 verbatim copy of factory's rules (as its `.agents/recipes/` is of the
 built-in recipes), for trying replace mode on an overseer of this
-repository. Not built: settings beside the rules, and the board's auto
+repository; all but workflow-missing, whose stop is still its own handler's
+(a copy's writes other than its comment would be ignored). Not built: settings beside the rules, and the board's auto
 rules on the same predicates.
 
 
