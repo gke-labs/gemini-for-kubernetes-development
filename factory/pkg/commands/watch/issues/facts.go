@@ -53,7 +53,9 @@ func (s *Scanner) Facts(ctx context.Context, num int) (rules.Item, rules.Env, er
 	case common.WorkflowUnresolved:
 		return it, env, fmt.Errorf("fetching its workflow %s: %v", wf.Path, wf.Err)
 	case common.WorkflowFound:
-		it.WorkflowCooldown = common.GetWorkflowCooldown(ctx, s.gh, wf.Path)
+		if it.WorkflowCooldown, err = common.GetWorkflowCooldown(ctx, s.gh, wf.Path); err != nil {
+			return it, env, err
+		}
 	}
 	it.TaskActive = s.queue.HasActiveIssueTask(num)
 

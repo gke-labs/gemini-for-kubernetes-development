@@ -318,10 +318,19 @@ func declaresWorkflowMode(content []byte) bool {
 	return strings.Contains(header, "mode: workflow") || strings.Contains(header, "mode: \"workflow\"") || strings.Contains(header, "AGENT_MODE=workflow")
 }
 
-func GetWorkflowCooldown(ctx context.Context, ghClient *github.Client, path string) time.Duration {
-	defaultCooldown := 10 * time.Minute
+// DefaultWorkflowCooldown is a workflow's cooldown when its definition
+// declares none.
+const DefaultWorkflowCooldown = 10 * time.Minute
+
+// GetWorkflowCooldown is the cooldown the workflow definition at path
+// declares (DefaultWorkflowCooldown when it declares none, or one that does
+// not parse), and an error when the definition cannot be read: a cooldown
+// that is not known is not the default, which would step the workflow
+// early.
+func GetWorkflowCooldown(ctx context.Context, ghClient *github.Client, path string) (time.Duration, error) {
+	defaultCooldown := DefaultWorkflowCooldown
 	if path == "" {
-		return defaultCooldown
+		return defaultCooldown, nil
 	}
 
 	var content []byte
@@ -332,18 +341,18 @@ func GetWorkflowCooldown(ctx context.Context, ghClient *github.Client, path stri
 		content, err = fetchRepoWorkflowContent(ctx, ghClient, path, true)
 	}
 	if err != nil {
-		return defaultCooldown
+		return 0, fmt.Errorf("reading the workflow %s for its cooldown: %w", path, err)
 	}
 
 	agentDef, err := ParseAgent(content)
 	if err != nil || agentDef.Cooldown == "" {
-		return defaultCooldown
+		return defaultCooldown, nil
 	}
 
 	d, err := time.ParseDuration(agentDef.Cooldown)
 	if err != nil {
 		klog.Warningf("Failed to parse workflow cooldown duration %q: %v", agentDef.Cooldown, err)
-		return defaultCooldown
+		return defaultCooldown, nil
 	}
-	return d
+	return d, nil
 }
