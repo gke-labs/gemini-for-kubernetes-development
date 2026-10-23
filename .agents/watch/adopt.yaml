@@ -17,6 +17,10 @@ run:
   apply: open-pr
   inputs:
     strategy: reuse
+    # ready for review, and the trigger label: the overseer cares for the
+    # adopted PR (comments, ci, ready) like any of the pool's
+    draft: "false"
+    labels: "{{trigger}}"
 policy:
   # once per head of the original PR: a new push to it adopts again
   dedupe: head
