@@ -2,9 +2,13 @@ package api
 
 // QueueTaskItem represents a formatted task representation exposed via the HTTP API.
 type QueueTaskItem struct {
-	FileName         string        `json:"fileName"`
-	QueueState       string        `json:"queueState"`
-	Type             TaskType      `json:"type"`
+	FileName   string   `json:"fileName"`
+	QueueState string   `json:"queueState"`
+	Type       TaskType `json:"type"`
+	// Rule and Recipe are the rule that decided the task and the recipe it
+	// runs (QueueTask.Rule, Recipe): what the task is, whatever its type.
+	Rule             string        `json:"rule,omitempty"`
+	Recipe           string        `json:"recipe,omitempty"`
 	URL              string        `json:"url"`
 	Number           int           `json:"number"`
 	Priority         TaskPriority  `json:"priority"`
@@ -55,6 +59,8 @@ type QueueFailure struct {
 	Number   int      `json:"number"`
 	URL      string   `json:"url,omitempty"`
 	Type     TaskType `json:"type"`
+	Rule     string   `json:"rule,omitempty"`
+	Recipe   string   `json:"recipe,omitempty"`
 	// Error is what the task's child printed as its error, after its exit
 	// status, e.g. "exit status 1: applying the Change for …".
 	Error string `json:"error"`
@@ -68,6 +74,8 @@ type QueueDrop struct {
 	Number   int      `json:"number"`
 	URL      string   `json:"url,omitempty"`
 	Type     TaskType `json:"type"`
+	Rule     string   `json:"rule,omitempty"`
+	Recipe   string   `json:"recipe,omitempty"`
 	// Reason is the fact that no longer held, e.g. "head moved abc1234→def5678".
 	Reason string `json:"reason"`
 	At     string `json:"at"`

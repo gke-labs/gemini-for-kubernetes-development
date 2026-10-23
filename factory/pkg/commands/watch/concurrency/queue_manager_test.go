@@ -1135,3 +1135,43 @@ func TestEnqueueStampsTheRunName(t *testing.T) {
 		}
 	}
 }
+
+// The queue's readers see what a task is - the rule that decided it and the
+// recipe it runs - for a queued task, a failure and a drop alike.
+func TestQueueResponseCarriesRuleAndRecipe(t *testing.T) {
+	mgr, _ := setupTestQueueManager(t)
+	for _, fn := range []string{"task-pr-7-investigate.yaml", "task-pr-8-review.yaml", "task-pr-9-comments.yaml"} {
+		if err := mgr.Enqueue(fn, &api.QueueTask{Type: api.TypePRInvestigate, Number: 7, Rule: "ci", Recipe: "care-ci"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fn, task, err := mgr.ClaimNextCandidate()
+	if err != nil || fn == "" {
+		t.Fatalf("claim: %v", err)
+	}
+	if err := mgr.StartTask(fn, task); err != nil {
+		t.Fatal(err)
+	}
+	if err := mgr.FailTask(fn, task, "boom"); err != nil {
+		t.Fatal(err)
+	}
+	queued, _ := mgr.incoming.Get("task-pr-8-review.yaml")
+	if queued == nil {
+		queued, _ = mgr.incoming.Get("task-pr-9-comments.yaml")
+	}
+	if err := mgr.DropTask("task-pr-9-comments.yaml", queued, "gone"); err != nil {
+		t.Fatal(err)
+	}
+	resp := mgr.GetQueueResponse()
+	for _, it := range resp.Incoming {
+		if it.Rule != "ci" || it.Recipe != "care-ci" {
+			t.Errorf("queued %s: rule %q, recipe %q", it.FileName, it.Rule, it.Recipe)
+		}
+	}
+	if len(resp.Failures) != 1 || resp.Failures[0].Recipe != "care-ci" || resp.Failures[0].Rule != "ci" {
+		t.Errorf("failures = %+v", resp.Failures)
+	}
+	if len(resp.Drops) != 1 || resp.Drops[0].Recipe != "care-ci" {
+		t.Errorf("drops = %+v", resp.Drops)
+	}
+}

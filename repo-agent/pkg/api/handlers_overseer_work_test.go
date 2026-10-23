@@ -338,3 +338,18 @@ func TestRunSessionsCarryTheRecipeSource(t *testing.T) {
 		}
 	}
 }
+
+// A queued task's recipe is the one the watch says it runs, whatever its
+// type; an older watch, which says none, is read by its type.
+func TestQueueRecipe(t *testing.T) {
+	for _, tc := range []struct{ recipe, typ, want string }{
+		{"care-ci", "pr-rule", "care-ci"},
+		{"deploy-preview", "pr-rule", "deploy-preview"},
+		{"", "pr-investigate", "care-ci"},
+		{"", "pr-rule", ""},
+	} {
+		if got := queueRecipe(tc.recipe, tc.typ); got != tc.want {
+			t.Errorf("queueRecipe(%q, %q) = %q, want %q", tc.recipe, tc.typ, got, tc.want)
+		}
+	}
+}
