@@ -626,7 +626,14 @@ func (s *Scanner) queueTask(ctx context.Context, issue *githubv39.Issue, refIssu
 func (s *Scanner) engineHolds(ctx context.Context, issue *githubv39.Issue, filename, workflowPath, workflowName, rule string) bool {
 	last := s.queue.GetProcessedTask(filename)
 	if workflowName != "" && last != nil && last.Status != api.StatusFailed {
-		cooldown := common.GetWorkflowCooldown(ctx, s.gh, workflowPath)
+		cooldown, err := common.GetWorkflowCooldown(ctx, s.gh, workflowPath)
+		if err != nil {
+			// Not the default: a cooldown not known holds the issue back
+			// this scan; the next reads it again.
+			s.rec.Gated("reading its workflow's cooldown failed")
+			klog.Warningf("Skipping issue #%d this cycle: %v", issue.GetNumber(), err)
+			return true
+		}
 		s.rec.Fill(func(it *rules.Item) { it.WorkflowCooldown = cooldown })
 	}
 	why, until := s.rules.Set().Held(rule, *s.rec.Item, s.rulesEnv())

@@ -147,3 +147,34 @@ func TestCheckWorkflowDefinition_Timeout(t *testing.T) {
 		t.Fatal("CheckWorkflowDefinition did not give up on a server that never answers")
 	}
 }
+
+// A workflow's cooldown is what its definition declares, the default when
+// it declares none (or one that does not parse), and an error when the
+// definition cannot be read: an unknown cooldown is not the default.
+func TestGetWorkflowCooldown(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/two-hours.md":
+			_, _ = w.Write([]byte("---\nname: wf\nmode: workflow\ncooldown: 2h\n---\nprompt\n"))
+		case "/none.md":
+			_, _ = w.Write([]byte("---\nname: wf\nmode: workflow\n---\nprompt\n"))
+		case "/garbled.md":
+			_, _ = w.Write([]byte("---\nname: wf\nmode: workflow\ncooldown: soon\n---\nprompt\n"))
+		default:
+			w.WriteHeader(http.StatusBadGateway)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	for path, want := range map[string]time.Duration{"/two-hours.md": 2 * time.Hour, "/none.md": DefaultWorkflowCooldown, "/garbled.md": DefaultWorkflowCooldown, "": DefaultWorkflowCooldown} {
+		u := path
+		if path != "" {
+			u = srv.URL + path
+		}
+		if got, err := GetWorkflowCooldown(context.Background(), nil, u); err != nil || got != want {
+			t.Errorf("%q = %v, %v; want %v", path, got, err, want)
+		}
+	}
+	if got, err := GetWorkflowCooldown(context.Background(), nil, srv.URL+"/unreachable.md"); err == nil {
+		t.Errorf("an unreadable definition = %v, no error", got)
+	}
+}
