@@ -434,7 +434,7 @@ func TestGraphQLDetailsDecideAsREST(t *testing.T) {
 	if len(rest.writes) == 0 {
 		t.Error("the scenario wrote nothing to GitHub")
 	}
-	for _, want := range []string{"task-pr-10-review.yaml", "task-pr-11-iterate.yaml", "task-pr-12-comments.yaml", "task-pr-13-investigate.yaml", "task-pr-15-comments.yaml", "task-pr-17-comments.yaml", "task-pr-18-investigate.yaml"} {
+	for _, want := range []string{"task-pr-10-rule-review.yaml", "task-pr-11-rule-conflict.yaml", "task-pr-12-rule-comments.yaml", "task-pr-13-rule-ci.yaml", "task-pr-15-rule-comments.yaml", "task-pr-17-rule-comments.yaml", "task-pr-18-rule-ci.yaml"} {
 		if !slices.Contains(rest.tasks, want) {
 			t.Errorf("the scenario did not queue %s: %v", want, rest.tasks)
 		}

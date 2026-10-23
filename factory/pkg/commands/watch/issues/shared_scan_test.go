@@ -104,7 +104,7 @@ func TestSharedScanQueuesTheSame(t *testing.T) {
 	if !slices.Equal(off.writes, on.writes) {
 		t.Errorf("writes differ:\n off %v\n on  %v", off.writes, on.writes)
 	}
-	if !slices.Contains(off.enqueued, "task-issue-11.yaml") || slices.Contains(off.enqueued, "task-issue-19.yaml") {
+	if !slices.Contains(off.enqueued, "task-issue-11-rule-fix.yaml") || slices.Contains(off.enqueued, "task-issue-19-rule-fix.yaml") {
 		t.Errorf("the scenario is not exercising the fast pass's first page: %v", off.enqueued)
 	}
 	t.Logf("first cycle listing calls: own listings %d, shared scan %d; queued %v; writes %v", off.calls, on.calls, on.enqueued, on.writes)

@@ -545,7 +545,7 @@ func (s *Scanner) queueTask(ctx context.Context, issue *githubv39.Issue, refIssu
 
 	triggerEventTime, triggerReason, triggerNotes := triggerInfo(issue, timeline, s.cfg.TriggerLabel, wasAutoLabeled)
 
-	taskType := api.TypeIssueFix
+	taskType := api.TypeIssueRule
 	if workflowName != "" {
 		taskType = api.TypeAgentChore
 	}
@@ -571,7 +571,7 @@ func (s *Scanner) queueTask(ctx context.Context, issue *githubv39.Issue, refIssu
 		})
 	} else {
 		task = s.newTask(taskOptions{
-			Type:             api.TypeIssueFix,
+			Type:             api.TypeIssueRule,
 			Issue:            issue,
 			Phase:            api.PhaseInvestigate,
 			Assignee:         taskAssignee,

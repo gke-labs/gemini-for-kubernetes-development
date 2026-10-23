@@ -59,7 +59,7 @@ func TestTaskQueueManager_Enqueue(t *testing.T) {
 	mgr, queueDir := setupTestQueueManager(t)
 
 	task := &api.QueueTask{
-		Type:             "issue-fix",
+		Type:             "issue-rule",
 		Number:           101,
 		Priority:         "high",
 		Phase:            3,
@@ -69,7 +69,7 @@ func TestTaskQueueManager_Enqueue(t *testing.T) {
 		TriggerNotes:     "issue opened by user",
 	}
 
-	filename := "task-issue-101.yaml"
+	filename := "task-issue-101-rule-fix.yaml"
 	if err := mgr.Enqueue(filename, task); err != nil {
 		t.Fatalf("Enqueue failed: %v", err)
 	}
@@ -105,7 +105,7 @@ func TestTaskQueueManager_Enqueue(t *testing.T) {
 	if err := json.Unmarshal(scanner.Bytes(), &je); err != nil {
 		t.Fatalf("failed to parse journal event: %v", err)
 	}
-	if je.Event != "Created" || je.TaskID != "task-issue-101" || je.Type != "issue-fix" {
+	if je.Event != "Created" || je.TaskID != "task-issue-101-rule-fix" || je.Type != "issue-rule" {
 		t.Errorf("unexpected journal entry: %+v", je)
 	}
 
@@ -124,7 +124,7 @@ func TestTaskQueueManager_ClaimAndStartTask(t *testing.T) {
 
 	now := time.Now()
 	task1 := &api.QueueTask{
-		Type:       "issue-fix",
+		Type:       "issue-rule",
 		Number:     10,
 		Priority:   "high",
 		Phase:      3,
@@ -132,7 +132,7 @@ func TestTaskQueueManager_ClaimAndStartTask(t *testing.T) {
 		EnqueuedAt: now.Add(1 * time.Minute),
 	}
 	task2 := &api.QueueTask{
-		Type:       "issue-fix",
+		Type:       "issue-rule",
 		Number:     20,
 		Priority:   "low",
 		Phase:      3,
@@ -140,14 +140,14 @@ func TestTaskQueueManager_ClaimAndStartTask(t *testing.T) {
 		EnqueuedAt: now.Add(2 * time.Minute),
 	}
 
-	_ = mgr.Enqueue("task-issue-10.yaml", task1)
-	_ = mgr.Enqueue("task-issue-20.yaml", task2)
+	_ = mgr.Enqueue("task-issue-10-rule-fix.yaml", task1)
+	_ = mgr.Enqueue("task-issue-20-rule-fix.yaml", task2)
 
 	fn, claimed, err := claimAndStartTask(mgr)
 	if err != nil {
 		t.Fatalf("claimAndStartTask failed: %v", err)
 	}
-	if fn != "task-issue-10.yaml" || claimed.Number != 10 {
+	if fn != "task-issue-10-rule-fix.yaml" || claimed.Number != 10 {
 		t.Fatalf("expected task-issue-10 to be claimed, got %s (#%d)", fn, claimed.Number)
 	}
 	if claimed.Status != "Running" || claimed.StartedAt.IsZero() {
@@ -155,11 +155,11 @@ func TestTaskQueueManager_ClaimAndStartTask(t *testing.T) {
 	}
 
 	// Verify disk file moved from incoming to processing
-	if _, err := os.Stat(filepath.Join(queueDir, "incoming", "task-issue-10.yaml")); !os.IsNotExist(err) {
-		t.Errorf("expected task-issue-10.yaml to be removed from incoming")
+	if _, err := os.Stat(filepath.Join(queueDir, "incoming", "task-issue-10-rule-fix.yaml")); !os.IsNotExist(err) {
+		t.Errorf("expected task-issue-10-rule-fix.yaml to be removed from incoming")
 	}
-	if _, err := os.Stat(filepath.Join(queueDir, "processing", "task-issue-10.yaml")); err != nil {
-		t.Errorf("expected task-issue-10.yaml to exist in processing: %v", err)
+	if _, err := os.Stat(filepath.Join(queueDir, "processing", "task-issue-10-rule-fix.yaml")); err != nil {
+		t.Errorf("expected task-issue-10-rule-fix.yaml to exist in processing: %v", err)
 	}
 
 	// Claim next candidate - should claim task 20
@@ -167,7 +167,7 @@ func TestTaskQueueManager_ClaimAndStartTask(t *testing.T) {
 	if err != nil {
 		t.Fatalf("claimAndStartTask failed: %v", err)
 	}
-	if fn2 != "task-issue-20.yaml" || claimed2.Number != 20 {
+	if fn2 != "task-issue-20-rule-fix.yaml" || claimed2.Number != 20 {
 		t.Fatalf("expected task-issue-20 to be claimed, got %s", fn2)
 	}
 
@@ -188,14 +188,14 @@ func TestTaskQueueManager_ReleaseTask_Requeue(t *testing.T) {
 	mgr, queueDir := setupTestQueueManager(t)
 
 	task := &api.QueueTask{
-		Type:       "issue-fix",
+		Type:       "issue-rule",
 		Number:     50,
 		Priority:   "high",
 		Phase:      3,
 		CreatedAt:  time.Now(),
 		EnqueuedAt: time.Now(),
 	}
-	filename := "task-issue-50.yaml"
+	filename := "task-issue-50-rule-fix.yaml"
 	_ = mgr.Enqueue(filename, task)
 
 	// Claim it to put in processing
@@ -228,13 +228,13 @@ func TestTaskQueueManager_CompleteAndFailTask(t *testing.T) {
 	mgr, queueDir := setupTestQueueManager(t)
 
 	// Task 1: Complete
-	task1 := &api.QueueTask{Type: "issue-fix", Number: 1, Priority: "high"}
-	fn1 := "task-issue-1.yaml"
+	task1 := &api.QueueTask{Type: "issue-rule", Number: 1, Priority: "high"}
+	fn1 := "task-issue-1-rule-fix.yaml"
 	_ = mgr.Enqueue(fn1, task1)
 	_, claimed1, _ := claimAndStartTask(mgr)
 
 	// Create a dummy log file in processing
-	logProcFile := filepath.Join(queueDir, "logs", "processing", "task-issue-1.log")
+	logProcFile := filepath.Join(queueDir, "logs", "processing", "task-issue-1-rule-fix.log")
 	_ = os.WriteFile(logProcFile, []byte("log data 1"), 0644)
 
 	if err := mgr.CompleteTask(fn1, claimed1); err != nil {
@@ -248,18 +248,18 @@ func TestTaskQueueManager_CompleteAndFailTask(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(queueDir, "processing", fn1)); !os.IsNotExist(err) {
 		t.Errorf("expected task file removed from processing")
 	}
-	logDoneFile := filepath.Join(queueDir, "logs", "processed", "task-issue-1.log")
+	logDoneFile := filepath.Join(queueDir, "logs", "processed", "task-issue-1-rule-fix.log")
 	if _, err := os.Stat(logDoneFile); err != nil {
 		t.Errorf("expected log file moved to processed: %v", err)
 	}
 
 	// Task 2: Fail
-	task2 := &api.QueueTask{Type: "issue-fix", Number: 2, Priority: "low"}
-	fn2 := "task-issue-2.yaml"
+	task2 := &api.QueueTask{Type: "issue-rule", Number: 2, Priority: "low"}
+	fn2 := "task-issue-2-rule-fix.yaml"
 	_ = mgr.Enqueue(fn2, task2)
 	_, claimed2, _ := claimAndStartTask(mgr)
 
-	logProcFile2 := filepath.Join(queueDir, "logs", "processing", "task-issue-2.log")
+	logProcFile2 := filepath.Join(queueDir, "logs", "processing", "task-issue-2-rule-fix.log")
 	_ = os.WriteFile(logProcFile2, []byte("log data 2"), 0644)
 
 	if err := mgr.FailTask(fn2, claimed2, "sandbox failed with exit code 1"); err != nil {
@@ -270,7 +270,7 @@ func TestTaskQueueManager_CompleteAndFailTask(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(queueDir, "processed", fn2)); err != nil {
 		t.Errorf("expected failed task in processed: %v", err)
 	}
-	logDoneFile2 := filepath.Join(queueDir, "logs", "processed", "task-issue-2.log")
+	logDoneFile2 := filepath.Join(queueDir, "logs", "processed", "task-issue-2-rule-fix.log")
 	if _, err := os.Stat(logDoneFile2); err != nil {
 		t.Errorf("expected failed task log in processed: %v", err)
 	}
@@ -296,11 +296,11 @@ func TestTaskQueueManager_HasActivePRTask(t *testing.T) {
 	}
 
 	task := &api.QueueTask{
-		Type:     "pr-comments",
+		Type:     "pr-rule",
 		Number:   prNum,
 		Priority: "medium",
 	}
-	fn := fmt.Sprintf("task-pr-%d-comments.yaml", prNum)
+	fn := fmt.Sprintf("task-pr-%d-rule-comments.yaml", prNum)
 	_ = mgr.Enqueue(fn, task)
 
 	if !mgr.HasActivePRTask(prNum) {
@@ -321,33 +321,33 @@ func TestTaskQueueManager_HasActivePRTask(t *testing.T) {
 func TestTaskQueueManager_RemoveTaskAndPendingForNumber(t *testing.T) {
 	mgr, queueDir := setupTestQueueManager(t)
 
-	_ = mgr.Enqueue("task-issue-10.yaml", &api.QueueTask{Type: "issue-fix", Number: 10})
-	_ = mgr.Enqueue("task-pr-10-comments.yaml", &api.QueueTask{Type: "pr-comments", Number: 10})
-	_ = mgr.Enqueue("task-issue-20.yaml", &api.QueueTask{Type: "issue-fix", Number: 20})
+	_ = mgr.Enqueue("task-issue-10-rule-fix.yaml", &api.QueueTask{Type: "issue-rule", Number: 10})
+	_ = mgr.Enqueue("task-pr-10-rule-comments.yaml", &api.QueueTask{Type: "pr-rule", Number: 10})
+	_ = mgr.Enqueue("task-issue-20-rule-fix.yaml", &api.QueueTask{Type: "issue-rule", Number: 20})
 
 	// Remove pending tasks for number 10
 	if err := mgr.RemovePendingTasksForNumber(10); err != nil {
 		t.Fatalf("RemovePendingTasksForNumber failed: %v", err)
 	}
 
-	if mgr.TaskExists("task-issue-10.yaml") {
+	if mgr.TaskExists("task-issue-10-rule-fix.yaml") {
 		t.Errorf("expected task-issue-10 to be removed")
 	}
-	if mgr.TaskExists("task-pr-10-comments.yaml") {
+	if mgr.TaskExists("task-pr-10-rule-comments.yaml") {
 		t.Errorf("expected task-pr-10-comments to be removed")
 	}
-	if !mgr.TaskExists("task-issue-20.yaml") {
+	if !mgr.TaskExists("task-issue-20-rule-fix.yaml") {
 		t.Errorf("expected task-issue-20 to remain")
 	}
 
 	// Remove single task
-	if err := mgr.RemoveTask("task-issue-20.yaml"); err != nil {
+	if err := mgr.RemoveTask("task-issue-20-rule-fix.yaml"); err != nil {
 		t.Fatalf("RemoveTask failed: %v", err)
 	}
-	if mgr.TaskExists("task-issue-20.yaml") {
+	if mgr.TaskExists("task-issue-20-rule-fix.yaml") {
 		t.Errorf("expected task-issue-20 to be removed")
 	}
-	if _, err := os.Stat(filepath.Join(queueDir, "incoming", "task-issue-20.yaml")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(queueDir, "incoming", "task-issue-20-rule-fix.yaml")); !os.IsNotExist(err) {
 		t.Errorf("expected file removed from incoming")
 	}
 }
@@ -363,9 +363,9 @@ func TestTaskQueueManager_LoadFromDisk(t *testing.T) {
 	}
 
 	// Seed files
-	_ = os.WriteFile(filepath.Join(incomingDir, "task-issue-1.yaml"), []byte("type: issue-fix\nnumber: 1\npriority: high\n"), 0644)
-	_ = os.WriteFile(filepath.Join(processingDir, "task-issue-2.yaml"), []byte("type: issue-fix\nnumber: 2\npriority: low\nstatus: Running\n"), 0644)
-	_ = os.WriteFile(filepath.Join(processedDir, "task-issue-3.yaml"), []byte("type: issue-fix\nnumber: 3\npriority: medium\nstatus: Completed\n"), 0644)
+	_ = os.WriteFile(filepath.Join(incomingDir, "task-issue-1-rule-fix.yaml"), []byte("type: issue-rule\nnumber: 1\npriority: high\n"), 0644)
+	_ = os.WriteFile(filepath.Join(processingDir, "task-issue-2-rule-fix.yaml"), []byte("type: issue-rule\nnumber: 2\npriority: low\nstatus: Running\n"), 0644)
+	_ = os.WriteFile(filepath.Join(processedDir, "task-issue-3-rule-fix.yaml"), []byte("type: issue-rule\nnumber: 3\npriority: medium\nstatus: Completed\n"), 0644)
 
 	mgr := NewTaskQueueManager(TaskQueueManagerConfig{
 		QueueDir:      tempDir,
@@ -383,10 +383,10 @@ func TestTaskQueueManager_LoadFromDisk(t *testing.T) {
 		t.Errorf("expected counts (1, 1, 1), got (%d, %d, %d)", inc, proc, done)
 	}
 
-	if !mgr.TaskExists("task-issue-1.yaml") {
+	if !mgr.TaskExists("task-issue-1-rule-fix.yaml") {
 		t.Errorf("expected task-issue-1 to exist")
 	}
-	if !mgr.TaskExists("task-issue-2.yaml") {
+	if !mgr.TaskExists("task-issue-2-rule-fix.yaml") {
 		t.Errorf("expected task-issue-2 to exist")
 	}
 }
@@ -408,7 +408,7 @@ func TestTaskQueueManager_ConcurrentStress(t *testing.T) {
 			for i := 0; i < tasksPerWorker; i++ {
 				fn := fmt.Sprintf("task-worker-%d-%d.yaml", workerID, i)
 				task := &api.QueueTask{
-					Type:     "issue-fix",
+					Type:     "issue-rule",
 					Number:   workerID*1000 + i,
 					Priority: "high",
 				}
@@ -436,12 +436,12 @@ func TestTaskQueueManager_ConcurrentStress(t *testing.T) {
 func TestWriteTaskAtomically(t *testing.T) {
 	tempDir := t.TempDir()
 	task := &api.QueueTask{
-		Type:     "pr-review",
+		Type:     "pr-rule",
 		Number:   123,
 		Priority: "high",
 	}
 
-	filename := "task-pr-123-review.yaml"
+	filename := "task-pr-123-rule-review.yaml"
 	if err := writeTaskAtomically(tempDir, filename, task); err != nil {
 		t.Fatalf("writeTaskAtomically failed: %v", err)
 	}
@@ -456,7 +456,7 @@ func TestWriteTaskAtomically(t *testing.T) {
 	if err := yaml.Unmarshal(data, &readTask); err != nil {
 		t.Fatalf("failed to unmarshal task yaml: %v", err)
 	}
-	if readTask.Number != 123 || readTask.Type != "pr-review" || readTask.Priority != "high" {
+	if readTask.Number != 123 || readTask.Type != "pr-rule" || readTask.Priority != "high" {
 		t.Errorf("unexpected task data: %+v", readTask)
 	}
 }
@@ -466,9 +466,9 @@ func TestTaskQueueManager_SyncIncomingFromDisk(t *testing.T) {
 
 	// 1. Direct drop onto disk (simulating manual operator copy)
 	incomingDir := filepath.Join(queueDir, "incoming")
-	manualFile := "task-pr-99-comments.yaml"
+	manualFile := "task-pr-99-rule-comments.yaml"
 	manualTask := &api.QueueTask{
-		Type:     "pr-comments",
+		Type:     "pr-rule",
 		Number:   99,
 		Priority: "high",
 	}
@@ -497,9 +497,9 @@ func TestTaskQueueManager_SyncIncomingFromDisk(t *testing.T) {
 	}
 
 	// 2. Sync new disk file via SyncIncomingFromDisk
-	manualFile2 := "task-issue-88.yaml"
+	manualFile2 := "task-issue-88-rule-fix.yaml"
 	manualTask2 := &api.QueueTask{
-		Type:     "issue-fix",
+		Type:     "issue-rule",
 		Number:   88,
 		Priority: "critical",
 	}
@@ -532,8 +532,8 @@ func TestTaskQueueManager_SyncIncomingFromDisk(t *testing.T) {
 	}
 
 	// 4. Do not re-ingest tasks that are currently in processing
-	taskProc := &api.QueueTask{Type: "issue-fix", Number: 77, Priority: "high"}
-	procFn := "task-issue-77.yaml"
+	taskProc := &api.QueueTask{Type: "issue-rule", Number: 77, Priority: "high"}
+	procFn := "task-issue-77-rule-fix.yaml"
 	_ = mgr.Enqueue(procFn, taskProc)
 	claimedFn, claimed, err := claimAndStartTask(mgr)
 	if err != nil || claimed == nil || claimedFn != procFn {
@@ -555,8 +555,8 @@ func TestTaskQueueManager_SyncIncomingFromDisk(t *testing.T) {
 		IncomingDir: incomingDir,
 		DryRun:      true,
 	})
-	dryTask := &api.QueueTask{Type: "issue-fix", Number: 55, Priority: "medium"}
-	dryFn := "task-issue-55.yaml"
+	dryTask := &api.QueueTask{Type: "issue-rule", Number: 55, Priority: "medium"}
+	dryFn := "task-issue-55-rule-fix.yaml"
 	_ = dryMgr.Enqueue(dryFn, dryTask)
 	// Task is only in memory, not on disk
 	if err := dryMgr.SyncIncomingFromDisk(); err != nil {
@@ -573,7 +573,7 @@ func TestLoadTaskFromDisk(t *testing.T) {
 	t.Run("valid task file with explicit values", func(t *testing.T) {
 		fixedTime := time.Date(2026, 8, 15, 12, 0, 0, 0, time.UTC)
 		fn := filepath.Join(tempDir, "valid-task.yaml")
-		content := fmt.Sprintf("type: issue-fix\nnumber: 101\npriority: high\nstatus: Running\nenqueuedAt: %s\n", fixedTime.Format(time.RFC3339))
+		content := fmt.Sprintf("type: issue-rule\nnumber: 101\npriority: high\nstatus: Running\nenqueuedAt: %s\n", fixedTime.Format(time.RFC3339))
 		if err := os.WriteFile(fn, []byte(content), 0644); err != nil {
 			t.Fatalf("failed to write task file: %v", err)
 		}
@@ -582,7 +582,7 @@ func TestLoadTaskFromDisk(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error loading task: %v", err)
 		}
-		if task.Type != "issue-fix" || task.Number != 101 {
+		if task.Type != "issue-rule" || task.Number != 101 {
 			t.Errorf("unexpected task fields: %+v", task)
 		}
 		if task.Priority != "high" {
@@ -620,7 +620,7 @@ func TestLoadTaskFromDisk(t *testing.T) {
 
 	t.Run("enqueuedAt derived from file modTime via os.Stat", func(t *testing.T) {
 		fn := filepath.Join(tempDir, "modtime-task.yaml")
-		content := "type: issue-fix\nnumber: 102\n"
+		content := "type: issue-rule\nnumber: 102\n"
 		if err := os.WriteFile(fn, []byte(content), 0644); err != nil {
 			t.Fatalf("failed to write task file: %v", err)
 		}
@@ -671,12 +671,12 @@ func TestLoadTaskFromDisk(t *testing.T) {
 func TestTaskQueueManager_ReleaseTask_CandidateReclaim(t *testing.T) {
 	mgr, _ := setupTestQueueManager(t)
 
-	fnA := "task-issue-1.yaml"
-	taskA := &api.QueueTask{Type: "issue-fix", Number: 1, Priority: "high"}
+	fnA := "task-issue-1-rule-fix.yaml"
+	taskA := &api.QueueTask{Type: "issue-rule", Number: 1, Priority: "high"}
 	_ = mgr.Enqueue(fnA, taskA)
 
-	fnB := "task-issue-2.yaml"
-	taskB := &api.QueueTask{Type: "issue-fix", Number: 2, Priority: "medium"}
+	fnB := "task-issue-2-rule-fix.yaml"
+	taskB := &api.QueueTask{Type: "issue-rule", Number: 2, Priority: "medium"}
 	_ = mgr.Enqueue(fnB, taskB)
 
 	// Claim task A (highest priority)
@@ -718,8 +718,8 @@ func TestTaskQueueManager_ReleaseTask_CandidateReclaim(t *testing.T) {
 func TestTaskQueueManager_ReleaseTask_DirectIncoming(t *testing.T) {
 	mgr, _ := setupTestQueueManager(t)
 
-	fn := "task-issue-10.yaml"
-	task := &api.QueueTask{Type: "issue-fix", Number: 10, Priority: "high"}
+	fn := "task-issue-10-rule-fix.yaml"
+	task := &api.QueueTask{Type: "issue-rule", Number: 10, Priority: "high"}
 	_ = mgr.Enqueue(fn, task)
 
 	// Claim candidate
@@ -743,8 +743,8 @@ func TestTaskQueueManager_ReleaseTask_DirectIncoming(t *testing.T) {
 func TestTaskQueueManager_ReleaseTask_CleanupOnTerminalEvents(t *testing.T) {
 	mgr, _ := setupTestQueueManager(t)
 
-	fn1 := "task-issue-11.yaml"
-	_ = mgr.Enqueue(fn1, &api.QueueTask{Type: "issue-fix", Number: 11, Priority: "high"})
+	fn1 := "task-issue-11-rule-fix.yaml"
+	_ = mgr.Enqueue(fn1, &api.QueueTask{Type: "issue-rule", Number: 11, Priority: "high"})
 	_, _, _ = mgr.ClaimNextCandidate()
 	_ = mgr.ReleaseTask(fn1)
 
@@ -754,8 +754,8 @@ func TestTaskQueueManager_ReleaseTask_CleanupOnTerminalEvents(t *testing.T) {
 		t.Errorf("expected RemoveTask to remove task")
 	}
 
-	fn2 := "task-issue-12.yaml"
-	_ = mgr.Enqueue(fn2, &api.QueueTask{Type: "issue-fix", Number: 12, Priority: "high"})
+	fn2 := "task-issue-12-rule-fix.yaml"
+	_ = mgr.Enqueue(fn2, &api.QueueTask{Type: "issue-rule", Number: 12, Priority: "high"})
 	_, _, _ = mgr.ClaimNextCandidate()
 	_ = mgr.ReleaseTask(fn2)
 
@@ -766,8 +766,8 @@ func TestTaskQueueManager_ReleaseTask_CleanupOnTerminalEvents(t *testing.T) {
 		t.Errorf("expected CompleteTask to mark task processed")
 	}
 
-	fn3 := "task-issue-13.yaml"
-	_ = mgr.Enqueue(fn3, &api.QueueTask{Type: "issue-fix", Number: 13, Priority: "high"})
+	fn3 := "task-issue-13-rule-fix.yaml"
+	_ = mgr.Enqueue(fn3, &api.QueueTask{Type: "issue-rule", Number: 13, Priority: "high"})
 	_, _, _ = mgr.ClaimNextCandidate()
 	_ = mgr.ReleaseTask(fn3)
 
@@ -784,10 +784,10 @@ func TestTaskQueueManager_RemovePendingTasksForNumber_MatchByNumber(t *testing.T
 
 	// Non-standard filename that doesn't follow strict -issue-10.yaml or -pr-10- format, but has task.Number = 10
 	fnCustom := "custom-task-special-10.yaml"
-	_ = mgr.Enqueue(fnCustom, &api.QueueTask{Type: "issue-fix", Number: 10})
+	_ = mgr.Enqueue(fnCustom, &api.QueueTask{Type: "issue-rule", Number: 10})
 
-	fnOther := "task-issue-99.yaml"
-	_ = mgr.Enqueue(fnOther, &api.QueueTask{Type: "issue-fix", Number: 99})
+	fnOther := "task-issue-99-rule-fix.yaml"
+	_ = mgr.Enqueue(fnOther, &api.QueueTask{Type: "issue-rule", Number: 99})
 
 	if !mgr.TaskExists(fnCustom) {
 		t.Fatalf("expected custom task to exist")
@@ -809,14 +809,14 @@ func TestTaskQueueManager_TwoPhase_ClaimCandidate_StartTask(t *testing.T) {
 	mgr, queueDir := setupTestQueueManager(t)
 
 	task := &api.QueueTask{
-		Type:       "issue-fix",
+		Type:       "issue-rule",
 		Number:     42,
 		Priority:   "high",
 		Phase:      3,
 		CreatedAt:  time.Now(),
 		EnqueuedAt: time.Now(),
 	}
-	fn := "task-issue-42.yaml"
+	fn := "task-issue-42-rule-fix.yaml"
 	if err := mgr.Enqueue(fn, task); err != nil {
 		t.Fatalf("Enqueue failed: %v", err)
 	}
@@ -918,13 +918,13 @@ func TestTaskQueueManager_CompleteDirectlyFromCandidate(t *testing.T) {
 	mgr, queueDir := setupTestQueueManager(t)
 
 	task := &api.QueueTask{
-		Type:       "issue-fix",
+		Type:       "issue-rule",
 		Number:     99,
 		Priority:   "medium",
 		Recovered:  true,
 		EnqueuedAt: time.Now(),
 	}
-	fn := "task-issue-99.yaml"
+	fn := "task-issue-99-rule-fix.yaml"
 	_ = mgr.Enqueue(fn, task)
 
 	// Claim candidate
@@ -960,15 +960,15 @@ func TestProcessedTaskAccessors(t *testing.T) {
 		processedDir := filepath.Join(tempDir, "processed")
 
 		datedAt := time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC)
-		dated := filepath.Join(processedDir, "task-pr-200-comments.yaml")
-		if err := os.WriteFile(dated, []byte("type: pr-comments\ncommitSHA: sha200\nstatus: Completed\ncompletedAt: \"2026-08-01T10:00:00Z\"\n"), 0644); err != nil {
+		dated := filepath.Join(processedDir, "task-pr-200-rule-comments.yaml")
+		if err := os.WriteFile(dated, []byte("type: pr-rule\ncommitSHA: sha200\nstatus: Completed\ncompletedAt: \"2026-08-01T10:00:00Z\"\n"), 0644); err != nil {
 			t.Fatalf("writing dated task: %v", err)
 		}
 
 		// A task file that never recorded when it finished is dated by its own
 		// timestamp, so that a reader never has to go back to the file for it.
-		undated := filepath.Join(processedDir, "task-issue-7.yaml")
-		if err := os.WriteFile(undated, []byte("type: issue-fix\n"), 0644); err != nil {
+		undated := filepath.Join(processedDir, "task-issue-7-rule-fix.yaml")
+		if err := os.WriteFile(undated, []byte("type: issue-rule\n"), 0644); err != nil {
 			t.Fatalf("writing undated task: %v", err)
 		}
 		modTime := time.Date(2026, 7, 1, 9, 0, 0, 0, time.UTC)
@@ -980,7 +980,7 @@ func TestProcessedTaskAccessors(t *testing.T) {
 			t.Fatalf("LoadFromDisk: %v", err)
 		}
 
-		got := mgr.GetProcessedTask("task-pr-200-comments.yaml")
+		got := mgr.GetProcessedTask("task-pr-200-rule-comments.yaml")
 		if got == nil {
 			t.Fatal("dated task missing from the processed set")
 		}
@@ -988,7 +988,7 @@ func TestProcessedTaskAccessors(t *testing.T) {
 			t.Errorf("dated task recovered as %+v, want sha200 at %v", got, datedAt)
 		}
 
-		got = mgr.GetProcessedTask("task-issue-7.yaml")
+		got = mgr.GetProcessedTask("task-issue-7-rule-fix.yaml")
 		if got == nil {
 			t.Fatal("undated task missing from the processed set")
 		}
@@ -1004,22 +1004,22 @@ func TestProcessedTaskAccessors(t *testing.T) {
 	t.Run("reports tasks finished since start-up", func(t *testing.T) {
 		mgr, _ := setupTestQueueManager(t)
 
-		task := &api.QueueTask{Type: api.TypeIssueFix, Number: 42}
-		if err := mgr.Enqueue("task-issue-42.yaml", task); err != nil {
+		task := &api.QueueTask{Type: api.TypeIssueRule, Number: 42}
+		if err := mgr.Enqueue("task-issue-42-rule-fix.yaml", task); err != nil {
 			t.Fatalf("Enqueue: %v", err)
 		}
-		if mgr.GetProcessedTask("task-issue-42.yaml") != nil {
+		if mgr.GetProcessedTask("task-issue-42-rule-fix.yaml") != nil {
 			t.Error("a merely queued task was reported as finished")
 		}
 
 		if _, _, err := claimAndStartTask(mgr); err != nil {
 			t.Fatalf("starting task: %v", err)
 		}
-		if err := mgr.CompleteTask("task-issue-42.yaml", task); err != nil {
+		if err := mgr.CompleteTask("task-issue-42-rule-fix.yaml", task); err != nil {
 			t.Fatalf("CompleteTask: %v", err)
 		}
 
-		got := mgr.GetProcessedTask("task-issue-42.yaml")
+		got := mgr.GetProcessedTask("task-issue-42-rule-fix.yaml")
 		if got == nil {
 			t.Fatal("completed task missing from the processed set")
 		}
@@ -1034,32 +1034,32 @@ func TestProcessedTaskAccessors(t *testing.T) {
 	t.Run("hands back copies", func(t *testing.T) {
 		mgr, _ := setupTestQueueManager(t)
 
-		task := &api.QueueTask{Type: api.TypeIssueFix, Number: 9, Instructions: []string{"first"}}
-		if err := mgr.Enqueue("task-issue-9.yaml", task); err != nil {
+		task := &api.QueueTask{Type: api.TypeIssueRule, Number: 9, Instructions: []string{"first"}}
+		if err := mgr.Enqueue("task-issue-9-rule-fix.yaml", task); err != nil {
 			t.Fatalf("Enqueue: %v", err)
 		}
 		if _, _, err := claimAndStartTask(mgr); err != nil {
 			t.Fatalf("starting task: %v", err)
 		}
-		if err := mgr.CompleteTask("task-issue-9.yaml", task); err != nil {
+		if err := mgr.CompleteTask("task-issue-9-rule-fix.yaml", task); err != nil {
 			t.Fatalf("CompleteTask: %v", err)
 		}
 
 		// The queue owns the task files and the state derived from them, so a
 		// caller must not be able to edit that state by writing to what it read.
-		mgr.GetProcessedTask("task-issue-9.yaml").Status = api.StatusFailed
-		mgr.ListProcessedTasks()["task-issue-9.yaml"].CommitSHA = "tampered"
+		mgr.GetProcessedTask("task-issue-9-rule-fix.yaml").Status = api.StatusFailed
+		mgr.ListProcessedTasks()["task-issue-9-rule-fix.yaml"].CommitSHA = "tampered"
 
 		// A struct copy would share the Instructions backing array, so writing
 		// to an element of what was read back would reach queue state too.
-		mgr.GetProcessedTask("task-issue-9.yaml").Instructions[0] = "tampered"
-		mgr.ListProcessedTasks()["task-issue-9.yaml"].Instructions[0] = "tampered"
+		mgr.GetProcessedTask("task-issue-9-rule-fix.yaml").Instructions[0] = "tampered"
+		mgr.ListProcessedTasks()["task-issue-9-rule-fix.yaml"].Instructions[0] = "tampered"
 
 		// Nor may the task the caller handed in stay a handle on queue state.
 		task.Instructions[0] = "tampered"
 		task.CommitSHA = "tampered"
 
-		got := mgr.GetProcessedTask("task-issue-9.yaml")
+		got := mgr.GetProcessedTask("task-issue-9-rule-fix.yaml")
 		if got.Status != api.StatusCompleted {
 			t.Errorf("queue state was mutated through GetProcessedTask: status is %q", got.Status)
 		}
@@ -1073,7 +1073,7 @@ func TestProcessedTaskAccessors(t *testing.T) {
 
 	t.Run("unknown task", func(t *testing.T) {
 		mgr, _ := setupTestQueueManager(t)
-		if got := mgr.GetProcessedTask("task-issue-404.yaml"); got != nil {
+		if got := mgr.GetProcessedTask("task-issue-404-rule-fix.yaml"); got != nil {
 			t.Errorf("expected nil for a task that never finished, got %+v", got)
 		}
 	})
@@ -1083,13 +1083,13 @@ func TestProcessedTaskAccessors(t *testing.T) {
 // the task's number or its file name; another issue's, or a PR's, is not.
 func TestTaskQueueManager_HasActiveIssueTask(t *testing.T) {
 	mgr, _ := setupTestQueueManager(t)
-	if err := mgr.Enqueue("task-issue-7.yaml", &api.QueueTask{Type: api.TypeIssueFix, Number: 7}); err != nil {
+	if err := mgr.Enqueue("task-issue-7-rule-fix.yaml", &api.QueueTask{Type: api.TypeIssueRule, Number: 7}); err != nil {
 		t.Fatal(err)
 	}
 	if err := mgr.Enqueue("task-workflow-greenfield-issue-9.yaml", &api.QueueTask{Type: api.TypeAgentChore, Number: 9}); err != nil {
 		t.Fatal(err)
 	}
-	if err := mgr.Enqueue("task-pr-11-investigate.yaml", &api.QueueTask{Type: api.TypePRInvestigate, Number: 11}); err != nil {
+	if err := mgr.Enqueue("task-pr-11-rule-ci.yaml", &api.QueueTask{Type: api.TypePRRule, Number: 11}); err != nil {
 		t.Fatal(err)
 	}
 	// A repository rule's task on an issue is the issue's; on a PR, not.
@@ -1122,13 +1122,13 @@ func TestTaskQueueManager_HasActiveIssueTask(t *testing.T) {
 func TestEnqueueStampsTheRunName(t *testing.T) {
 	mgr, _ := setupTestQueueManager(t)
 	at := time.Unix(1700000000, 0)
-	if err := mgr.Enqueue("task-pr-7-investigate.yaml", &api.QueueTask{Type: api.TypePRInvestigate, Number: 7, CommitSHA: "abcdef123", EnqueuedAt: at}); err != nil {
+	if err := mgr.Enqueue("task-pr-7-rule-ci.yaml", &api.QueueTask{Type: api.TypePRRule, Rule: "ci", Recipe: "care-ci", Number: 7, CommitSHA: "abcdef123", EnqueuedAt: at}); err != nil {
 		t.Fatal(err)
 	}
-	if err := mgr.Enqueue("task-pr-8-review.yaml", &api.QueueTask{Type: api.TypePRReview, Number: 8, EnqueuedAt: at, RunName: "kept-8"}); err != nil {
+	if err := mgr.Enqueue("task-pr-8-rule-review.yaml", &api.QueueTask{Type: api.TypePRRule, Number: 8, EnqueuedAt: at, RunName: "kept-8"}); err != nil {
 		t.Fatal(err)
 	}
-	for fn, want := range map[string]string{"task-pr-7-investigate.yaml": "investigate-7-abcdef1-1700000000", "task-pr-8-review.yaml": "kept-8"} {
+	for fn, want := range map[string]string{"task-pr-7-rule-ci.yaml": "ci-7-abcdef1-1700000000", "task-pr-8-rule-review.yaml": "kept-8"} {
 		task, ok := mgr.incoming.Get(fn)
 		if !ok || task.RunName != want || api.RunNameOf(task) != want {
 			t.Errorf("%s: run name %v, want %s", fn, task, want)
@@ -1140,8 +1140,8 @@ func TestEnqueueStampsTheRunName(t *testing.T) {
 // recipe it runs - for a queued task, a failure and a drop alike.
 func TestQueueResponseCarriesRuleAndRecipe(t *testing.T) {
 	mgr, _ := setupTestQueueManager(t)
-	for _, fn := range []string{"task-pr-7-investigate.yaml", "task-pr-8-review.yaml", "task-pr-9-comments.yaml"} {
-		if err := mgr.Enqueue(fn, &api.QueueTask{Type: api.TypePRInvestigate, Number: 7, Rule: "ci", Recipe: "care-ci"}); err != nil {
+	for _, fn := range []string{"task-pr-7-rule-ci.yaml", "task-pr-8-rule-review.yaml", "task-pr-9-rule-comments.yaml"} {
+		if err := mgr.Enqueue(fn, &api.QueueTask{Type: api.TypePRRule, Number: 7, Rule: "ci", Recipe: "care-ci"}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -1155,11 +1155,11 @@ func TestQueueResponseCarriesRuleAndRecipe(t *testing.T) {
 	if err := mgr.FailTask(fn, task, "boom"); err != nil {
 		t.Fatal(err)
 	}
-	queued, _ := mgr.incoming.Get("task-pr-8-review.yaml")
+	queued, _ := mgr.incoming.Get("task-pr-8-rule-review.yaml")
 	if queued == nil {
-		queued, _ = mgr.incoming.Get("task-pr-9-comments.yaml")
+		queued, _ = mgr.incoming.Get("task-pr-9-rule-comments.yaml")
 	}
-	if err := mgr.DropTask("task-pr-9-comments.yaml", queued, "gone"); err != nil {
+	if err := mgr.DropTask("task-pr-9-rule-comments.yaml", queued, "gone"); err != nil {
 		t.Fatal(err)
 	}
 	resp := mgr.GetQueueResponse()

@@ -18,7 +18,7 @@ import (
 func TestRunsSince(t *testing.T) {
 	mgr, queueDir := setupTestQueueManager(t)
 	now := time.Now()
-	const name = "task-pr-7-investigate.yaml"
+	const name = "task-pr-7-rule-ci.yaml"
 	id := strings.TrimSuffix(name, ".yaml")
 
 	// The journal a previous watcher left: two ended runs, a start, a drop,
@@ -47,7 +47,7 @@ func TestRunsSince(t *testing.T) {
 	}
 
 	// A run that ends now counts too, and a dropped task does not.
-	task := &api.QueueTask{Type: api.TypePRInvestigate, Number: 7, URL: "https://github.com/o/r/pull/7"}
+	task := &api.QueueTask{Type: api.TypePRRule, Number: 7, URL: "https://github.com/o/r/pull/7"}
 	if err := mgr.Enqueue(name, task); err != nil {
 		t.Fatal(err)
 	}
@@ -58,7 +58,7 @@ func TestRunsSince(t *testing.T) {
 	if err := mgr.FailTask(fn, started, "boom"); err != nil {
 		t.Fatal(err)
 	}
-	dropped := &api.QueueTask{Type: api.TypePRInvestigate, Number: 7, URL: "https://github.com/o/r/pull/7"}
+	dropped := &api.QueueTask{Type: api.TypePRRule, Number: 7, URL: "https://github.com/o/r/pull/7"}
 	if err := mgr.Enqueue(name, dropped); err != nil {
 		t.Fatal(err)
 	}

@@ -1,6 +1,6 @@
-file: task-pr-10-comments.yaml
+file: task-pr-10-rule-comments.yaml
 task:
-    type: pr-comments
+    type: pr-rule
     url: https://github.com/test-owner/test-repo/pull/10
     number: 10
     priority: medium

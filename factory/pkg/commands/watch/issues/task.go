@@ -130,7 +130,7 @@ func issueTaskFilename(num int, workflowName string) string {
 	if workflowName != "" {
 		return fmt.Sprintf("task-workflow-%s-issue-%d.yaml", common.Slugify(workflowName), num)
 	}
-	return fmt.Sprintf("task-issue-%d.yaml", num)
+	return api.RuleTaskFile(false, num, "fix")
 }
 
 // triggerInfo determines what made an issue eligible and when, which is

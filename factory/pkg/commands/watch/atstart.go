@@ -15,22 +15,18 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/watch/rules"
 )
 
-// taskFileRE is the task files of the rules the engine decides: a PR's
-// (task-pr-<n>-<suffix>), an issue's fix (task-issue-<n>) and an issue's
-// workflow (task-workflow-<name>-issue-<n>).
-var taskFileRE = regexp.MustCompile(`^task-(?:pr-(\d+)-([a-z]+)|issue-(\d+)|workflow-.+-issue-(\d+))\.yaml$`)
-
-// ruleTaskFileRE is a rule task's file (api.RuleTaskFile), of a rule
-// factory does not handle by name: task-(pr|issue)-<n>-rule-<rule>.
+// ruleTaskFileRE is a rule task's file (api.RuleTaskFile):
+// task-(pr|issue)-<n>-rule-<rule>.
 var ruleTaskFileRE = regexp.MustCompile(`^task-(pr|issue)-(\d+)-rule-([a-z0-9][a-z0-9-]*)\.yaml$`)
 
-// prTaskSuffixRules are the rules a PR's task files run, by their suffix
-// (prs.prRuleTasks).
-var prTaskSuffixRules = map[string]string{"comments": "comments", "iterate": "conflict", "investigate": "ci", "review": "review"}
+// workflowTaskFileRE is a workflow step's file:
+// task-workflow-<name>-issue-<n>.
+var workflowTaskFileRE = regexp.MustCompile(`^task-workflow-.+-issue-(\d+)\.yaml$`)
 
 // taskRule is the rule a task file runs, the kind of item it is on and
-// its number; "" for a task no rule decides (a chore, an agent, a
-// fan-out's). A rule task's file names its rule.
+// its number: a rule task's file names its rule, a workflow step's is the
+// workflow rule's; "" for a task no rule decides (a chore, an agent, a
+// fan-out's).
 func taskRule(filename string) (rule, kind string, num int) {
 	if m := ruleTaskFileRE.FindStringSubmatch(filename); m != nil {
 		num, _ = strconv.Atoi(m[2])
@@ -40,20 +36,11 @@ func taskRule(filename string) (rule, kind string, num int) {
 		}
 		return m[3], kind, num
 	}
-	m := taskFileRE.FindStringSubmatch(filename)
-	switch {
-	case m == nil:
-		return "", "", 0
-	case m[1] != "":
+	if m := workflowTaskFileRE.FindStringSubmatch(filename); m != nil {
 		num, _ = strconv.Atoi(m[1])
-		return prTaskSuffixRules[m[2]], rules.OnPR, num
-	case m[3] != "":
-		num, _ = strconv.Atoi(m[3])
-		return "fix", rules.OnIssue, num
-	default:
-		num, _ = strconv.Atoi(m[4])
 		return "workflow", rules.OnIssue, num
 	}
+	return "", "", 0
 }
 
 // Redecide is the engine deciding again, just before a queued task starts,

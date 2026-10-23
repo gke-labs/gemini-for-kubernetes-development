@@ -103,7 +103,7 @@ flowchart TB
     %% Ingestion Flow
     ISC -->|"1. Fetch open issues"| GH
     ISC -->|"2. Check referenced PRs O(1)"| ESC
-    ISC -->|"3. Enqueue issue-fix"| TQM
+    ISC -->|"3. Enqueue the fix rule task"| TQM
 
     PSC -->|"1. Fetch PRs, reviews, CI"| GH
     PSC -->|"2. Update open PRs & metadata"| ESC
@@ -156,7 +156,7 @@ To guarantee maintainability and eliminate circular dependencies, subcontrollers
   * Probes `SandboxService.IsTaskRunning(sandboxName)` to avoid duplicate work if a sandbox is currently active.
   * Uses `TaskQueueManager.TaskExists(filename)` as the authoritative in-memory check before falling back to disk, and withdraws the pending tasks of an issue that has since been stopped.
   * Reads each issue's facts into a `rules.Item` (`Scanner.Facts` for one item) and asks the engine: first the rule's policy on the cheap facts (`Set.Held`: cooldown, once per update, a give-up due), then `Set.Decide`. The rules are `workflow-missing`, `workflow` and `fix` (`factory/pkg/watch/rules/`). The last run and the per-workflow cooldown come from `Queue.GetProcessedTask(filename)` and the workflow definition; the scanner keeps no record of its own.
-  * Carries out the decision: enqueues the `issue-fix` or workflow (`agent-chore`) task stamped with the rule's recipe, apply and inputs (`act.Task`) directly into `TaskQueueManager`, or makes its writes (`act.ApplyWrites`: a give-up's stop label and comment). `workflow-missing`'s stop keeps a handler, which posts the rule's comment with the definition and its load error. One task per issue at a time (`HasActiveIssueTask`).
+  * Carries out the decision: enqueues the `issue-rule` (`task-issue-<n>-rule-fix`) or workflow (`agent-chore`) task stamped with the rule's recipe, apply and inputs (`act.Task`) directly into `TaskQueueManager`, or makes its writes (`act.ApplyWrites`: a give-up's stop label and comment). `workflow-missing`'s stop keeps a handler, which posts the rule's comment with the definition and its load error. One task per issue at a time (`HasActiveIssueTask`).
 * **Cold Cache Guard**: An unpopulated open PR cache is indistinguishable from "no open PR references this issue", so a scan that trusted it would re-trigger fixes for issues that already have one — which is exactly what happened after a restart into a rate limit window. The scanner fails closed on `HasOpenPRs()`. Because the two scanners are gated independently and a deployment can scan issues with pull request scanning switched off, the issue scanner primes that half of the cache itself with a single listing when — and only when — no pull request scanner is running to fill it. It is not a fallback for a cache the owner has simply not reached yet: priming on cold alone would duplicate the listing on every start and give the cache two writers.
 * **Pause Signal**: `Deps.Paused` is the same read-only drain signal the reconciler and chore scheduler take. Queueing a fix is taking on new work, which is precisely what a drain stops.
 * **Decoupling Guarantee**: Does **not** invoke `PRScanner.ProcessPRs`. Pull requests returned in GitHub API issue queries are dropped: the pull request scanner lists them itself on its own cadence, which keeps the dependency graph acyclic without a handoff channel or a shared primitive to carry it.
@@ -177,10 +177,10 @@ Implemented as `watch/prs.Scanner` (`New(Config, Deps)` / `Run(ctx)` / `ScanOnce
   * Applies the engine's `inactive` stop: a pull request no human has engaged with for `prInactivityTimeout` gets the stop label and the explanation once.
   * Uses `Sandboxes.IsTaskRunning` and `TaskQueueManager.TaskExists` / `HasActivePRTask` as the authoritative in-memory checks, rather than racy disk directory scans during task renames.
   * The care rules take the pull request in **order**, at most one per evaluation. The order is the design, not an implementation detail: unaddressed feedback wins over everything, because a human asking for a change makes the conflict or CI failure the agent would otherwise chase irrelevant.
-    1. **Review Feedback & Comments** (`comments.yaml`, `pr-comments`, recipe `care-comments`): new trusted feedback, acknowledged with `eyes` reactions; gives up after 3 failed runs.
-    2. **Conflicts / Rebase** (`conflict.yaml`, `pr-iterate`, recipe `care-rebase`) — nothing can be verified until the branch merges.
-    3. **CI Gating & Investigation** (`ci.yaml`, `pr-investigate`, recipe `care-ci`): a 2h cooldown, and a give-up after 3 attempts since a new commit, a trusted human comment or the last pause.
-    4. **Automated Code Review** (`review.yaml`, `pr-review`, recipe `review`): opt-in by label, CI green, once per head.
+    1. **Review Feedback & Comments** (`comments.yaml`, `pr-rule` (`task-pr-<n>-rule-comments`), recipe `care-comments`): new trusted feedback, acknowledged with `eyes` reactions; gives up after 3 failed runs.
+    2. **Conflicts / Rebase** (`conflict.yaml`, `pr-rule` (`task-pr-<n>-rule-conflict`), recipe `care-rebase`) — nothing can be verified until the branch merges.
+    3. **CI Gating & Investigation** (`ci.yaml`, `pr-rule` (`task-pr-<n>-rule-ci`), recipe `care-ci`): a 2h cooldown, and a give-up after 3 attempts since a new commit, a trusted human comment or the last pause.
+    4. **Automated Code Review** (`review.yaml`, `pr-rule` (`task-pr-<n>-rule-review`), recipe `review`): opt-in by label, CI green, once per head.
     The scanner's handlers (`prs/handlers.go`) build the task for the decided rule; a give-up is the rule's writes (stop label and comment).
   * **Ready-for-Human** (`ready.yaml`, `ready-unreview.yaml`): gated on clean CI, no pending feedback, a satisfied review and no active task (`HasActivePRTask`, read from memory so the decision does not flap while a task file is renamed between directories). It adds the label, drops `*/review` and unassigns the bot. It never removes the label (#1597).
   * Enqueues tasks directly into `TaskQueueManager`, stamped with the rule's recipe, apply and inputs (`act.Task`).

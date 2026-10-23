@@ -89,14 +89,14 @@ func TestQueueTask_EngineGivesUpOnAFailingFix(t *testing.T) {
 			})
 			// Three failed fixes, the last ended an hour ago (past the
 			// failure cooldown).
-			queue.ended = map[string][]api.EndedRun{"task-issue-71.yaml": {
+			queue.ended = map[string][]api.EndedRun{"task-issue-71-rule-fix.yaml": {
 				{StartedAt: runAt(-4), Failed: true}, {StartedAt: runAt(-3), Failed: true}, {StartedAt: runAt(-2), Failed: true},
 			}}
 			ended := runAt(-1)
 			if !tc.lastEnded.IsZero() {
 				ended = tc.lastEnded
 			}
-			queue.processed["task-issue-71.yaml"] = &api.QueueTask{Status: api.StatusFailed, StartedAt: runAt(-2), CompletedAt: ended}
+			queue.processed["task-issue-71-rule-fix.yaml"] = &api.QueueTask{Status: api.StatusFailed, StartedAt: runAt(-2), CompletedAt: ended}
 			updated := runAt(-5)
 			s.queueTasks(context.Background(), []*githubv39.Issue{{
 				Number: githubv39.Int(71), UpdatedAt: &updated,
@@ -104,7 +104,7 @@ func TestQueueTask_EngineGivesUpOnAFailingFix(t *testing.T) {
 				User:   &githubv39.User{Login: githubv39.String("someone")},
 			}}, map[int]bool{})
 
-			_, queued := queue.enqueued["task-issue-71.yaml"]
+			_, queued := queue.enqueued["task-issue-71-rule-fix.yaml"]
 			if tc.giveUp {
 				if queued {
 					t.Error("queued a fix the engine gave up on")
@@ -159,7 +159,7 @@ func TestQueueTask_EnginePolicyHoldsBeforeTheReads(t *testing.T) {
 		Recorder: rules.NewSinkRecorder(func(rules.Record) {}),
 	})
 	now := time.Now().UTC()
-	queue.processed["task-issue-72.yaml"] = &api.QueueTask{Status: api.StatusCompleted, StartedAt: now.Add(-3 * time.Hour), CompletedAt: now.Add(-2 * time.Hour)}
+	queue.processed["task-issue-72-rule-fix.yaml"] = &api.QueueTask{Status: api.StatusCompleted, StartedAt: now.Add(-3 * time.Hour), CompletedAt: now.Add(-2 * time.Hour)}
 	updated := now.Add(-4 * time.Hour)
 	s.queueTasks(context.Background(), []*githubv39.Issue{{
 		Number: githubv39.Int(72), UpdatedAt: &updated,

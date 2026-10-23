@@ -17,7 +17,7 @@ import (
 func enqueueInvestigate(t *testing.T, queue *concurrency.TaskQueueManager, filename string, recovered bool) {
 	t.Helper()
 	task := &api.QueueTask{
-		Type:       api.TypePRInvestigate,
+		Type:       api.TypePRRule,
 		Number:     7,
 		URL:        "https://github.com/test-owner/test-repo/pull/7",
 		EnqueuedAt: time.Now(),
@@ -55,7 +55,7 @@ func TestStaleTaskIsDroppedNotRun(t *testing.T) {
 	dir := t.TempDir()
 	d, queue, _, coordinator, runner := testDispatcher(t, dir, nil)
 	coordinator.redecide = func(string) (bool, string) { return true, "head moved aaaaaaa→bbbbbbb" }
-	enqueueInvestigate(t, queue, "task-pr-7-investigate.yaml", false)
+	enqueueInvestigate(t, queue, "task-pr-7-rule-ci.yaml", false)
 
 	d.DispatchOnce(context.Background())
 	d.Wait()
@@ -64,10 +64,10 @@ func TestStaleTaskIsDroppedNotRun(t *testing.T) {
 		t.Fatalf("a stale task ran: %+v", calls)
 	}
 	waitForCounts(t, queue, 0, 0, 0)
-	if queue.GetProcessedTask("task-pr-7-investigate.yaml") != nil {
+	if queue.GetProcessedTask("task-pr-7-rule-ci.yaml") != nil {
 		t.Error("a dropped task was recorded as processed: it would count as an attempt")
 	}
-	if queue.TaskExists("task-pr-7-investigate.yaml") {
+	if queue.TaskExists("task-pr-7-rule-ci.yaml") {
 		t.Error("a dropped task's name is not free for the next scan")
 	}
 	var dropped *api.JournalEvent
@@ -89,7 +89,7 @@ func TestStaleTaskIsDroppedNotRun(t *testing.T) {
 func TestTaskWhoseFactsHoldRuns(t *testing.T) {
 	dir := t.TempDir()
 	d, queue, _, _, runner := testDispatcher(t, dir, nil)
-	enqueueInvestigate(t, queue, "task-pr-7-investigate.yaml", false)
+	enqueueInvestigate(t, queue, "task-pr-7-rule-ci.yaml", false)
 
 	d.DispatchOnce(context.Background())
 	d.Wait()
@@ -105,7 +105,7 @@ func TestRecoveredTaskIsNeverDropped(t *testing.T) {
 	dir := t.TempDir()
 	d, queue, _, coordinator, runner := testDispatcher(t, dir, nil)
 	coordinator.redecide = func(string) (bool, string) { return true, "head moved" }
-	enqueueInvestigate(t, queue, "task-pr-7-investigate.yaml", true)
+	enqueueInvestigate(t, queue, "task-pr-7-rule-ci.yaml", true)
 
 	d.DispatchOnce(context.Background())
 	d.Wait()
@@ -141,7 +141,7 @@ func TestAtStartDropsWhatTheEngineNoLongerDecides(t *testing.T) {
 				}
 				return false, ""
 			}
-			enqueueInvestigate(t, queue, "task-pr-7-investigate.yaml", tc.recovered)
+			enqueueInvestigate(t, queue, "task-pr-7-rule-ci.yaml", tc.recovered)
 
 			d.DispatchOnce(context.Background())
 			d.Wait()
@@ -149,11 +149,11 @@ func TestAtStartDropsWhatTheEngineNoLongerDecides(t *testing.T) {
 			if calls := runner.invocations(); len(calls) != tc.ran {
 				t.Fatalf("ran %d, want %d", len(calls), tc.ran)
 			}
-			if len(coordinator.asked) != tc.ask || (tc.ask > 0 && coordinator.asked[0] != "task-pr-7-investigate.yaml") {
+			if len(coordinator.asked) != tc.ask || (tc.ask > 0 && coordinator.asked[0] != "task-pr-7-rule-ci.yaml") {
 				t.Errorf("asked %v, want %d", coordinator.asked, tc.ask)
 			}
 			if tc.ran == 0 {
-				if queue.GetProcessedTask("task-pr-7-investigate.yaml") != nil {
+				if queue.GetProcessedTask("task-pr-7-rule-ci.yaml") != nil {
 					t.Error("a dropped task was recorded as processed")
 				}
 				if drops := queue.GetQueueResponse().Drops; len(drops) != 1 || drops[0].Reason != "the rules no longer decide ci: comments took the item" {

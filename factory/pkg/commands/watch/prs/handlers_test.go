@@ -111,10 +111,10 @@ func TestPRCommentsTriggerMetadata(t *testing.T) {
 
 	s.evaluateAll(context.Background(), prIssues)
 
-	taskFile := filepath.Join(incomingDir, "task-pr-10-comments.yaml")
+	taskFile := filepath.Join(incomingDir, "task-pr-10-rule-comments.yaml")
 	data, err := os.ReadFile(taskFile)
 	if err != nil {
-		t.Fatalf("expected task-pr-10-comments.yaml to be created: %v", err)
+		t.Fatalf("expected task-pr-10-rule-comments.yaml to be created: %v", err)
 	}
 
 	var task api.QueueTask
@@ -222,10 +222,10 @@ func TestPRInvestigateTriggerMetadata(t *testing.T) {
 
 	s.evaluateAll(context.Background(), prIssues)
 
-	taskFile := filepath.Join(incomingDir, "task-pr-10-investigate.yaml")
+	taskFile := filepath.Join(incomingDir, "task-pr-10-rule-ci.yaml")
 	data, err := os.ReadFile(taskFile)
 	if err != nil {
-		t.Fatalf("expected task-pr-10-investigate.yaml to be created: %v", err)
+		t.Fatalf("expected task-pr-10-rule-ci.yaml to be created: %v", err)
 	}
 
 	var task api.QueueTask
@@ -312,10 +312,10 @@ func TestPRIterateTriggerMetadata(t *testing.T) {
 
 	s.evaluateAll(context.Background(), prIssues)
 
-	taskFile := filepath.Join(incomingDir, "task-pr-10-iterate.yaml")
+	taskFile := filepath.Join(incomingDir, "task-pr-10-rule-conflict.yaml")
 	data, err := os.ReadFile(taskFile)
 	if err != nil {
-		t.Fatalf("expected task-pr-10-iterate.yaml to be created: %v", err)
+		t.Fatalf("expected task-pr-10-rule-conflict.yaml to be created: %v", err)
 	}
 
 	var task api.QueueTask
@@ -429,9 +429,9 @@ func TestPRCommentsAcknowledgesReviews(t *testing.T) {
 		PullRequestLinks: &githubv39.PullRequestLinks{},
 	}})
 
-	data, err := os.ReadFile(filepath.Join(tempDir, "incoming", "task-pr-10-comments.yaml"))
+	data, err := os.ReadFile(filepath.Join(tempDir, "incoming", "task-pr-10-rule-comments.yaml"))
 	if err != nil {
-		t.Fatalf("expected task-pr-10-comments.yaml to be created: %v", err)
+		t.Fatalf("expected task-pr-10-rule-comments.yaml to be created: %v", err)
 	}
 	var task api.QueueTask
 	if err := yaml.Unmarshal(data, &task); err != nil {

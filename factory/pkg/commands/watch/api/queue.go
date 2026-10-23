@@ -10,17 +10,14 @@ import (
 type TaskType string
 
 const (
-	TypeIssueFix      TaskType = "issue-fix"
-	TypePRInvestigate TaskType = "pr-investigate"
-	TypePRComments    TaskType = "pr-comments"
-	TypePRIterate     TaskType = "pr-iterate"
-	TypePRReview      TaskType = "pr-review"
-	TypeAgentChore    TaskType = "agent-chore"
-	// TypePRRule and TypeIssueRule are the task of a rule of any other name
-	// (a repository's, .agents/watch): its recipe, on a pull request or an
-	// issue, in RuleTaskFile.
+	// TypePRRule and TypeIssueRule are a rule's task - factory's or a
+	// repository's, whatever the rule - on a pull request or an issue: its
+	// recipe, in RuleTaskFile, its run named after the rule (RunNameOf).
 	TypePRRule    TaskType = "pr-rule"
 	TypeIssueRule TaskType = "issue-rule"
+	// TypeAgentChore runs factory agent create: a scheduled chore, or a
+	// workflow's step.
+	TypeAgentChore TaskType = "agent-chore"
 )
 
 // RuleTaskFile is the task file of rule's task on a pull request (pr) or
@@ -219,7 +216,7 @@ type EndedRun struct {
 // IsPRTask reports whether a given task type corresponds to an automated PR task.
 func IsPRTask(taskType TaskType) bool {
 	switch taskType {
-	case TypePRInvestigate, TypePRComments, TypePRIterate, TypePRRule:
+	case TypePRRule:
 		return true
 	default:
 		return false

@@ -63,12 +63,12 @@ Once the watcher has consolidated the active issues and PRs, the rules engine de
 
 | Item Type | Rule (file) | Task Type | Spawned Command (from the rule's `run:`) | Identity Selection |
 | :--- | :--- | :--- | :--- | :--- |
-| **Issue** | `fix`: pointed at (trigger label, pool assignee, or opened by the watcher), no linked PR, no workflow named | `issue-fix` | `factory recipe fix --apply --action open-pr --pr-labels --input draft=false` | Mapped pool bot / Load-balanced coder |
+| **Issue** | `fix`: pointed at (trigger label, pool assignee, or opened by the watcher), no linked PR, no workflow named | `issue-rule` (`task-issue-<n>-rule-fix`) | `factory recipe fix --apply --action open-pr --pr-labels --input draft=false` | Mapped pool bot / Load-balanced coder |
 | **Issue** | `workflow`: the body names a workflow definition | `agent-chore` | `factory agent create` (the `workflow` recipe) | Default fallback or mapped role |
-| **PR** | `comments`: new trusted feedback | `pr-comments` | `factory recipe care-comments --apply --action post-replies` | Match PR author (must be in `coder` pool) |
-| **PR** | `conflict`: merge conflict | `pr-iterate` | `factory recipe care-rebase --apply --action post-replies` | Match PR author (must be in `coder` pool) |
-| **PR** | `ci`: failing checks | `pr-investigate` | `factory recipe care-ci --apply --action post-replies` | Match PR author (must be in `coder` pool) |
-| **PR** | `review`: green, wants a review (`*/review`), not reviewed at its head | `pr-review` | `factory recipe review --apply --action submit-review` | Random user from `reviewer` pool |
+| **PR** | `comments`: new trusted feedback | `pr-rule` (`task-pr-<n>-rule-comments`) | `factory recipe care-comments --apply --action post-replies` | Match PR author (must be in `coder` pool) |
+| **PR** | `conflict`: merge conflict | `pr-rule` (`task-pr-<n>-rule-conflict`) | `factory recipe care-rebase --apply --action post-replies` | Match PR author (must be in `coder` pool) |
+| **PR** | `ci`: failing checks | `pr-rule` (`task-pr-<n>-rule-ci`) | `factory recipe care-ci --apply --action post-replies` | Match PR author (must be in `coder` pool) |
+| **PR** | `review`: green, wants a review (`*/review`), not reviewed at its head | `pr-rule` (`task-pr-<n>-rule-review`) | `factory recipe review --apply --action submit-review` | Random user from `reviewer` pool |
 
 The PR rules `inherit-labels`, `inactive`, `ready` and `ready-unreview`, and every give-up, queue nothing: their writes (labels, assignees, a stop label and comment) are made by `act.ApplyWrites`.
 

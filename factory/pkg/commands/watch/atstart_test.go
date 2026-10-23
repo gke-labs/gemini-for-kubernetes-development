@@ -13,14 +13,16 @@ import (
 
 func TestTaskRule(t *testing.T) {
 	for file, want := range map[string]string{
-		"task-pr-7-comments.yaml":                             "comments pr 7",
-		"task-pr-7-iterate.yaml":                              "conflict pr 7",
-		"task-pr-7-investigate.yaml":                          "ci pr 7",
-		"task-pr-7-review.yaml":                               "review pr 7",
-		"task-issue-12.yaml":                                  "fix issue 12",
+		"task-pr-7-rule-comments.yaml":                        "comments pr 7",
+		"task-pr-7-rule-conflict.yaml":                        "conflict pr 7",
+		"task-pr-7-rule-ci.yaml":                              "ci pr 7",
+		"task-pr-7-rule-review.yaml":                          "review pr 7",
+		"task-issue-12-rule-fix.yaml":                         "fix issue 12",
 		"task-workflow-kcc-greenfield-issue-13587.yaml":       "workflow issue 13587",
 		"task-chore-dependency-update-scheduler.yaml":         "  0",
-		"task-pr-7-unknown.yaml":                              " pr 7",
+		"task-pr-7-unknown.yaml":                              "  0",
+		"task-pr-7-investigate.yaml":                          "  0",
+		"task-issue-12.yaml":                                  "  0",
 		"task-workflow-kcc-greenfield-oneparent-issue-9.yaml": "workflow issue 9",
 		"task-pr-7-rule-deploy-preview.yaml":                  "deploy-preview pr 7",
 		"task-issue-12-rule-triage-2.yaml":                    "triage-2 issue 12",

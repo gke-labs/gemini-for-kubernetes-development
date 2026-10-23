@@ -25,7 +25,7 @@ func TestStartQueueHTTPServer(t *testing.T) {
 	}
 
 	taskFile := filepath.Join(incomingDir, "task-1.yaml")
-	if err := os.WriteFile(taskFile, []byte("type: issue-fix\npriority: low\n"), 0644); err != nil {
+	if err := os.WriteFile(taskFile, []byte("type: issue-rule\npriority: low\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 

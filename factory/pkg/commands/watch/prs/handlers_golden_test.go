@@ -73,8 +73,8 @@ func TestHandlersQueueTheSameTasks(t *testing.T) {
 				// Again after a run that failed on this head: no new
 				// feedback, the last run's trigger and retry count.
 				comments = prCommentAnalysis{}
-				last := &api.QueueTask{Type: api.TypePRComments, Number: 10, RetryCount: 1, TriggerEventTime: failed, Status: api.StatusFailed}
-				if err := queue.Enqueue("task-pr-10-comments.yaml", last); err != nil {
+				last := &api.QueueTask{Type: api.TypePRRule, Number: 10, RetryCount: 1, TriggerEventTime: failed, Status: api.StatusFailed}
+				if err := queue.Enqueue("task-pr-10-rule-comments.yaml", last); err != nil {
 					t.Fatal(err)
 				}
 				fn, task, err := queue.ClaimNextCandidate()
@@ -99,7 +99,7 @@ func TestHandlersQueueTheSameTasks(t *testing.T) {
 			}
 			var file string
 			var data []byte
-			for _, fn := range []string{"task-pr-10-comments.yaml", "task-pr-10-iterate.yaml", "task-pr-10-investigate.yaml", "task-pr-10-review.yaml", api.RuleTaskFile(true, 10, rule)} {
+			for _, fn := range []string{api.RuleTaskFile(true, 10, rule)} {
 				if b, err := os.ReadFile(filepath.Join(dir, "incoming", fn)); err == nil {
 					file, data = fn, b
 				}

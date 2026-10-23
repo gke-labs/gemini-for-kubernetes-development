@@ -20,16 +20,16 @@ import (
 func TestRecover_RequeuesEveryTaskUnderItsRunName(t *testing.T) {
 	enqueued := time.Date(2026, 10, 11, 7, 0, 1, 0, time.UTC)
 	runName := func(task *api.QueueTask) string {
-		if rt, ok := api.RecipeTaskOf(task.Type); ok {
-			return rt.RunName(task)
+		if task.AgentFile != "" {
+			return api.ChoreRunName(task)
 		}
-		return api.ChoreRunName(task)
+		return api.RuleRunName(task)
 	}
 	for _, tc := range []struct {
 		name, file, body string
 	}{
-		{"review", "task-pr-55-review.yaml", "type: pr-review\nnumber: 55\nurl: https://github.com/test-owner/test-repo/pull/55\ncommitSHA: abcdef0123\n"},
-		{"fix", "task-issue-56.yaml", "type: issue-fix\nnumber: 56\nurl: https://github.com/test-owner/test-repo/issues/56\n"},
+		{"review", "task-pr-55-rule-review.yaml", "type: pr-rule\nrule: review\nnumber: 55\nurl: https://github.com/test-owner/test-repo/pull/55\ncommitSHA: abcdef0123\n"},
+		{"fix", "task-issue-56-rule-fix.yaml", "type: issue-rule\nrule: fix\nnumber: 56\nurl: https://github.com/test-owner/test-repo/issues/56\n"},
 		{"chore", "task-chore-deps.yaml", "type: agent-chore\nurl: https://github.com/test-owner/test-repo\nagentFile: .agents/deps.md\nagentName: Deps\n"},
 		{"workflow", "task-workflow-x-issue-57.yaml", "type: agent-chore\nnumber: 57\nurl: https://github.com/test-owner/test-repo/issues/57\nagentFile: .agents/workflows/x.md\nsessionId: issue-57\n"},
 	} {
@@ -79,7 +79,7 @@ func TestRecover_RequeuesUnparsableProcessingFile(t *testing.T) {
 	tempDir := t.TempDir()
 	d, _, _, _, _ := testDispatcher(t, tempDir, nil)
 
-	fn := "task-issue-103.yaml"
+	fn := "task-issue-103-rule-fix.yaml"
 	if err := os.WriteFile(filepath.Join(tempDir, "processing", fn), []byte("::not yaml::"), 0644); err != nil {
 		t.Fatalf("failed to write corrupt task file: %v", err)
 	}
@@ -97,7 +97,7 @@ func TestRecover_RequeuesTaskInterruptedByShutdown(t *testing.T) {
 	tempDir := t.TempDir()
 	d, queue, sandboxes, _, runner := testDispatcher(t, tempDir, nil)
 
-	startInterruptedTask(t, d, queue, runner, "task-issue-10.yaml", 10)
+	startInterruptedTask(t, d, queue, runner, "task-issue-10-rule-fix.yaml", 10)
 	waitForCounts(t, queue, 0, 1, 0)
 
 	sandboxes.mu.Lock()

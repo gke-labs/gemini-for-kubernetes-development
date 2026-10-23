@@ -63,21 +63,21 @@ func TestWatcher_DispatchOnce_UsesWatcherAdapters(t *testing.T) {
 	w.dispatcher = w.newDispatcher(runner)
 
 	task := &api.QueueTask{
-		Type:       api.TypeIssueFix,
+		Type:       api.TypeIssueRule,
 		Number:     42,
 		URL:        "https://github.com/test-owner/test-repo/issues/42",
 		Rule:       "fix",
 		Recipe:     "fix",
 		EnqueuedAt: time.Now(),
 	}
-	if err := w.queueMgr.Enqueue("task-issue-42.yaml", task); err != nil {
+	if err := w.queueMgr.Enqueue("task-issue-42-rule-fix.yaml", task); err != nil {
 		t.Fatalf("Enqueue failed: %v", err)
 	}
 
 	w.dispatcher.DispatchOnce(context.Background())
 	w.Wait()
 
-	if got := runner.invocations(); len(got) != 1 || got[0] != "task-issue-42.yaml" {
+	if got := runner.invocations(); len(got) != 1 || got[0] != "task-issue-42-rule-fix.yaml" {
 		t.Fatalf("expected the task to be dispatched once, got %v", got)
 	}
 	inc, proc, done := w.queueMgr.GetCounts()
@@ -101,12 +101,12 @@ func TestWatcher_DispatchOnce_DropsAnUnstampedTaskItCannotDecide(t *testing.T) {
 	w.dispatcher = w.newDispatcher(runner)
 
 	task := &api.QueueTask{
-		Type:       api.TypeIssueFix,
+		Type:       api.TypeIssueRule,
 		Number:     42,
 		URL:        "https://github.com/test-owner/test-repo/issues/42",
 		EnqueuedAt: time.Now(),
 	}
-	if err := w.queueMgr.Enqueue("task-issue-42.yaml", task); err != nil {
+	if err := w.queueMgr.Enqueue("task-issue-42-rule-fix.yaml", task); err != nil {
 		t.Fatalf("Enqueue failed: %v", err)
 	}
 
@@ -127,7 +127,7 @@ func TestWatcher_DispatchOnce_DropsAnUnstampedTaskItCannotDecide(t *testing.T) {
 func TestWatcherSandboxes_ResolveName_IssueSandbox(t *testing.T) {
 	w := newTestWatcher(t, t.TempDir())
 
-	if got := w.sandboxes.ResolveName(context.Background(), api.TypeIssueFix, "fix", 42); got != "fix-test-repo-42" {
+	if got := w.sandboxes.ResolveName(context.Background(), api.TypeIssueRule, "fix", 42); got != "fix-test-repo-42" {
 		t.Errorf("ResolveName = %q, want %q", got, "fix-test-repo-42")
 	}
 }
@@ -137,7 +137,7 @@ func TestWatcherTaskCoordinator_SelectUser_PrefersTaskAssignee(t *testing.T) {
 	w.targetAssignee = "watcher-bot"
 	coordinator := &watcherTaskCoordinator{w: w}
 
-	user, err := coordinator.SelectUser(context.Background(), &api.QueueTask{Type: api.TypeIssueFix, Assignee: "coder-bot"})
+	user, err := coordinator.SelectUser(context.Background(), &api.QueueTask{Type: api.TypeIssueRule, Assignee: "coder-bot"})
 	if err != nil {
 		t.Fatalf("SelectUser returned error: %v", err)
 	}
@@ -285,7 +285,7 @@ func TestWatcherTaskCoordinator_NotifyTaskFinished_ResolvesTaskFeedback(t *testi
 
 			coordinator := &watcherTaskCoordinator{w: w}
 			coordinator.NotifyTaskFinished(context.Background(), &api.QueueTask{
-				Type:             api.TypePRComments,
+				Type:             api.TypePRRule,
 				Number:           7,
 				TriggerEventTime: trigger,
 				Acknowledge:      rules.AcknowledgeFeedback,
@@ -419,7 +419,7 @@ func TestRecover_MissingSandboxRequeuesAndReleasesLease(t *testing.T) {
 	}
 	w := newAdoptionTestWatcher(t, tempDir, ns, kubeClient)
 
-	fn := "task-issue-102.yaml"
+	fn := "task-issue-102-rule-fix.yaml"
 	writeStuckTask(t, tempDir, fn, `type: issue-fix
 number: 102
 status: Running
@@ -454,9 +454,9 @@ func TestWatcherTaskCoordinator_SelectUser_RunsAs(t *testing.T) {
 		task *api.QueueTask
 		want string
 	}{
-		"author":                     {&api.QueueTask{Type: api.TypePRComments, Recipe: "care-comments", Assignee: "coder-bot", Number: 7}, "coder-bot"},
-		"a pool member":              {&api.QueueTask{Type: api.TypeIssueFix, Recipe: "fix", Assignee: "coder-bot", Number: 7}, "coder-bot"},
-		"reviewer, not the PR's bot": {&api.QueueTask{Type: api.TypePRReview, Recipe: "review", Assignee: "coder-bot", Number: 7}, "review-bot"},
+		"author":                     {&api.QueueTask{Type: api.TypePRRule, Recipe: "care-comments", Assignee: "coder-bot", Number: 7}, "coder-bot"},
+		"a pool member":              {&api.QueueTask{Type: api.TypeIssueRule, Recipe: "fix", Assignee: "coder-bot", Number: 7}, "coder-bot"},
+		"reviewer, not the PR's bot": {&api.QueueTask{Type: api.TypePRRule, Recipe: "review", Assignee: "coder-bot", Number: 7}, "review-bot"},
 	} {
 		user, err := coordinator.SelectUser(context.Background(), tc.task)
 		if err != nil || user != tc.want {

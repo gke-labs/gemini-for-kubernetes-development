@@ -86,7 +86,7 @@ func TestEvaluate_RulesControl(t *testing.T) {
 			listed := f.listingIssueLocked()
 			f.mu.Unlock()
 			s.evaluate(context.Background(), listed)
-			if got := queue.TaskExists("task-pr-12-iterate.yaml"); got != tc.rebase {
+			if got := queue.TaskExists("task-pr-12-rule-conflict.yaml"); got != tc.rebase {
 				t.Errorf("rebase queued %v, want %v", got, tc.rebase)
 			}
 		})
@@ -165,8 +165,8 @@ func handedCI(t *testing.T, f *prFixture, set rules.Set) (*Scanner, interface {
 func TestEvaluate_EngineGivesCIUp(t *testing.T) {
 	f := &prFixture{num: 14, headSHA: "sha-1", updated: time.Now(), failing: true}
 	s, queue, record := handedCI(t, f, ciGivesUpAfter(t, 1))
-	const fn = "task-pr-14-investigate.yaml"
-	task := &api.QueueTask{Type: api.TypePRInvestigate, Number: 14, CommitSHA: "sha-1"}
+	const fn = "task-pr-14-rule-ci.yaml"
+	task := &api.QueueTask{Type: api.TypePRRule, Number: 14, CommitSHA: "sha-1"}
 	q := s.queue.(interface {
 		Enqueue(string, *api.QueueTask) error
 		StartTask(string, *api.QueueTask) error
@@ -231,7 +231,7 @@ func TestEvaluate_EngineRunsCIPastTheHandlersCount(t *testing.T) {
 	f.mu.Unlock()
 	s.evaluate(context.Background(), listed)
 
-	if !queue.TaskExists("task-pr-15-investigate.yaml") {
+	if !queue.TaskExists("task-pr-15-rule-ci.yaml") {
 		t.Error("no investigation queued on the engine's run")
 	}
 	if f.count("POST /repos/test-owner/test-repo/issues/15/labels") != 0 {
@@ -240,7 +240,7 @@ func TestEvaluate_EngineRunsCIPastTheHandlersCount(t *testing.T) {
 	assertRecorded(t, record, `"ci run"`)
 	// The task carries the engine's decision: the runner runs the rule's
 	// recipe and apply.
-	data, err := os.ReadFile(filepath.Join(dir, "incoming", "task-pr-15-investigate.yaml"))
+	data, err := os.ReadFile(filepath.Join(dir, "incoming", "task-pr-15-rule-ci.yaml"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -287,8 +287,8 @@ func handedComments(t *testing.T, f *prFixture, set rules.Set) (*Scanner, *concu
 // the handler's retry count at retries.
 func failComments(t *testing.T, queue *concurrency.TaskQueueManager, num int, head string, retries int) {
 	t.Helper()
-	fn := fmt.Sprintf("task-pr-%d-comments.yaml", num)
-	task := &api.QueueTask{Type: api.TypePRComments, Number: num, CommitSHA: head, RetryCount: retries}
+	fn := fmt.Sprintf("task-pr-%d-rule-comments.yaml", num)
+	task := &api.QueueTask{Type: api.TypePRRule, Number: num, CommitSHA: head, RetryCount: retries}
 	if err := queue.Enqueue(fn, task); err != nil {
 		t.Fatal(err)
 	}
@@ -328,7 +328,7 @@ func TestEvaluate_EngineGivesCommentsUp(t *testing.T) {
 	f.mu.Unlock()
 	s.evaluate(context.Background(), listed)
 
-	if queue.TaskExists("task-pr-41-comments.yaml") {
+	if queue.TaskExists("task-pr-41-rule-comments.yaml") {
 		t.Error("a comments retry was queued after the engine gave up")
 	}
 	f.mu.Lock()
@@ -354,7 +354,7 @@ func TestEvaluate_EngineRetriesCommentsPastTheHandlersCount(t *testing.T) {
 	f.mu.Unlock()
 	s.evaluate(context.Background(), listed)
 
-	if !queue.TaskExists("task-pr-42-comments.yaml") {
+	if !queue.TaskExists("task-pr-42-rule-comments.yaml") {
 		t.Error("no comments retry on the engine's run")
 	}
 	f.mu.Lock()

@@ -110,12 +110,12 @@ func TestServiceResolveName(t *testing.T) {
 		num      int
 		want     string
 	}{
-		{"issue task", api.TypeIssueFix, "fix", 10, "fix-test-repo-10"},
-		{"pr recipe runs in the PR's fix sandbox", api.TypePRComments, "care-comments", 55, "fix-test-repo-55"},
-		{"rebase runs in the PR's fix sandbox", api.TypePRIterate, "care-rebase", 55, "fix-test-repo-55"},
+		{"issue task", api.TypeIssueRule, "fix", 10, "fix-test-repo-10"},
+		{"pr recipe runs in the PR's fix sandbox", api.TypePRRule, "care-comments", 55, "fix-test-repo-55"},
+		{"rebase runs in the PR's fix sandbox", api.TypePRRule, "care-rebase", 55, "fix-test-repo-55"},
 		// A credentials: clone recipe has a sandbox of its own, whatever
 		// the task's type: review's, and a repository rule's run of it.
-		{"review runs in the review recipe's sandbox", api.TypePRReview, "review", 55, "review-test-repo-55"},
+		{"review runs in the review recipe's sandbox", api.TypePRRule, "review", 55, "review-test-repo-55"},
 		{"a rule task of a clone recipe too", api.TypePRRule, "review", 55, "review-test-repo-55"},
 		{"a rule task of another recipe in the PR's", api.TypePRRule, "summarize", 55, "fix-test-repo-55"},
 	}
@@ -150,7 +150,7 @@ func TestServiceResolveNamePRRecipeFollowsFixSandbox(t *testing.T) {
 			svc := NewService(ServiceConfig{Namespace: testNamespace, Owner: "test-owner", Repo: "test-repo"}, ServiceDeps{
 				Kube: newFakeKubeClient(t, tc.sandboxes...),
 			})
-			if got := svc.ResolveName(context.Background(), api.TypePRInvestigate, "care-ci", 55); got != tc.want {
+			if got := svc.ResolveName(context.Background(), api.TypePRRule, "care-ci", 55); got != tc.want {
 				t.Errorf("ResolveName = %q, want %q", got, tc.want)
 			}
 		})
@@ -171,7 +171,7 @@ func TestServiceResolveTaskName(t *testing.T) {
 		{"scheduled chore", api.QueueTask{Type: api.TypeAgentChore, AgentFile: ".agents/kcc-release.md", AgentName: "KCC Release Scheduler"}, "agent-test-repo-kcc-release-scheduler"},
 		{"chore queued without its name", api.QueueTask{Type: api.TypeAgentChore, AgentFile: ".agents/dependency-agent.md"}, "agent-test-repo-dependency-agent"},
 		{"workflow", api.QueueTask{Type: api.TypeAgentChore, Number: 12700, AgentFile: ".agents/workflows/kcc-example.txt", SessionID: "issue-12700"}, "wf-issue-12700"},
-		{"fix", api.QueueTask{Type: api.TypeIssueFix, Number: 10}, "fix-test-repo-10"},
+		{"fix", api.QueueTask{Type: api.TypeIssueRule, Number: 10}, "fix-test-repo-10"},
 	} {
 		if got := svc.ResolveTaskName(context.Background(), &tc.task); got != tc.want {
 			t.Errorf("%s: ResolveTaskName = %q, want %q", tc.name, got, tc.want)
@@ -188,7 +188,7 @@ func TestServiceResolveNamePrefersWorkflowSandbox(t *testing.T) {
 		Kube: newFakeKubeClient(t, newSandbox("wf-issue-10", nil)),
 	})
 
-	if got := svc.ResolveName(context.Background(), api.TypeIssueFix, "fix", 10); got != "wf-issue-10" {
+	if got := svc.ResolveName(context.Background(), api.TypeIssueRule, "fix", 10); got != "wf-issue-10" {
 		t.Errorf("expected the existing workflow sandbox to win, got %q", got)
 	}
 }

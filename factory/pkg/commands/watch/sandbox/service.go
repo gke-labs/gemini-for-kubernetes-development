@@ -127,7 +127,7 @@ func (s *Service) ResolveTaskName(ctx context.Context, task *api.QueueTask) stri
 // fall back to the name `factory recipe` creates: fix-<repo>-<pr>
 // (EnsurePRSandbox).
 func (s *Service) ResolveName(ctx context.Context, taskType api.TaskType, recipeName string, num int) string {
-	if taskType == api.TypeIssueFix || taskType == api.TypeIssueRule {
+	if taskType == api.TypeIssueRule {
 		wfName := fmt.Sprintf("wf-issue-%d", num)
 		if s.kube != nil {
 			if _, err := s.kube.DynamicClient.Resource(k8s.SandboxGVR).Namespace(s.namespace).Get(ctx, wfName, metav1.GetOptions{}); err == nil {

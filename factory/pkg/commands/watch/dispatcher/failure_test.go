@@ -55,7 +55,7 @@ func TestCLIRunner_Run_ReturnsTheLoggedError(t *testing.T) {
 	r.execCommand = func(ctx context.Context, name string, args ...string) *exec.Cmd {
 		return exec.CommandContext(ctx, "sh", "-c", `echo "Applying the result of task t..."; echo "Error: applying the Change: replying to comment 1: nope"; exit 1`)
 	}
-	err := r.Run(context.Background(), "task-pr-1-comments.yaml", &api.QueueTask{Type: api.TypePRComments, Number: 1, Recipe: "care-comments"}, "")
+	err := r.Run(context.Background(), "task-pr-1-rule-comments.yaml", &api.QueueTask{Type: api.TypePRRule, Number: 1, Recipe: "care-comments"}, "")
 	var runErr *RunError
 	if !errors.As(err, &runErr) {
 		t.Fatalf("Run = %v, want a *RunError", err)

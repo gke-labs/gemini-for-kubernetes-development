@@ -91,7 +91,7 @@ To prevent every issue that references a skill or prompt from launching a persis
     *   `factory watch` dynamically fetches the first 2,000 characters of the referenced file from GitHub using the Repository GetContents API.
     *   It scans the file header/front-matter for workflow keywords: `mode: workflow`, `mode: "workflow"`, or `AGENT_MODE=workflow`.
     *   If found, it is classified as a workflow.
-3.  **Fallback**: If neither condition is met, the path is assumed to be a standard task prompt, and the issue is queued as a standard single-shot `issue-fix` task.
+3.  **Fallback**: If neither condition is met, the path is assumed to be a standard task prompt, and the issue is queued as the fix rule's task (`issue-rule`, `task-issue-<n>-rule-fix.yaml`).
 
 ### 2. Session Isolation & Sandbox Naming
 

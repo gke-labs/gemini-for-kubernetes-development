@@ -1,6 +1,6 @@
-file: task-pr-10-review.yaml
+file: task-pr-10-rule-review.yaml
 task:
-    type: pr-review
+    type: pr-rule
     url: https://github.com/test-owner/test-repo/pull/10
     number: 10
     priority: medium

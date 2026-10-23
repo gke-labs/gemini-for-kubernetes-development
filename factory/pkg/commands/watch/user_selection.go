@@ -54,13 +54,13 @@ func (w *Watcher) selectUserForTask(ctx context.Context, taskType api.TaskType, 
 	}
 
 	// 2. Select bot based on new vs existing PR/Issue
-	isIssueTask := taskType == api.TypeIssueFix || taskType == api.TypeAgentChore
+	isIssueTask := taskType == api.TypeIssueRule || taskType == api.TypeAgentChore
 	if isIssueTask {
 		if prNum > 0 {
 			// A. First check if a Sandbox already exists for this task on the cluster
 			// and has been pinned to a specific user.
 			var sandboxName string
-			if taskType == api.TypeIssueFix {
+			if taskType == api.TypeIssueRule {
 				sandboxName = fmt.Sprintf("fix-%s-%d", w.Repo.Repo, prNum)
 			} else if taskType == api.TypeAgentChore {
 				sandboxName = fmt.Sprintf("wf-issue-%d", prNum)
@@ -146,41 +146,17 @@ func (w *Watcher) selectUserForTask(ctx context.Context, taskType api.TaskType, 
 	return "", nil
 }
 
-// roleOfTaskType is the role a task no rule decided runs as, by its type
-// (the factory config's roles.<role>.tasks, else the watch's own mapping);
-// "" for none.
-func (w *Watcher) roleOfTaskType(ctx context.Context, taskType api.TaskType, prNum int) string {
-	// 1. Determine role for task type
-	role := ""
-	for roleName, rCfg := range w.cfg.Roles {
-		for _, t := range rCfg.Tasks {
-			if strings.EqualFold(t, string(taskType)) {
-				role = roleName
-				break
-			}
-		}
-		if role != "" {
-			break
-		}
+// roleOfTaskType is the role a task with no recipe runs as: an agent chore
+// (a scheduled chore, a workflow's step queued with none) an agent, or a
+// coder without an agent pool; "" for any other.
+func (w *Watcher) roleOfTaskType(_ context.Context, taskType api.TaskType, _ int) string {
+	if taskType != api.TypeAgentChore {
+		return ""
 	}
-
-	if role == "" {
-		switch {
-		case taskType == api.TypeAgentChore:
-			if rCfg, ok := w.cfg.Roles["agent"]; ok && len(rCfg.Users) > 0 {
-				role = "agent"
-			} else {
-				role = "coder"
-			}
-		case api.IsPRTask(taskType):
-			role = w.authorRole(ctx, prNum)
-		case taskType == api.TypeIssueFix:
-			role = "coder"
-		case taskType == api.TypePRReview:
-			role = "reviewer"
-		}
+	if rCfg, ok := w.cfg.Roles["agent"]; ok && len(rCfg.Users) > 0 {
+		return "agent"
 	}
-	return role
+	return "coder"
 }
 
 // authorRole is the pool the PR's author is in: agent when the agent pool

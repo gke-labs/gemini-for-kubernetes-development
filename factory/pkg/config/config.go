@@ -24,8 +24,9 @@ type ChoresConfig struct {
 	Mode string `yaml:"mode"`
 }
 
+// RoleConfig is a role's pool of bot users. Which role a task runs as is
+// its recipe's (as:).
 type RoleConfig struct {
-	Tasks []string `yaml:"tasks"`
 	Users []string `yaml:"users"`
 }
 

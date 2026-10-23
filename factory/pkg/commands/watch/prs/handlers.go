@@ -36,58 +36,36 @@ type prContext struct {
 	comments prCommentAnalysis
 }
 
-// prRuleTask is how a PR rule's task is queued: its file
-// (task-pr-<n>-<suffix>.yaml) and type, what the logs call it, whether the
-// DRY_RUN environment skips it, and its trigger - the rest of the task the
-// rule's decision does not say (assignee, when and why; the phase is the
-// rule's policy.phase). Factory's
-// four pr-care rules have their own (prRuleTasks); any other rule's is a
-// rule task (ruleTaskOf).
-type prRuleTask struct {
-	rule, suffix string
-	typ          api.TaskType
-	what         string
-	envDryRun    bool
-	trigger      func(ctx context.Context, s *Scanner, pc *prContext, filename string) taskOptions
+// prTrigger is a PR rule's trigger: what its task's decision does not say
+// - its assignee, when and why it was decided (diagnostics: the queue's
+// order, the notes the logs and the queue's readers show). Factory's
+// pr-care rules time theirs from what they answer (prTriggers); any other
+// rule's is ruleTrigger's.
+type prTrigger func(ctx context.Context, s *Scanner, pc *prContext, filename string) taskOptions
+
+// prTriggers are the triggers of the rules that say more than the rule
+// trigger: when the feedback, the conflict, the failure or the green
+// checks they answer happened.
+var prTriggers = map[string]prTrigger{
+	"comments": commentsTrigger,
+	"conflict": conflictTrigger,
+	"ci":       ciTrigger,
+	"review":   reviewTrigger,
 }
 
-// prRuleTasks are factory's pr-care rules' tasks, in the order their
-// history is read (fillRuns).
-var prRuleTasks = []prRuleTask{
-	{rule: "comments", suffix: "comments", typ: api.TypePRComments, what: "address-comments", envDryRun: true, trigger: commentsTrigger},
-	{rule: "conflict", suffix: "iterate", typ: api.TypePRIterate, what: "rebase", trigger: conflictTrigger},
-	{rule: "ci", suffix: "investigate", typ: api.TypePRInvestigate, what: "investigate", trigger: ciTrigger},
-	{rule: "review", suffix: "review", typ: api.TypePRReview, what: "review", envDryRun: true, trigger: reviewTrigger},
-}
-
-// prRuleTaskOf is rule's task, factory's or a rule task; false for a rule
-// that runs no recipe (its decision is its writes).
-func (s *Scanner) prRuleTaskOf(rule string) (prRuleTask, bool) {
-	for _, t := range prRuleTasks {
-		if t.rule == rule {
-			return t, true
+// triggerOf is rule's trigger.
+func triggerOf(rule string) prTrigger {
+	if t, ok := prTriggers[rule]; ok {
+		return t
+	}
+	return func(_ context.Context, _ *Scanner, pc *prContext, _ string) taskOptions {
+		return taskOptions{
+			// Where the rule's policy sets no phase.
+			Phase:         api.PhaseComments,
+			Assignee:      pc.taskAssignee,
+			TriggerReason: api.TriggerReasonRuleDecided,
+			TriggerNotes:  fmt.Sprintf("The %s rule decided to run on commit %s", rule, pc.shortSHA),
 		}
-	}
-	if r := s.rules.Set().Named(rule); r == nil || r.Run.Recipe == "" {
-		return prRuleTask{}, false
-	}
-	return ruleTaskOf(rule), true
-}
-
-// ruleTaskOf is the task of a rule factory does not handle by name (a
-// repository's, .agents/watch): api.RuleTaskFile, type pr-rule.
-func ruleTaskOf(rule string) prRuleTask {
-	return prRuleTask{
-		rule: rule, suffix: "rule-" + rule, typ: api.TypePRRule, what: "the " + rule + " rule's", envDryRun: true,
-		trigger: func(_ context.Context, _ *Scanner, pc *prContext, _ string) taskOptions {
-			return taskOptions{
-				// Where the rule's policy sets no phase.
-				Phase:         api.PhaseComments,
-				Assignee:      pc.taskAssignee,
-				TriggerReason: api.TriggerReasonRuleDecided,
-				TriggerNotes:  fmt.Sprintf("The %s rule decided to run on commit %s", rule, pc.shortSHA),
-			}
-		},
 	}
 }
 
@@ -99,46 +77,46 @@ func ruleTaskOf(rule string) prRuleTask {
 // means a sandbox probe or enqueue failed, and the pull request is looked
 // at again next cycle.
 func (s *Scanner) queueRuleTask(ctx context.Context, pc *prContext, rule string) bool {
-	t, ok := s.prRuleTaskOf(rule)
-	if !ok {
+	if r := s.rules.Set().Named(rule); r == nil || r.Run.Recipe == "" {
 		s.actOn(ctx, pc.prIssue, rule)
 		return true
 	}
-	if t.envDryRun && os.Getenv("DRY_RUN") == "true" {
+	if os.Getenv("DRY_RUN") == "true" {
 		return true
 	}
 	num := pc.prIssue.GetNumber()
-	filename := fmt.Sprintf("task-pr-%d-%s.yaml", num, t.suffix)
+	filename := api.RuleTaskFile(true, num, rule)
+	what := "the " + rule + " rule's"
 	if s.queue.TaskExists(filename) {
 		return true
 	}
 
-	sandboxName := s.sandboxes.ResolveName(ctx, t.typ, s.rules.Set().Named(rule).Run.Recipe, num)
+	sandboxName := s.sandboxes.ResolveName(ctx, api.TypePRRule, s.rules.Set().Named(rule).Run.Recipe, num)
 	running, err := s.sandboxes.IsTaskRunning(ctx, sandboxName)
 	if err != nil {
 		klog.Errorf("Failed to check if sandbox %s is running: %v", sandboxName, err)
 		return false
 	} else if running {
 		s.rec.Gated("its sandbox is busy")
-		klog.Infof("Skipping PR #%d %s because there is an in-flight sandbox %s.", num, t.what, sandboxName)
+		klog.Infof("Skipping PR #%d %s task because there is an in-flight sandbox %s.", num, what, sandboxName)
 		return false
 	}
 
-	opts := t.trigger(ctx, s, pc, filename)
-	opts.Type, opts.PR, opts.PRIssue, opts.CommitSHA = t.typ, pc.pr, pc.prIssue, pc.headSHA
+	opts := triggerOf(rule)(ctx, s, pc, filename)
+	opts.Type, opts.PR, opts.PRIssue, opts.CommitSHA = api.TypePRRule, pc.pr, pc.prIssue, pc.headSHA
 	if r := s.rules.Set().Named(rule); r != nil && r.Run.Asks(rules.ReviewInstructions) {
 		opts.Instructions = reviewInstructions(ctx, pc)
 	}
 	task := s.newTask(opts)
 	if s.cfg.DryRun {
-		fmt.Printf("[DRYRUN] Would queue %s task for PR #%d: %s\n", t.what, num, pc.prURL)
+		fmt.Printf("[DRYRUN] Would queue %s task for PR #%d: %s\n", what, num, pc.prURL)
 		return true
 	}
-	fmt.Printf("Queueing %s task for PR #%d...\n", t.what, num)
+	fmt.Printf("Queueing %s task for PR #%d...\n", what, num)
 	s.rec.Decided(rule, rules.OutcomeRun)
 	s.stampDecision(task, rule)
 	if err := s.queue.Enqueue(filename, task); err != nil {
-		klog.Errorf("Failed to queue %s task for PR #%d: %v", t.what, num, err)
+		klog.Errorf("Failed to queue %s task for PR #%d: %v", what, num, err)
 		return false
 	}
 	// A comments task's feedback is acknowledged (the reactions, the

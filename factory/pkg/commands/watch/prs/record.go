@@ -2,7 +2,6 @@ package prs
 
 import (
 	"context"
-	"fmt"
 	"slices"
 	"time"
 
@@ -93,12 +92,8 @@ func (s *Scanner) recordRuns(num int) {
 // its tasks that ended, and the rules whose task is queued or running.
 func (s *Scanner) fillRuns(it *rules.Item, num int) {
 	h, _ := s.queue.(runHistory)
-	tasks := slices.Clone(prRuleTasks)
-	for _, r := range s.ruleTaskRules() {
-		tasks = append(tasks, ruleTaskOf(r))
-	}
-	for _, t := range tasks {
-		filename := fmt.Sprintf("task-pr-%d-%s.yaml", num, t.suffix)
+	for _, rule := range s.ruleTaskRules() {
+		filename := api.RuleTaskFile(true, num, rule)
 		var ended []rules.PastRun
 		if h != nil {
 			ended = pastRuns(h.EndedRuns(filename))
@@ -108,9 +103,9 @@ func (s *Scanner) fillRuns(it *rules.Item, num int) {
 		if last := s.queue.GetProcessedTask(filename); last != nil {
 			lastStart, lastEnd, failed, head = last.StartedAt, last.CompletedAt, last.Status == api.StatusFailed, last.CommitSHA
 		}
-		it.Runs = append(it.Runs, rules.PastRuns(t.rule, ended, lastStart, lastEnd, failed, head)...)
+		it.Runs = append(it.Runs, rules.PastRuns(rule, ended, lastStart, lastEnd, failed, head)...)
 		if s.queue.TaskExists(filename) {
-			it.Queued = append(it.Queued, t.rule)
+			it.Queued = append(it.Queued, rule)
 		}
 	}
 }
@@ -175,10 +170,6 @@ func logins(users []*githubv39.User) []string {
 	return out
 }
 
-// prCareRules are the pr-care rules that take the PR, in the scanner's
-// order: at most one decides.
-var prCareRules = []string{"comments", "conflict", "ci", "review"}
-
 // engineDecide is the engine's decisions on the pull request being
 // evaluated, from the facts recorded so far.
 func (s *Scanner) engineDecide() []rules.Decision {
@@ -196,29 +187,26 @@ func (s *Scanner) engineOutcome(rule string) string {
 	return ""
 }
 
-// engineCareRule is the pr-care rule the engine decided, "" when none:
-// they take the PR, so there is at most one. A rule factory does not
-// handle by name that takes the PR (a repository's) is one too, carried
-// out as a rule task (queueRuleTask).
+// engineCareRule is the rule the engine decided that takes the PR, ""
+// when none: they take the PR, so there is at most one. A rule that takes
+// it runs a recipe (a rule task, queueRuleTask), or, a repository's,
+// writes; factory's write rules that take it (inactive) are carried out
+// before.
 func (s *Scanner) engineCareRule() string {
 	for _, d := range s.engineCare {
-		if slices.Contains(prCareRules, d.Rule) {
-			return d.Rule
-		}
-		if r := s.rules.Set().Named(d.Rule); r != nil && !rules.IsBuiltinName(d.Rule) && r.IsExclusive() {
+		if r := s.rules.Set().Named(d.Rule); r != nil && r.IsExclusive() && (r.Run.Recipe != "" || !rules.IsBuiltinName(d.Rule)) {
 			return d.Rule
 		}
 	}
 	return ""
 }
 
-// ruleTaskRules are the rules on pull requests that run a recipe and that
-// factory does not handle by name (a repository's): each runs as a rule
-// task, task-pr-<n>-rule-<name>.yaml.
+// ruleTaskRules are the rules on pull requests that run a recipe: each
+// runs as a rule task, task-pr-<n>-rule-<name>.yaml.
 func (s *Scanner) ruleTaskRules() []string {
 	var names []string
 	for _, r := range s.rules.Set() {
-		if r.On == rules.OnPR && r.Run.Recipe != "" && !rules.IsBuiltinName(r.Name) {
+		if r.On == rules.OnPR && r.Run.Recipe != "" {
 			names = append(names, r.Name)
 		}
 	}

@@ -51,8 +51,8 @@ func TestQueueTasks_RecordsDecisionsTheRulesReplay(t *testing.T) {
 		}
 	}
 	// 8 finished a minute ago: in its cooldown.
-	queue.finish("task-issue-8.yaml", &api.QueueTask{
-		Type: api.TypeIssueFix, Number: 8, Status: api.StatusCompleted,
+	queue.finish("task-issue-8-rule-fix.yaml", &api.QueueTask{
+		Type: api.TypeIssueRule, Number: 8, Status: api.StatusCompleted,
 		StartedAt: time.Now().Add(-time.Hour), CompletedAt: time.Now().Add(-time.Minute),
 	})
 	s.queueTasks(context.Background(), []*githubv39.Issue{
@@ -86,7 +86,7 @@ func TestQueueTasks_RecordsDecisionsTheRulesReplay(t *testing.T) {
 	if r := byNumber[10]; r.Item.LinkedPR != "open" || len(r.Decided) != 0 {
 		t.Errorf("10 = %+v, want an open linked PR and nothing decided", r)
 	}
-	if _, ok := queue.enqueued["task-issue-7.yaml"]; !ok {
+	if _, ok := queue.enqueued["task-issue-7-rule-fix.yaml"]; !ok {
 		t.Errorf("recording changed what was queued: %v", queue.enqueued)
 	}
 

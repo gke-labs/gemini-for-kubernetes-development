@@ -1,6 +1,6 @@
-file: task-pr-10-iterate.yaml
+file: task-pr-10-rule-conflict.yaml
 task:
-    type: pr-iterate
+    type: pr-rule
     url: https://github.com/test-owner/test-repo/pull/10
     number: 10
     priority: medium
@@ -13,7 +13,7 @@ task:
     status: Pending
     commitSHA: 0123456789abcdef
     startComment: "\U0001F916 AI Factory started resolving merge conflicts / rebasing this pull request in a sandbox.\n\nNote: We recommend waiting for the 'ready-for-human' label before leaving review comments. Comments added while the system is actively working may be associated with outdated commits once a new commit is pushed, causing them to be ignored."
-    runName: iterate-10-0123456-<enqueued>
+    runName: conflict-10-0123456-<enqueued>
     rule: conflict
     recipe: care-rebase
     apply: post-replies

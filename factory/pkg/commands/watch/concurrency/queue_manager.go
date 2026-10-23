@@ -209,7 +209,7 @@ func (m *TaskQueueManager) LoadFromDisk() error {
 				klog.Errorf("Failed to load task file %s: %v", filePath, err)
 				continue
 			}
-			onTask(e.Name(), t, modTime)
+			onTask(m.migrateTaskFile(dir, e.Name(), t), t, modTime)
 		}
 		return nil
 	}
@@ -594,11 +594,10 @@ func (m *TaskQueueManager) HasActiveIssueTask(issueNumber int) bool {
 	return false
 }
 
-// issueTaskFile reports whether filename names a task for issue n: its
-// fix, a rule's (api.RuleTaskFile) or a workflow step.
+// issueTaskFile reports whether filename names a task for issue n: a
+// rule's (api.RuleTaskFile, the fix's included) or a workflow step.
 func issueTaskFile(filename string, n int) bool {
-	return filename == fmt.Sprintf("task-issue-%d.yaml", n) ||
-		strings.HasPrefix(filename, fmt.Sprintf("task-issue-%d-rule-", n)) ||
+	return strings.HasPrefix(filename, fmt.Sprintf("task-issue-%d-rule-", n)) ||
 		(strings.HasPrefix(filename, "task-workflow-") && strings.HasSuffix(filename, fmt.Sprintf("-issue-%d.yaml", n)))
 }
 
@@ -778,6 +777,33 @@ func (m *TaskQueueManager) writeJournalEvent(taskFilename string, task *api.Queu
 	if _, err := f.Write(append(data, '\n')); err != nil {
 		klog.Errorf("Failed to write journal event: %v", err)
 	}
+}
+
+// migrateTaskFile brings a task file of a legacy type over (api.MigrateTask)
+// - renamed to the rule task's file it is now, rewritten as one - and is
+// the name it goes by: a watch upgraded from one runs it, and finds its
+// runs, as the rule task it is. Any other task file stands as it is.
+func (m *TaskQueueManager) migrateTaskFile(dir, name string, t *api.QueueTask) string {
+	id := strings.TrimSuffix(name, ".yaml")
+	if !api.MigrateTask(t, id) {
+		return name
+	}
+	newID, _ := api.MigratedTaskID(id)
+	newName := newID + ".yaml"
+	if m.dryRun {
+		return newName
+	}
+	if err := writeTaskAtomically(dir, newName, t); err != nil {
+		klog.Errorf("Migrating task %s to %s: %v", name, newName, err)
+		return name
+	}
+	if newName != name {
+		if err := os.Remove(filepath.Join(dir, name)); err != nil && !os.IsNotExist(err) {
+			klog.Warningf("Migrating task %s: removing it: %v", name, err)
+		}
+	}
+	klog.Infof("Migrated task %s to %s (%s, rule %s)", name, newName, t.Type, t.Rule)
+	return newName
 }
 
 // writeTaskAtomically writes a task struct into dir as filename atomically.
@@ -983,7 +1009,11 @@ func (m *TaskQueueManager) loadRunsLocked() {
 		if started.Before(cutoff) {
 			continue
 		}
-		m.runs[je.TaskID] = append(m.runs[je.TaskID], api.EndedRun{StartedAt: started, Failed: je.Event == string(api.StatusFailed)})
+		// A run journalled under a legacy task's name is the rule task's
+		// it is now (api.MigratedTaskID), so it counts toward its
+		// cooldown and give-up.
+		id, _ := api.MigratedTaskID(je.TaskID)
+		m.runs[id] = append(m.runs[id], api.EndedRun{StartedAt: started, Failed: je.Event == string(api.StatusFailed)})
 	}
 }
 

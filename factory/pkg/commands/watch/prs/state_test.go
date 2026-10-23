@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/api"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/watch/rules"
 )
 
 // A restart recovers when feedback was last addressed from the finished
@@ -14,10 +15,10 @@ func TestProcessedPRStatesRecoverTheAddressedTime(t *testing.T) {
 	early := time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC)
 	late := early.Add(time.Hour)
 	states := processedPRStates(map[string]*api.QueueTask{
-		"task-pr-7-comments.yaml":    {EnqueuedAt: late, Status: api.StatusFailed},
-		"task-pr-7-investigate.yaml": {EnqueuedAt: late, CompletedAt: late, CommitSHA: "abc"},
-		"task-pr-8-review.yaml":      {EnqueuedAt: early, CompletedAt: early},
-		"task-issue-9.yaml":          {EnqueuedAt: early},
+		"task-pr-7-rule-comments.yaml": {EnqueuedAt: late, Status: api.StatusFailed, Acknowledge: rules.AcknowledgeFeedback},
+		"task-pr-7-rule-ci.yaml":       {EnqueuedAt: late, CompletedAt: late, CommitSHA: "abc"},
+		"task-pr-8-rule-review.yaml":   {EnqueuedAt: early, CompletedAt: early},
+		"task-issue-9-rule-fix.yaml":   {EnqueuedAt: early},
 	})
 	if got := states[7].lastCommentAddressedTime; !got.Equal(late) {
 		t.Errorf("#7 addressed at %v, want %v", got, late)

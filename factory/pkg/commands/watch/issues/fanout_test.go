@@ -83,7 +83,7 @@ func TestQueueTasks_SkipsFanoutParents(t *testing.T) {
 		got = append(got, name)
 	}
 	slices.Sort(got)
-	if len(got) != 2 || got[0] != "task-issue-101.yaml" || got[1] != "task-issue-102.yaml" {
-		t.Errorf("queued %v, want both children, task-issue-101.yaml and task-issue-102.yaml", got)
+	if len(got) != 2 || got[0] != "task-issue-101-rule-fix.yaml" || got[1] != "task-issue-102-rule-fix.yaml" {
+		t.Errorf("queued %v, want both children, task-issue-101-rule-fix.yaml and task-issue-102-rule-fix.yaml", got)
 	}
 }
