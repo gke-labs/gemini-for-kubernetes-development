@@ -30,7 +30,8 @@ func (w *Watcher) selectUserForTask(ctx context.Context, taskType api.TaskType, 
 	// recipe (a scheduled chore, a nudged workflow step queued before),
 	// its type's.
 	var role string
-	switch as := w.recipeAs(recipeName); as {
+	as := w.recipeAs(recipeName)
+	switch as {
 	case "":
 		role = w.roleOfTaskType(ctx, taskType, prNum)
 	case recipe.AsAuthor:
@@ -137,10 +138,18 @@ func (w *Watcher) selectUserForTask(ctx context.Context, taskType api.TaskType, 
 				break
 			}
 		}
-		if !inPool {
+		switch {
+		case inPool:
+			return author, nil
+		case as == recipe.AsAuthor || as == "":
+			// The PR's author runs it (it pushes to the PR's branch): one
+			// outside the pool cannot.
 			return "", fmt.Errorf("PR author '%s' is not in the configured bot pool for role '%s'", author, role)
 		}
-		return author, nil
+		// A recipe that names a pool (adopt: coder) on someone else's PR:
+		// any of the pool.
+		idx := time.Now().UnixNano() % int64(len(roleCfg.Users))
+		return roleCfg.Users[idx], nil
 	}
 
 	return "", nil
