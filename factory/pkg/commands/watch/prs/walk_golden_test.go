@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -29,7 +30,7 @@ func TestEvaluate_WalkGolden(t *testing.T) {
 		t.Fatal(err)
 	}
 	// inactive made to hold on any pool PR (the fixture's activity is
-	// always now).
+	// always now), still on its history.
 	alwaysInactive := func(t *testing.T) rules.Set {
 		var inactive rules.Rule
 		for _, r := range base {
@@ -37,7 +38,7 @@ func TestEvaluate_WalkGolden(t *testing.T) {
 				inactive = *r
 			}
 		}
-		inactive.When.InactiveFor = rules.Duration{}
+		inactive.When.InactiveFor = rules.Duration{Duration: time.Nanosecond}
 		set, err := rules.Overlay(base, []*rules.Rule{&inactive})
 		if err != nil {
 			t.Fatal(err)
@@ -48,24 +49,24 @@ func TestEvaluate_WalkGolden(t *testing.T) {
 	cases := []struct {
 		name   string
 		set    func(*testing.T) rules.Set
-		f      prFixture
+		f      *prFixture
 		active bool
 	}{
-		{name: "ready", f: prFixture{body: "Fixes #7"}},
-		{name: "inherit-labels", f: prFixture{body: "Fixes #7", refLabels: []string{"area/kcc", "factory/review"}}},
-		{name: "inherit-stop", f: prFixture{body: "Fixes #7", refLabels: []string{"factory/stop"}}},
-		{name: "inactive", set: alwaysInactive, f: prFixture{body: "Fixes #7"}},
-		{name: "task-active", f: prFixture{body: "Fixes #7", refLabels: []string{"area/kcc"}}, active: true},
-		{name: "ci", f: prFixture{failing: true}},
-		{name: "pending", f: prFixture{pending: true}},
-		{name: "conflict", f: prFixture{mergeable: &no}},
-		{name: "comments", f: prFixture{comments: []*githubv39.IssueComment{{
+		{name: "ready", f: &prFixture{body: "Fixes #7"}},
+		{name: "inherit-labels", f: &prFixture{body: "Fixes #7", refLabels: []string{"area/kcc", "factory/review"}}},
+		{name: "inherit-stop", f: &prFixture{body: "Fixes #7", refLabels: []string{"factory/stop"}}},
+		{name: "inactive", set: alwaysInactive, f: &prFixture{body: "Fixes #7"}},
+		{name: "task-active", f: &prFixture{body: "Fixes #7", refLabels: []string{"area/kcc"}}, active: true},
+		{name: "ci", f: &prFixture{failing: true}},
+		{name: "pending", f: &prFixture{pending: true}},
+		{name: "conflict", f: &prFixture{mergeable: &no}},
+		{name: "comments", f: &prFixture{comments: []*githubv39.IssueComment{{
 			ID: githubv39.Int64(5), Body: githubv39.String("please rename this"),
 			User:              &githubv39.User{Login: githubv39.String("alice")},
 			AuthorAssociation: githubv39.String("MEMBER"),
 			CreatedAt:         &[]time.Time{time.Now().Add(time.Hour)}[0],
 		}}}},
-		{name: "ready-already", f: prFixture{readyForHuman: true}},
+		{name: "ready-already", f: &prFixture{readyForHuman: true}},
 	}
 	sha := regexp.MustCompile(`[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]+Z?`)
 	for _, tc := range cases {
@@ -145,6 +146,69 @@ func TestEvaluate_WalkGolden(t *testing.T) {
 			}
 			if string(got) != string(want) {
 				t.Errorf("evaluated\n%s\nwant\n%s", got, want)
+			}
+		})
+	}
+}
+
+// A repository's write rule is carried out where its order and its facts
+// put it: before inactive on the PR's own facts - so on a PR whose task is
+// active too, where the evaluation stops before the history - and after
+// the care rules once everything is read.
+func TestEvaluate_RepositoryWriteRulesByOrder(t *testing.T) {
+	base, err := rules.Builtin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo, err := rules.LoadFiles(map[string][]byte{
+		"early.yaml": []byte("name: early\non: pr\norder: 3\nwhen: {author: pool}\nrun: {label: [seen]}\n"),
+		"late.yaml":  []byte("name: late\non: pr\norder: 45\nwhen: {author: pool, checks: green}\nrun: {label: [green]}\n"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	set, err := rules.Overlay(base, repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	control, err := rules.NewControl(nil, set)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name   string
+		active bool
+		want   []string
+	}{
+		// The task active: early, on the listing and the PR alone; no
+		// history or checks read.
+		{"task active", true, []string{"seen"}},
+		// Nothing active, green: early first, late with ready at the end.
+		{"green", false, []string{"seen", "green", "factory/ready-for-human"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := &prFixture{num: 40, headSHA: "sha-40", updated: time.Now()}
+			dir := t.TempDir()
+			s, queue := newTestScanner(t, dir, testOpts{
+				GitHub: f.start(t), BotUsers: []string{"bot1"}, GitHubLogin: "watcher", TriggerLabel: "factory",
+				Recorder: rules.NewRecorder(filepath.Join(dir, "d.jsonl"), 0, nil), Rules: control,
+			})
+			if tc.active {
+				if err := queue.Enqueue(api.RuleTaskFile(true, 40, "ci"), &api.QueueTask{Type: api.TypePRRule, Number: 40, Rule: "ci", Recipe: "care-ci"}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			f.mu.Lock()
+			listed := f.listingIssueLocked()
+			f.mu.Unlock()
+			s.evaluate(context.Background(), listed)
+			f.mu.Lock()
+			defer f.mu.Unlock()
+			if !slices.Equal(f.added, tc.want) {
+				t.Errorf("added %v, want %v", f.added, tc.want)
+			}
+			if tc.active && slices.ContainsFunc(f.calls, func(c string) bool { return strings.Contains(c, "/commits") }) {
+				t.Errorf("the history or checks read on a PR whose task is active: %v", f.calls)
 			}
 		})
 	}

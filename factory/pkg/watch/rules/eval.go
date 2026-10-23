@@ -70,7 +70,8 @@ type Item struct {
 	// Runs are the runs of the item's tasks that ended, by rule.
 	Runs []PastRun
 	// Unknown are the facts the scanner has not read (FactConnectedPR,
-	// FactWorkflowCooldown, FactWorkflowDefinition): deciding, a predicate
+	// FactWorkflowCooldown, FactWorkflowDefinition on an issue; FactHistory,
+	// FactFeedback, FactChecks on a PR): deciding, a predicate
 	// on one fails and a cooldown it sets holds - nothing is decided on a
 	// fact not read; asking which a decision needs (Set.Needs), they could
 	// go either way.
@@ -259,18 +260,22 @@ func (w When) holds(r *Rule, it Item, env Env, runs []PastRun) bool {
 		return false
 	}
 
-	if w.Checks != "" && w.Checks != it.Checks {
+	if w.Checks != "" && !it.could(FactChecks) && (it.notRead(FactChecks) || w.Checks != it.Checks) {
 		return false
 	}
 	if w.Mergeable != nil && (it.Mergeable == nil || *it.Mergeable != *w.Mergeable) {
 		return false
 	}
-	switch w.Feedback {
-	case "new-trusted":
+	if w.Feedback != "" && it.notRead(FactFeedback) {
+		return false
+	}
+	switch {
+	case it.could(FactFeedback):
+	case w.Feedback == "new-trusted":
 		if !it.NewTrustedFeedback {
 			return false
 		}
-	case "none":
+	case w.Feedback == "none":
 		if it.NewTrustedFeedback {
 			return false
 		}
@@ -287,11 +292,15 @@ func (w When) holds(r *Rule, it Item, env Env, runs []PastRun) bool {
 	for _, b := range []struct {
 		want *bool
 		got  bool
+		fact string
 	}{
-		{w.ReviewedAtHead, it.ReviewedAtHead}, {w.ChangesRequested, it.ChangesRequested}, {w.Approved, it.Approved},
-		{w.Draft, it.Draft},
+		{w.ReviewedAtHead, it.ReviewedAtHead, FactHistory}, {w.ChangesRequested, it.ChangesRequested, FactHistory},
+		{w.Approved, it.Approved, FactChecks}, {w.Draft, it.Draft, ""},
 	} {
-		if b.want != nil && *b.want != b.got {
+		if b.want == nil || it.could(b.fact) {
+			continue
+		}
+		if it.notRead(b.fact) || *b.want != b.got {
 			return false
 		}
 	}
@@ -300,7 +309,11 @@ func (w When) holds(r *Rule, it Item, env Env, runs []PastRun) bool {
 		if w.InactiveFor.Ref == "{{pr-inactivity-timeout}}" {
 			d = env.PRInactivityTimeout
 		}
-		if d <= 0 || it.LastTrustedActivity.IsZero() || env.Now.Sub(it.LastTrustedActivity) < d {
+		switch {
+		case d <= 0 || it.notRead(FactHistory):
+			return false
+		case it.could(FactHistory):
+		case it.LastTrustedActivity.IsZero() || env.Now.Sub(it.LastTrustedActivity) < d:
 			return false
 		}
 	}
@@ -324,10 +337,27 @@ const (
 	// FactWorkflowDefinition is Item.WorkflowMissing: whether that
 	// definition can be loaded, fetched.
 	FactWorkflowDefinition = "workflow-definition"
+	// FactHistory is what a PR's commits, comments and reviews say:
+	// Item.ReviewedAtHead, ChangesRequested, LastTrustedActivity and the
+	// times a give-up counts from (HeadChangedAt, HumanSpokeAt, PausedAt).
+	FactHistory = "history"
+	// FactFeedback is Item.NewTrustedFeedback: the PR's feedback weighed.
+	FactFeedback = "feedback"
+	// FactChecks is Item.Checks and Approved: the PR head's checks.
+	FactChecks = "checks"
 )
 
 // unknown reports whether the item's fact has not been read.
 func (it Item) unknown(fact string) bool { return slices.Contains(it.Unknown, fact) }
+
+// notRead is whether a predicate on fact fails for not being read: the
+// fact is unknown and the engine is deciding, not asking (Set.Needs,
+// Set.Settled), when it could go either way. "" is a fact always read.
+func (it Item) notRead(fact string) bool { return fact != "" && it.unknown(fact) && !it.assume }
+
+// could is whether a predicate on fact holds for not being read: the
+// engine asking, the fact unknown, it could go either way.
+func (it Item) could(fact string) bool { return fact != "" && it.unknown(fact) && it.assume }
 
 // defaultWorkflowCooldown is a workflow definition's cooldown when it sets
 // none.

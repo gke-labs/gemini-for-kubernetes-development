@@ -187,14 +187,13 @@ func (s *Scanner) engineOutcome(rule string) string {
 	return ""
 }
 
-// engineCareRule is the rule the engine decided that takes the PR, ""
-// when none: they take the PR, so there is at most one. A rule that takes
-// it runs a recipe (a rule task, queueRuleTask), or, a repository's,
-// writes; factory's write rules that take it (inactive) are carried out
-// before.
+// engineCareRule is the rule the engine decided that takes the PR and
+// runs a recipe (a pr-care rule, factory's or a repository's), "" when it
+// decided none: its run is a task, its give-up its writes. A rule of
+// writes alone, taking the PR or not, is the write walk's (actOnWrites).
 func (s *Scanner) engineCareRule() string {
 	for _, d := range s.engineCare {
-		if r := s.rules.Set().Named(d.Rule); r != nil && r.IsExclusive() && (r.Run.Recipe != "" || !rules.IsBuiltinName(d.Rule)) {
+		if r := s.rules.Set().Named(d.Rule); r != nil && r.IsExclusive() && r.Run.Recipe != "" {
 			return d.Rule
 		}
 	}
@@ -213,13 +212,46 @@ func (s *Scanner) ruleTaskRules() []string {
 	return names
 }
 
-// actOnRuleWrites carries out what the engine decided of the rules factory
-// does not handle by name that do not take the PR: their GitHub writes.
-func (s *Scanner) actOnRuleWrites(ctx context.Context, prIssue *githubv39.Issue) {
-	for _, d := range s.engineCare {
-		if r := s.rules.Set().Named(d.Rule); r != nil && !rules.IsBuiltinName(d.Rule) && !r.IsExclusive() {
-			s.actOn(ctx, prIssue, d.Rule)
+// read notes that the evaluation read fact: the rules may decide on it.
+func (s *Scanner) read(fact string) {
+	s.rec.Fill(func(it *rules.Item) {
+		it.Unknown = slices.DeleteFunc(it.Unknown, func(f string) bool { return f == fact })
+	})
+}
+
+// actOnSettled carries out the writes the rules decide on the facts read
+// so far (rules.Set.Settled: up to the first rule a fact not read yet could
+// change), each once, and reports whether the PR now has the stop label -
+// written, or inherited from a closing issue - which ends the evaluation.
+func (s *Scanner) actOnSettled(ctx context.Context, prIssue *githubv39.Issue) bool {
+	if s.rec == nil {
+		return false
+	}
+	var writes []rules.Decision
+	for _, d := range s.rules.Set().Settled(*s.rec.Item, s.rulesEnv()) {
+		// A rule that takes the PR is decided on every fact (engineCare).
+		if r := s.rules.Set().Named(d.Rule); r != nil && !r.IsExclusive() {
+			writes = append(writes, d)
 		}
+	}
+	s.actOnWrites(ctx, prIssue, writes)
+	if !conventions.HasStopLabel(prIssue.Labels, s.cfg.TriggerLabel) {
+		return false
+	}
+	num := prIssue.GetNumber()
+	klog.Infof("Skipping PR #%d because the rules gave it the stop label ('overseer/stop' or '%s/stop')", num, s.cfg.TriggerLabel)
+	_ = s.queue.RemovePendingTasksForNumber(num)
+	return true
+}
+
+// actOnWrites carries out the decisions of rules of writes alone among
+// decided, in order, those not carried out yet.
+func (s *Scanner) actOnWrites(ctx context.Context, prIssue *githubv39.Issue, decided []rules.Decision) {
+	for _, d := range decided {
+		if r := s.rules.Set().Named(d.Rule); r == nil || r.Run.Recipe != "" || s.acted[d.Rule] {
+			continue
+		}
+		s.actOn(ctx, prIssue, d.Rule)
 	}
 }
 
@@ -241,6 +273,9 @@ func (s *Scanner) actOn(ctx context.Context, prIssue *githubv39.Issue, rule stri
 		return false
 	}
 	num := prIssue.GetNumber()
+	if s.acted != nil {
+		s.acted[rule] = true
+	}
 	klog.Infof("PR #%d: the rules engine decides %s %s: %+v", num, rule, d.Outcome, d.Writes)
 	s.rec.Decided(rule, d.Outcome)
 	done := act.ApplyWrites(ctx, s.gh, num, d.Writes, s.cfg.TriggerLabel, s.cfg.DryRun)

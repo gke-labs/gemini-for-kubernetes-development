@@ -197,6 +197,8 @@ type Scanner struct {
 	rec *rules.Recording
 	// engineCare is the engine's decisions on that pull request.
 	engineCare []rules.Decision
+	// acted are the rules whose writes the evaluation carried out.
+	acted map[string]bool
 
 	// reactions reads the acknowledgement state the watcher records on
 	// comments. It is bound once to this scanner's identity and bot allowlist,
@@ -480,6 +482,10 @@ func (s *Scanner) evaluate(ctx context.Context, prIssue *githubv39.Issue) {
 	s.state.clearEvaluation(num)
 	s.rec = s.startRecording(prIssue)
 	defer func() { s.rec.Finish(); s.rec = nil }()
+	// Read a stage at a time below: until then, what the rules decide on
+	// them waits (actOnSettled).
+	s.acted = map[string]bool{}
+	s.rec.Fill(func(it *rules.Item) { it.Unknown = []string{rules.FactHistory, rules.FactFeedback, rules.FactChecks} })
 
 	if conventions.HasStopLabel(prIssue.Labels, s.cfg.TriggerLabel) {
 		klog.Infof("Skipping PR #%d because it has the stop label ('overseer/stop' or '%s/stop')", num, s.cfg.TriggerLabel)
@@ -538,12 +544,10 @@ func (s *Scanner) evaluate(ctx context.Context, prIssue *githubv39.Issue) {
 	refs := newRefIssues(s.gh, pr)
 	s.recordCloses(ctx, refs)
 
-	// The closing issues' labels the engine has the PR inherit, then the
-	// stop label checked again: it may have been inherited.
-	s.actOn(ctx, prIssue, "inherit-labels")
-	if conventions.HasStopLabel(prIssue.Labels, s.cfg.TriggerLabel) {
-		klog.Infof("Skipping PR #%d after label sync because it has the stop label ('overseer/stop' or '%s/stop')", num, s.cfg.TriggerLabel)
-		_ = s.queue.RemovePendingTasksForNumber(num)
+	// What the rules decide on the PR and its closing issues (factory's
+	// inherit-labels), then the stop label checked again: it may have been
+	// written.
+	if s.actOnSettled(ctx, prIssue) {
 		return
 	}
 
@@ -575,15 +579,18 @@ func (s *Scanner) evaluate(ctx context.Context, prIssue *githubv39.Issue) {
 
 	state := s.state.get(num)
 	s.recordHistory(pr, history, headSHA)
+	s.read(rules.FactHistory)
 
-	// The engine's pause of an inactive PR: nothing more on it.
-	if s.actOn(ctx, prIssue, "inactive") {
+	// What the rules decide on the history too (factory's inactive, which
+	// stops the PR): a stop ends the evaluation.
+	if s.actOnSettled(ctx, prIssue) {
 		return
 	}
 
 	isConflicting := pr.Mergeable != nil && !*pr.Mergeable
 	commentAnalysis := s.evaluateComments(ctx, pr, history, history.lastCommitTime, state.lastCommentAddressedTime)
 	s.rec.Fill(func(it *rules.Item) { it.NewTrustedFeedback = commentAnalysis.hasNewComments })
+	s.read(rules.FactFeedback)
 
 	var checkAnalysis prCheckAnalysis
 	if !isConflicting {
@@ -595,6 +602,7 @@ func (s *Scanner) evaluate(ctx context.Context, prIssue *githubv39.Issue) {
 		}
 		isApproved := isPRApprovedOrLGTM(pr, prIssue, history.reviews)
 		s.rec.Fill(func(it *rules.Item) { fillChecks(it, checkAnalysis, isApproved) })
+		s.read(rules.FactChecks)
 	}
 
 	assignedBot := conventions.AssignedBotUser(prIssue, s.cfg.BotUsers)
@@ -640,16 +648,10 @@ func (s *Scanner) evaluate(ctx context.Context, prIssue *githubv39.Issue) {
 		}
 	}
 
-	// The engine's ready or ready-unreview: its writes.
+	// The writes of the rules after it (factory's ready, ready-unreview).
 	if s.gh.Ready() {
-		for _, rule := range []string{"ready", "ready-unreview"} {
-			if rules.Decided(s.engineCare, rule) {
-				s.actOn(ctx, prIssue, rule)
-			}
-		}
+		s.actOnWrites(ctx, prIssue, s.engineCare)
 	}
-	// A repository's rules that do not take the PR: their writes.
-	s.actOnRuleWrites(ctx, prIssue)
 	if !completed {
 		return
 	}

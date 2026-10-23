@@ -86,11 +86,6 @@ func (c *Control) Decide(it Item, env Env) []Decision {
 	return c.set.Decide(it, env)
 }
 
-// Decided is whether ds has a decision of rule (any outcome).
-func Decided(ds []Decision, rule string) bool {
-	return slices.ContainsFunc(ds, func(d Decision) bool { return d.Rule == rule })
-}
-
 // String is the settings in a line, for the watch's log.
 func (c *Control) String() string {
 	if c == nil {

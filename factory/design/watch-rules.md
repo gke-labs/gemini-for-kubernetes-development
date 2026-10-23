@@ -980,6 +980,7 @@ together once staging's shadow had agreed on every rule:
 | C | the recipe table keeps runner details only | #2059 |
 | | workflow-missing posts its rule's comment | #2061 |
 | | an issue's costly facts (`connected-pr`, a workflow's definition and cooldown) read on demand, by what the rules that could step use (`Set.Needs`); any recipe rule on issues runs from it | #2094 |
+| | a PR's write rules carried out by order and facts, a stage at a time (`Set.Settled`), none by name | #2096 |
 
 **Phase 5, the repository's rules** (partly built): the watch reads
 `.agents/watch/*.yaml` once when it starts, under `spec.repoRecipe` (one
