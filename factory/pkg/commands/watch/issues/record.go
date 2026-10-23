@@ -8,7 +8,6 @@ import (
 	githubv39 "github.com/google/go-github/v39/github"
 	"k8s.io/klog/v2"
 
-	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/act"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/api"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/conventions"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/watch/rules"
@@ -54,15 +53,6 @@ func (s *Scanner) issueItemOf(issue *githubv39.Issue) rules.Item {
 		Closed:       issue.GetState() == "closed",
 		FanoutParent: conventions.HasFanoutLabel(issue.Labels, s.cfg.TriggerLabel),
 	}
-}
-
-// recordRuns adds the rule's history of the issue, from the queue, to the
-// record.
-func (s *Scanner) recordRuns(rule, filename string) {
-	if s.rec == nil {
-		return
-	}
-	s.rec.Fill(func(it *rules.Item) { s.fillRuns(it, rule, filename) })
 }
 
 // fillRuns adds the rule's history of the issue from the queue: the runs
@@ -143,80 +133,66 @@ func logins(users []*githubv39.User) []string {
 	return out
 }
 
-// ruleTaskRules are the rules on issues that run a recipe and that factory
-// does not handle by name (a repository's): each runs as a rule task,
-// task-issue-<n>-rule-<name>.yaml.
-func (s *Scanner) ruleTaskRules() []string {
-	var names []string
+// issueRuleFile is the task file of rule's task on issue num, "" for a
+// rule whose task it has none of: a workflow's step's is named after the
+// workflow its body names (none named, no task); any other rule's is its
+// rule task's (api.RuleTaskFile, the fix's included).
+func issueRuleFile(r *rules.Rule, num int, workflowName string) string {
+	if r.Run.Recipe == "workflow" {
+		if workflowName == "" {
+			return ""
+		}
+		return issueTaskFilename(num, workflowName)
+	}
+	return api.RuleTaskFile(false, num, r.Name)
+}
+
+// fillIssueRuns adds the issue's history from the queue for every rule on
+// issues that runs a recipe: the runs of its task that ended, and the rules
+// whose task is queued or running.
+func (s *Scanner) fillIssueRuns(it *rules.Item, num int, workflowName string) {
 	for _, r := range s.rules.Set() {
-		if r.On == rules.OnIssue && r.Run.Recipe != "" && !rules.IsBuiltinName(r.Name) {
-			names = append(names, r.Name)
+		if r.On != rules.OnIssue || r.Run.Recipe == "" {
+			continue
 		}
-	}
-	return names
-}
-
-// fillRuleTaskRuns adds the history of the issue's rule tasks, and the
-// rules whose task is queued or running.
-func (s *Scanner) fillRuleTaskRuns(it *rules.Item, num int) {
-	for _, rule := range s.ruleTaskRules() {
-		filename := api.RuleTaskFile(false, num, rule)
-		s.fillRuns(it, rule, filename)
+		filename := issueRuleFile(r, num, workflowName)
+		if filename == "" {
+			continue
+		}
+		s.fillRuns(it, r.Name, filename)
 		if s.queue.TaskExists(filename) {
-			it.Queued = append(it.Queued, rule)
+			it.Queued = append(it.Queued, r.Name)
 		}
 	}
 }
 
-// carryOutRuleTasks carries out what the engine decides on the issue of
-// the rules factory does not handle by name (a repository's,
-// .agents/watch), and reports whether one took the issue, leaving nothing
-// for the fix or workflow rule: a give-up stops the issue; a run queues the
-// rule's task (its recipe, apply and inputs, act.Task) in
-// api.RuleTaskFile; GitHub writes are made, and take the issue when the
-// rule is exclusive; a run is carried out as fix's is (queueIssueRuleTask).
-// With a task of the issue queued or running, nothing: the fix's path
-// holds the issue back (Item.TaskActive).
-func (s *Scanner) carryOutRuleTasks(ctx context.Context, issue *githubv39.Issue) bool {
-	if s.rec == nil || !s.hasOtherIssueRules() {
-		return false
+// noteCooldowns notes, on the queue for the overseer's work view, each
+// rule on the issue its policy holds back until a time (a cooldown after
+// its last run), and logs it once per window.
+func (s *Scanner) noteCooldowns(issue *githubv39.Issue, workflowName string) {
+	if s.rec == nil {
+		return
 	}
 	num := issue.GetNumber()
-	s.rec.Fill(func(it *rules.Item) { s.fillRuleTaskRuns(it, num) })
-	if s.queue.HasActiveIssueTask(num) {
-		return false
-	}
-	s.recordSpoken(ctx, num)
-	for _, d := range s.rules.Decide(*s.rec.Item, s.rulesEnv()) {
-		r := s.rules.Set().Named(d.Rule)
-		if r == nil || rules.IsBuiltinName(d.Rule) {
-			continue
-		}
-		if d.Outcome == rules.OutcomeGiveUp || r.Run.Recipe == "" {
-			s.rec.Decided(d.Rule, d.Outcome)
-			klog.Infof("Issue #%d: the rules engine decides %s %s: %+v", num, d.Rule, d.Outcome, d.Writes)
-			act.ApplyWrites(ctx, s.gh, num, d.Writes, s.cfg.TriggerLabel, s.cfg.DryRun)
-			if (d.Writes.Stop || d.Writes.Drop) && !s.cfg.DryRun {
-				_ = s.queue.RemovePendingTasksForNumber(num)
-			}
-			if d.Outcome == rules.OutcomeGiveUp || r.IsExclusive() {
-				return true
-			}
-			continue
-		}
-		s.queueIssueRuleTask(ctx, issue, d.Rule, issueTaskShape{}, nil)
-		return true
-	}
-	return false
-}
-
-// hasOtherIssueRules reports whether the set has a rule on issues that
-// factory does not handle by name.
-func (s *Scanner) hasOtherIssueRules() bool {
 	for _, r := range s.rules.Set() {
-		if r.On == rules.OnIssue && !rules.IsBuiltinName(r.Name) {
-			return true
+		if r.On != rules.OnIssue || r.Run.Recipe == "" {
+			continue
+		}
+		filename := issueRuleFile(r, num, workflowName)
+		last := s.queue.GetProcessedTask(filename)
+		if filename == "" || last == nil {
+			continue
+		}
+		why, until := s.rules.Set().Held(r.Name, *s.rec.Item, s.rulesEnv())
+		if why == "" || until.IsZero() {
+			continue
+		}
+		held := api.Cooldown{FileName: filename, Number: num, URL: issue.GetHTMLURL(), Until: until, LastStatus: last.Status, LastCompletedAt: last.CompletedAt}
+		if r.Run.Recipe == "workflow" {
+			held.Workflow = workflowName
+		}
+		if s.queue.NoteCooldown(held) {
+			klog.Infof("Skipping issue #%d: the rules engine holds %s back: %s (until %s)", num, r.Name, why, until.UTC().Format(time.RFC3339))
 		}
 	}
-	return false
 }

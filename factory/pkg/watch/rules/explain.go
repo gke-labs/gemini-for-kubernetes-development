@@ -191,6 +191,11 @@ func factOf(predicate string, it Item, env Env, runs []PastRun) string {
 		return "the last run succeeded"
 	case "linked-pr":
 		return "linked-pr " + orNone(it.LinkedPR)
+	case "connected-pr":
+		if it.unknown(FactConnectedPR) {
+			return "connected-pr not read"
+		}
+		return "connected-pr " + orNone(it.ConnectedPR)
 	case "workflow":
 		if it.WorkflowMissing {
 			return "workflow " + it.Workflow + ", which cannot be loaded"
@@ -298,6 +303,13 @@ func policyHold(r *Rule, it Item, env Env, runs []PastRun) (string, time.Time) {
 	}
 	d := wait.Duration
 	if wait.Ref == "{{workflow-cooldown}}" {
+		if it.unknown(FactWorkflowCooldown) {
+			if it.assume {
+				// Asking: it could have run its cooldown out.
+				return "", time.Time{}
+			}
+			return "cooldown: the workflow's not read", time.Time{}
+		}
 		d = it.WorkflowCooldown
 		if d == 0 {
 			d = defaultWorkflowCooldown
@@ -374,4 +386,69 @@ func short(sha string) string {
 		return sha[:7]
 	}
 	return sha
+}
+
+// Needs are the facts the item has not had read (Item.Unknown) that a
+// decision on it turns on: those of each rule that could decide on what is
+// known - its conditions hold or could, its policy does not hold it - in
+// the item's Unknown order (cheapest first). A scanner reads the first,
+// asks again, and decides once none is needed: a rule that cannot decide
+// whatever an unknown fact says costs no read of it, and a fact no rule
+// asks about is never read.
+func (s Set) Needs(it Item, env Env) []string {
+	if len(it.Unknown) == 0 {
+		return nil
+	}
+	want := map[string]bool{}
+	it.assume = true
+	for _, st := range s.Explain(it, env).Steps {
+		if st.Decision == nil {
+			continue
+		}
+		if r := s.Named(st.Rule); r != nil {
+			for _, f := range r.facts(rulesRuns(r.Name, it.Runs)) {
+				want[f] = true
+			}
+		}
+	}
+	var out []string
+	for _, f := range it.Unknown {
+		if want[f] {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+// facts are the facts read on demand the rule's decision turns on, given
+// its runs: a predicate on one, in its condition or any alternative, or the
+// workflow definition's cooldown when its last run succeeded (a failure's
+// cooldown is the rule's own).
+func (r *Rule) facts(runs []PastRun) []string {
+	var out []string
+	add := func(f string) {
+		if !slices.Contains(out, f) {
+			out = append(out, f)
+		}
+	}
+	for _, w := range append([]When{r.When}, r.When.AnyOf...) {
+		if w.ConnectedPR != "" {
+			add(FactConnectedPR)
+		}
+		if w.Workflow == "any" || w.Workflow == "missing" {
+			add(FactWorkflowDefinition)
+		}
+	}
+	if c := r.Policy.Cooldown; c != nil {
+		if last, ok := lastRun(runs); ok {
+			wait := c.Success
+			if last.Failed {
+				wait = c.Failure
+			}
+			if wait.Ref == "{{workflow-cooldown}}" {
+				add(FactWorkflowCooldown)
+			}
+		}
+	}
+	return out
 }

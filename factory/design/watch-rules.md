@@ -181,6 +181,7 @@ on: issue
 when:
   labels: {any: ["{{trigger}}"]}
   linked-pr: none
+  connected-pr: none
   workflow: none
 run: {recipe: fix, apply: open-pr, inputs: {draft: "false"}}
 policy: {dedupe: update, cooldown: {success: 10m, failure: 20m}, phase: 3}
@@ -978,6 +979,7 @@ together once staging's shadow had agreed on every rule:
 | B3 | the shadow becomes `rules.Summary`; Handed gone | #2057 (overseer page #2058) |
 | C | the recipe table keeps runner details only | #2059 |
 | | workflow-missing posts its rule's comment | #2061 |
+| | an issue's costly facts (`connected-pr`, a workflow's definition and cooldown) read on demand, by what the rules that could step use (`Set.Needs`); any recipe rule on issues runs from it | #2094 |
 
 **Phase 5, the repository's rules** (partly built): the watch reads
 `.agents/watch/*.yaml` once when it starts, under `spec.repoRecipe` (one

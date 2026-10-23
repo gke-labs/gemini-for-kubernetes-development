@@ -34,6 +34,9 @@ when:
     - opened-by: watcher
   fanout: false
   linked-pr: none
+  # No open PR connected to it on its timeline either (a read of its own,
+  # made only when the rest holds); a workflow's steps open PRs that do.
+  connected-pr: none
   workflow: none
 run:
   recipe: fix

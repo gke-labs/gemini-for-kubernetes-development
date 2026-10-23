@@ -26,8 +26,11 @@ type Item struct {
 	Closed bool
 
 	// Issues.
-	// LinkedPR is "open" when an open PR closes or is linked to the issue.
-	LinkedPR string
+	// LinkedPR is "open" when an open PR closes the issue (the shared
+	// scan's: cheap); ConnectedPR, when one is connected to it on its
+	// timeline (a read of its own, ReadFacts).
+	LinkedPR    string
+	ConnectedPR string
 	// Workflow names the workflow definition the issue's body names.
 	Workflow string
 	// WorkflowMissing is that the definition it names cannot be loaded:
@@ -66,6 +69,14 @@ type Item struct {
 	Queued []string
 	// Runs are the runs of the item's tasks that ended, by rule.
 	Runs []PastRun
+	// Unknown are the facts the scanner has not read (FactConnectedPR,
+	// FactWorkflowCooldown, FactWorkflowDefinition): deciding, a predicate
+	// on one fails and a cooldown it sets holds - nothing is decided on a
+	// fact not read; asking which a decision needs (Set.Needs), they could
+	// go either way.
+	Unknown []string `json:",omitempty"`
+	// assume is Set.Needs' asking: an unknown fact could go either way.
+	assume bool
 	// HeadChangedAt, HumanSpokeAt and PausedAt are when the PR's head last
 	// changed, a trusted human last commented and the watcher last put it
 	// on hold (its comment attaching the stop label): what a count since
@@ -214,17 +225,30 @@ func (w When) holds(r *Rule, it Item, env Env, runs []PastRun) bool {
 	if w.LinkedPR != "" && w.LinkedPR != orNone(it.LinkedPR) {
 		return false
 	}
+	if w.ConnectedPR != "" {
+		switch {
+		case it.unknown(FactConnectedPR):
+			if !it.assume {
+				return false
+			}
+		case w.ConnectedPR != orNone(it.ConnectedPR):
+			return false
+		}
+	}
 	switch w.Workflow {
 	case "none":
 		if it.Workflow != "" {
 			return false
 		}
-	case "any":
-		if it.Workflow == "" || it.WorkflowMissing {
+	case "any", "missing":
+		if it.Workflow == "" {
 			return false
 		}
-	case "missing":
-		if it.Workflow == "" || !it.WorkflowMissing {
+		if it.unknown(FactWorkflowDefinition) {
+			if !it.assume {
+				return false
+			}
+		} else if it.WorkflowMissing != (w.Workflow == "missing") {
 			return false
 		}
 	}
@@ -288,6 +312,22 @@ func (w When) holds(r *Rule, it Item, env Env, runs []PastRun) bool {
 	}
 	return true
 }
+
+// The facts a scanner reads only when a rule needs them (Item.Unknown,
+// Set.Needs), each a read of its own.
+const (
+	// FactConnectedPR is Item.ConnectedPR: the issue's timeline.
+	FactConnectedPR = "connected-pr"
+	// FactWorkflowCooldown is Item.WorkflowCooldown: the cooldown the
+	// workflow definition the issue names declares, fetched.
+	FactWorkflowCooldown = "workflow-cooldown"
+	// FactWorkflowDefinition is Item.WorkflowMissing: whether that
+	// definition can be loaded, fetched.
+	FactWorkflowDefinition = "workflow-definition"
+)
+
+// unknown reports whether the item's fact has not been read.
+func (it Item) unknown(fact string) bool { return slices.Contains(it.Unknown, fact) }
 
 // defaultWorkflowCooldown is a workflow definition's cooldown when it sets
 // none.

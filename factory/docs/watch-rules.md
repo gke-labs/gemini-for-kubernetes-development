@@ -51,7 +51,8 @@ on: issue                    # the kind of item the rule looks at
 order: 20                    # its place among the issue rules; a recipe rule takes the item
 when:                        # the condition: every predicate set must hold
   fanout: false              #   not a fan-out's parent (the fan-out controller's)
-  linked-pr: none            #   no open PR closes it or is linked to it
+  linked-pr: none            #   no open PR says it closes it
+  connected-pr: none         #   nor is one linked to it (its timeline, read only if needed)
   workflow: none             #   its body names no workflow (the workflow rule's)
 run:                         # the action
   recipe: fix                #   run the fix recipe in the issue's sandbox
@@ -138,7 +139,8 @@ the merge queue get nothing from any rule.
 
 | predicate | values | holds when |
 |---|---|---|
-| `linked-pr` | `none`, `open` | no open PR closes or is linked to the issue; one does (a closing reference such as "Fixes #N", or GitHub's sidebar link) |
+| `linked-pr` | `none`, `open` | no open PR closes the issue; one does (a closing reference such as "Fixes #N", from the PR listing the scan already has) |
+| `connected-pr` | `none`, `open` | no open PR is linked to the issue, by a closing reference or GitHub's sidebar link; one is. Read from the issue's timeline, one call per issue, so only when a rule that could otherwise step asks for it |
 | `workflow` | `none`, `any`, `missing` | the issue's body names no workflow definition; it names one it can load; it names one that cannot be loaded (missing, or not a workflow it can run) |
 | `opened-by` | `watcher` | the watcher's own login opened it |
 | `fanout` | `true`, `false` | it is a fan-out's parent (the fanout label): the fan-out controller's, never fixed itself. A child is an ordinary issue, created when it is to be worked on |
@@ -345,6 +347,13 @@ one task at a time: while its fix or a workflow step is queued or running,
 neither rule decides (an edited body naming a workflow waits for the fix). `ready`
 writes labels but takes the item: it must not hold beside a care rule, nor
 while a task runs.
+
+Some facts cost a GitHub call per issue: `connected-pr` (the timeline),
+and, for an issue naming a workflow, its definition (`workflow: any` and
+`missing`) and its cooldown (`{{workflow-cooldown}}`). The scan reads
+them only when a rule that would step on every other fact uses them, so a
+rule of your own may use them as freely as factory's do. A fact that
+cannot be read holds the issue for that pass.
 
 ---
 

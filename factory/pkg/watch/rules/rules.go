@@ -163,9 +163,12 @@ type When struct {
 	LastRun string `yaml:"last-run,omitempty" json:"last-run,omitempty"`
 
 	// Issues.
-	LinkedPR string `yaml:"linked-pr,omitempty" json:"linked-pr,omitempty"` // none | open
-	Workflow string `yaml:"workflow,omitempty" json:"workflow,omitempty"`   // none | any (one it can load) | missing (one it cannot)
-	OpenedBy string `yaml:"opened-by,omitempty" json:"opened-by,omitempty"` // watcher
+	LinkedPR string `yaml:"linked-pr,omitempty" json:"linked-pr,omitempty"` // none | open: a PR closing it
+	// ConnectedPR is an open PR connected to the issue on its timeline: a
+	// read of its own, made only for a rule that asks (Set.Needs).
+	ConnectedPR string `yaml:"connected-pr,omitempty" json:"connected-pr,omitempty"` // none | open
+	Workflow    string `yaml:"workflow,omitempty" json:"workflow,omitempty"`         // none | any (one it can load) | missing (one it cannot)
+	OpenedBy    string `yaml:"opened-by,omitempty" json:"opened-by,omitempty"`       // watcher
 	// Fanout is whether the issue is a fan-out's parent (it carries the
 	// fanout label): the fan-out controller's, never fixed itself. Its
 	// children are ordinary issues, created when they are to be worked on.
@@ -355,7 +358,7 @@ func Parse(data []byte) (*Rule, error) {
 // predicates are the When fields each kind of rule may set, by YAML name.
 var predicates = map[string][]string{
 	"*":     {"any-of", "labels", "assignee", "author", "last-run"},
-	OnIssue: {"linked-pr", "workflow", "opened-by", "fanout"},
+	OnIssue: {"linked-pr", "connected-pr", "workflow", "opened-by", "fanout"},
 	OnPR:    {"checks", "mergeable", "feedback", "closes", "reviewed-at-head", "changes-requested", "approved", "draft", "inactive-for"},
 }
 
@@ -373,6 +376,7 @@ func (w When) set() []string {
 	add("author", w.Author != "")
 	add("last-run", w.LastRun != "")
 	add("linked-pr", w.LinkedPR != "")
+	add("connected-pr", w.ConnectedPR != "")
 	add("workflow", w.Workflow != "")
 	add("opened-by", w.OpenedBy != "")
 	add("fanout", w.Fanout != nil)
@@ -390,19 +394,20 @@ func (w When) set() []string {
 
 // enums are the values a string predicate or field may take.
 var enums = map[string][]string{
-	"assignee":    {"pool", "not-pool", "none"},
-	"author":      {"pool"},
-	"linked-pr":   {"none", "open"},
-	"workflow":    {"none", "any", "missing"},
-	"opened-by":   {"watcher"},
-	"checks":      {"failing", "pending", "green"},
-	"feedback":    {"new-trusted", "none"},
-	"last-run":    {"failed"},
-	"reset-on":    {"head"},
-	"dedupe":      {"head", "update"},
-	"revisit":     {"every-scan"},
-	"acknowledge": {AcknowledgeFeedback},
-	"since":       {"head", "human", "pause"},
+	"assignee":     {"pool", "not-pool", "none"},
+	"author":       {"pool"},
+	"linked-pr":    {"none", "open"},
+	"connected-pr": {"none", "open"},
+	"workflow":     {"none", "any", "missing"},
+	"opened-by":    {"watcher"},
+	"checks":       {"failing", "pending", "green"},
+	"feedback":     {"new-trusted", "none"},
+	"last-run":     {"failed"},
+	"reset-on":     {"head"},
+	"dedupe":       {"head", "update"},
+	"revisit":      {"every-scan"},
+	"acknowledge":  {AcknowledgeFeedback},
+	"since":        {"head", "human", "pause"},
 }
 
 func checkEnum(field, value string) error {
@@ -432,7 +437,7 @@ func (w When) validate(on string, nested bool) error {
 		}
 	}
 	for field, value := range map[string]string{
-		"assignee": w.Assignee, "author": w.Author, "linked-pr": w.LinkedPR,
+		"assignee": w.Assignee, "author": w.Author, "linked-pr": w.LinkedPR, "connected-pr": w.ConnectedPR,
 		"workflow": w.Workflow, "opened-by": w.OpenedBy,
 		"checks": w.Checks, "feedback": w.Feedback, "last-run": w.LastRun,
 	} {
