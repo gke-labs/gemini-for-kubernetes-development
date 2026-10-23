@@ -511,6 +511,40 @@ func (s *Scanner) queueTask(ctx context.Context, issue *githubv39.Issue, refIssu
 		}
 	}
 
+	s.queueIssueRuleTask(ctx, issue, rule, issueTaskShape{workflowName: workflowName, workflowPath: workflowPath}, timeline)
+}
+
+// issueTaskShape is what a rule's task on an issue is, beyond what its
+// decision says: a workflow's step (workflowName, workflowPath) is still
+// an agent chore - factory agent create on the definition, in the
+// workflow's sandbox (wf-issue-<n>) - and any other rule's task (the fix's
+// included) a rule task in the issue's sandbox (fix-<repo>-<n>).
+type issueTaskShape struct {
+	workflowName, workflowPath string
+}
+
+// queueIssueRuleTask carries out the engine's decision on rule for the
+// issue, its facts read: not while its sandbox needs a person or is busy
+// (gated); the trigger label put on an issue picked up by assignment; the
+// rule's give-up stops the issue, its run queues its task - the bot its
+// recipe runs as, its recipe, apply and inputs stamped (act.Task), timed
+// from the issue's timeline (fetched here when the caller has none). The
+// same for every rule on issues: fix, a workflow's step, a repository's.
+func (s *Scanner) queueIssueRuleTask(ctx context.Context, issue *githubv39.Issue, rule string, shape issueTaskShape, timeline []*githubv39.Timeline) {
+	num := issue.GetNumber()
+	workflowName, workflowPath := shape.workflowName, shape.workflowPath
+	filename := issueTaskFilename(num, workflowName)
+	if workflowName == "" && rule != "fix" {
+		filename = api.RuleTaskFile(false, num, rule)
+	}
+	if timeline == nil && s.gh.Ready() {
+		if tl, _, err := s.gh.ListIssueTimeline(ctx, num); err != nil {
+			klog.Warningf("Failed to list timeline for issue #%d: %v", num, err)
+		} else {
+			timeline = tl
+		}
+	}
+
 	sandboxName := fmt.Sprintf("fix-%s-%d", s.gh.Repo(), num)
 	if workflowName != "" {
 		sandboxName = fmt.Sprintf("wf-issue-%d", num)
@@ -604,20 +638,15 @@ func (s *Scanner) queueTask(ctx context.Context, issue *githubv39.Issue, refIssu
 		return
 	}
 	s.rec.Decided(rule, rules.OutcomeRun)
+	what := rule + " task"
+	if workflowName != "" {
+		what = "workflow task " + workflowName
+	}
 	if s.cfg.DryRun {
-		if workflowName != "" {
-			fmt.Printf("[DRYRUN] Would queue workflow task %s for issue #%d: %s\n", workflowName, num, task.URL)
-		} else {
-			fmt.Printf("[DRYRUN] Would queue fix task for issue #%d: %s\n", num, task.URL)
-		}
+		fmt.Printf("[DRYRUN] Would queue %s for issue #%d: %s\n", what, num, task.URL)
 		return
 	}
-
-	if workflowName != "" {
-		fmt.Printf("Queueing workflow task %s for issue #%d...\n", workflowName, num)
-	} else {
-		fmt.Printf("Queueing fix task for issue #%d...\n", num)
-	}
+	fmt.Printf("Queueing %s for issue #%d...\n", what, num)
 	if err := s.queue.Enqueue(filename, task); err != nil {
 		klog.Errorf("Failed to queue task for issue #%d: %v", num, err)
 	}

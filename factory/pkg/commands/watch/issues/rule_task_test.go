@@ -94,3 +94,46 @@ func TestQueueTasks_RepositoryRules(t *testing.T) {
 		})
 	}
 }
+
+// A repository's rule on issues is carried out as fix is: not while the
+// issue's sandbox is busy or needs a person (gated), and queued once it
+// is free.
+func TestQueueTasks_RepositoryRuleWaitsForTheSandbox(t *testing.T) {
+	base, err := rules.Builtin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo, err := rules.LoadFiles(map[string][]byte{"triage-2.yaml": []byte("name: triage-2\non: issue\norder: 1\nwhen: {labels: {all: [factory]}}\nrun: {recipe: triage}\n")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	set, err := rules.Overlay(base, repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	control, err := rules.NewControl(nil, set)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, sandboxes := range map[string]fakeSandboxes{
+		"busy":           {running: map[string]bool{"fix-test-repo-7": true}},
+		"needs a person": {requiresHuman: map[string]string{"fix-test-repo-7": "asked a question"}},
+		"free":           {},
+	} {
+		fake := &workflowGitHub{}
+		s, queue, _ := newScanner(t, Config{TargetAssignee: "bot1", BotUsers: []string{"bot1"}}, Deps{
+			GitHub: fake.client(t), Rules: control, Sandboxes: sandboxes,
+			Recorder: rules.NewRecorder(filepath.Join(t.TempDir(), "d.jsonl"), 0, nil),
+		})
+		updated := time.Now().Add(-time.Hour)
+		s.queueTasks(context.Background(), []*githubv39.Issue{{
+			Number: githubv39.Int(7), UpdatedAt: &updated,
+			Labels: []*githubv39.Label{{Name: githubv39.String("factory")}},
+			User:   &githubv39.User{Login: githubv39.String("someone")},
+		}}, map[int]bool{})
+		_, queued := queue.enqueued["task-issue-7-rule-triage-2.yaml"]
+		if queued != (name == "free") {
+			t.Errorf("%s: queued %v", name, queued)
+		}
+	}
+}

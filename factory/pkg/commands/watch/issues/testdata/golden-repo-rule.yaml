@@ -1,0 +1,15 @@
+file: task-issue-7-rule-triage-2.yaml
+task:
+    type: issue-rule
+    url: https://github.com/test-owner/test-repo/issues/7
+    number: 7
+    priority: medium
+    phase: 3
+    createdAt: 2026-10-20T10:00:00Z
+    triggerEventTime: 2026-10-20T10:00:00Z
+    triggerReason: IssueCreated
+    triggerNotes: 'Issue #7 created at 2026-10-20T10:00:00Z with trigger label ''factory'''
+    assignee: bot1
+    status: Pending
+    rule: triage-2
+    recipe: triage

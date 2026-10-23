@@ -2,7 +2,6 @@ package issues
 
 import (
 	"context"
-	"fmt"
 	"slices"
 	"time"
 
@@ -175,8 +174,9 @@ func (s *Scanner) fillRuleTaskRuns(it *rules.Item, num int) {
 // for the fix or workflow rule: a give-up stops the issue; a run queues the
 // rule's task (its recipe, apply and inputs, act.Task) in
 // api.RuleTaskFile; GitHub writes are made, and take the issue when the
-// rule is exclusive. With a task of the issue queued or running, nothing:
-// the fix's path holds the issue back (Item.TaskActive).
+// rule is exclusive; a run is carried out as fix's is (queueIssueRuleTask).
+// With a task of the issue queued or running, nothing: the fix's path
+// holds the issue back (Item.TaskActive).
 func (s *Scanner) carryOutRuleTasks(ctx context.Context, issue *githubv39.Issue) bool {
 	if s.rec == nil || !s.hasOtherIssueRules() {
 		return false
@@ -192,8 +192,8 @@ func (s *Scanner) carryOutRuleTasks(ctx context.Context, issue *githubv39.Issue)
 		if r == nil || rules.IsBuiltinName(d.Rule) {
 			continue
 		}
-		s.rec.Decided(d.Rule, d.Outcome)
 		if d.Outcome == rules.OutcomeGiveUp || r.Run.Recipe == "" {
+			s.rec.Decided(d.Rule, d.Outcome)
 			klog.Infof("Issue #%d: the rules engine decides %s %s: %+v", num, d.Rule, d.Outcome, d.Writes)
 			act.ApplyWrites(ctx, s.gh, num, d.Writes, s.cfg.TriggerLabel, s.cfg.DryRun)
 			if (d.Writes.Stop || d.Writes.Drop) && !s.cfg.DryRun {
@@ -204,23 +204,7 @@ func (s *Scanner) carryOutRuleTasks(ctx context.Context, issue *githubv39.Issue)
 			}
 			continue
 		}
-		task := s.newTask(taskOptions{
-			Type:             api.TypeIssueRule,
-			Issue:            issue,
-			Phase:            api.PhaseInvestigate,
-			TriggerEventTime: issue.GetUpdatedAt(),
-			TriggerReason:    api.TriggerReasonRuleDecided,
-			TriggerNotes:     fmt.Sprintf("The %s rule decided to run", d.Rule),
-		})
-		act.Task(task, d, r)
-		if s.cfg.DryRun {
-			fmt.Printf("[DRYRUN] Would queue the %s rule's task for issue #%d: %s\n", d.Rule, num, task.URL)
-			return true
-		}
-		fmt.Printf("Queueing the %s rule's task for issue #%d...\n", d.Rule, num)
-		if err := s.queue.Enqueue(api.RuleTaskFile(false, num, d.Rule), task); err != nil {
-			klog.Errorf("Failed to queue the %s rule's task for issue #%d: %v", d.Rule, num, err)
-		}
+		s.queueIssueRuleTask(ctx, issue, d.Rule, issueTaskShape{}, nil)
 		return true
 	}
 	return false

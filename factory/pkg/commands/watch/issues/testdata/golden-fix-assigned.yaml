@@ -1,0 +1,23 @@
+file: task-issue-9-rule-fix.yaml
+task:
+    type: issue-rule
+    url: https://github.com/test-owner/test-repo/issues/9
+    number: 9
+    priority: medium
+    phase: 3
+    createdAt: 2026-10-20T10:00:00Z
+    triggerEventTime: 2026-10-20T10:00:00Z
+    triggerReason: IssueCreated
+    triggerNotes: 'Issue #9 created by someone at 2026-10-20T10:00:00Z; trigger label ''factory'' auto-applied by watcher'
+    assignee: bot1
+    status: Pending
+    claim: true
+    startComment: "\U0001F916 AI Factory started fixing this issue in a sandbox."
+    rule: fix
+    recipe: fix
+    apply: open-pr
+    inputs:
+        draft: "false"
+    prLabels: true
+labelled:
+    - factory
