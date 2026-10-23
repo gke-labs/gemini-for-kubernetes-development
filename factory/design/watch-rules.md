@@ -991,8 +991,11 @@ its recipe (factory's, or one in the repository's `.agents/recipes`,
 checked when the rules load), in `task-pr-<n>-rule-<name>.yaml` or
 `task-issue-<n>-rule-<name>.yaml` (types `pr-rule`, `issue-rule`, the run
 named after the rule); writes and give-ups go through the same
-`ApplyWrites` as factory's. Not built: settings beside the rules, and the
-board's auto rules on the same predicates.
+`ApplyWrites` as factory's. This repository's own `.agents/watch/` is a
+verbatim copy of factory's rules (as its `.agents/recipes/` is of the
+built-in recipes), for trying replace mode on an overseer of this
+repository. Not built: settings beside the rules, and the board's auto
+rules on the same predicates.
 
 
 ## Open questions

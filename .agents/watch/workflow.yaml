@@ -1,0 +1,35 @@
+# Mirrors issues/scanner.go queueTask (with queueTasks): an open issue the
+# overseer is pointed at (as for fix: labelled, assigned to the pool, or
+# opened by the watcher) whose body names a workflow (an .agents/
+# definition with mode: workflow) takes the workflow's next step, as
+# `factory agent create --agent <definition> --session-id issue-<n>` (the
+# dispatcher's agent-chore, dispatcher/cli_runner.go BuildArgs), which
+# runs the workflow recipe. There is no updated-since gate: a workflow
+# steps every cooldown while the issue is open. The success cooldown is
+# the workflow definition's own (10m when it sets none). An open PR that
+# closes the issue holds it back (linked-pr, from the PR listing); a PR
+# only linked in the timeline does not, as the rule does not ask for
+# connected-pr (fix does). The definition (workflow: any) and its cooldown
+# are read only when the rule could otherwise step. A definition that
+# cannot be loaded is workflow-missing's.
+name: workflow
+description: Take a workflow's next step on the issue that names it
+on: issue
+order: 10
+when:
+  # pointed at: the trigger label, a pool assignee, or opened by the
+  # watcher (the issue listings'; the engine's own, so a decision outside
+  # a scan - the dispatcher's at start - holds the same)
+  any-of:
+    - labels: {any: ["{{trigger}}"]}
+    - assignee: pool
+    - opened-by: watcher
+  fanout: false
+  linked-pr: none
+  workflow: any
+run:
+  recipe: workflow
+  claim: true
+policy:
+  cooldown: {success: "{{workflow-cooldown}}", failure: 20m}
+  phase: 4

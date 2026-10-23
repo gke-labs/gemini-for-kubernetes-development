@@ -1,0 +1,15 @@
+# Mirrors prs/labels.go syncReferencedIssueLabels (deleted in #2053): a
+# pool's PR takes the labels of the issues it closes, all but
+# ready-for-human, every time it is evaluated and ahead of the rules that
+# take the item, so they see them (review's */review, most often). A PR
+# already handed to the humans still inherits, but not */review
+# ({{closing-issue-labels}} leaves it out there): an issue's stop label is
+# what stops work on its PR, and conflict and ci still act on a ready PR.
+name: inherit-labels
+description: Copy the closing issues' labels onto the PR
+on: pr
+order: 5
+when:
+  author: pool
+run:
+  label: ["{{closing-issue-labels}}"]

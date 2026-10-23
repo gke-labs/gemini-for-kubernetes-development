@@ -1,0 +1,23 @@
+# Mirrors prs/scanner.go reconcileReadiness, its already-ready half: a
+# PR already ready-for-human that is still ready, and that carries
+# */review again (a review label can arrive after it went ready), loses
+# */review, so bot reviews stay off work a human owns; nothing else is
+# written. Its review is satisfied only once the automated reviewer
+# reviewed the head without asking for changes, since */review on the
+# PR wants one. It takes the item, after ready.
+name: ready-unreview
+description: Take */review off a PR already handed to the humans
+on: pr
+order: 60
+exclusive: true
+when:
+  author: pool
+  labels: {all: ["*/ready-for-human", "*/review"]}
+  draft: false
+  mergeable: true
+  checks: green
+  feedback: none
+  reviewed-at-head: true
+  changes-requested: false
+run:
+  unlabel: ["*/review"]
