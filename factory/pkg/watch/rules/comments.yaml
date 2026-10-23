@@ -20,6 +20,8 @@ when:
 run:
   recipe: care-comments
   apply: post-replies
+  acknowledge: feedback
+  start-comment: "🤖 AI Factory started addressing review feedback for this pull request."
 policy:
   give-up:
     attempts: 3

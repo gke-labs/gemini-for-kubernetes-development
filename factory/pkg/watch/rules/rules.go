@@ -194,6 +194,16 @@ type Run struct {
 	Apply  string            `yaml:"apply,omitempty" json:"apply,omitempty"`
 	Inputs map[string]string `yaml:"inputs,omitempty" json:"inputs,omitempty"`
 
+	// What the recipe's task does on GitHub as it starts and ends, made by
+	// the watcher. Claim (issues) assigns the issue to the task's bot when
+	// it starts, in the watcher's place. Acknowledge feedback (PRs) marks
+	// the feedback the task answers as seen when it starts, and resolved
+	// or failed when it ends. StartComment is posted on the item when it
+	// starts.
+	Claim        bool   `yaml:"claim,omitempty" json:"claim,omitempty"`
+	Acknowledge  string `yaml:"acknowledge,omitempty" json:"acknowledge,omitempty"`
+	StartComment string `yaml:"start-comment,omitempty" json:"start-comment,omitempty"`
+
 	// GitHub writes, done by the watcher.
 	Label    []string `yaml:"label,omitempty" json:"label,omitempty"`
 	Unlabel  []string `yaml:"unlabel,omitempty" json:"unlabel,omitempty"`
@@ -380,18 +390,19 @@ func (w When) set() []string {
 
 // enums are the values a string predicate or field may take.
 var enums = map[string][]string{
-	"assignee":  {"pool", "not-pool", "none"},
-	"author":    {"pool"},
-	"linked-pr": {"none", "open"},
-	"workflow":  {"none", "any", "missing"},
-	"opened-by": {"watcher"},
-	"checks":    {"failing", "pending", "green"},
-	"feedback":  {"new-trusted", "none"},
-	"last-run":  {"failed"},
-	"reset-on":  {"head"},
-	"dedupe":    {"head", "update"},
-	"revisit":   {"every-scan"},
-	"since":     {"head", "human", "pause"},
+	"assignee":    {"pool", "not-pool", "none"},
+	"author":      {"pool"},
+	"linked-pr":   {"none", "open"},
+	"workflow":    {"none", "any", "missing"},
+	"opened-by":   {"watcher"},
+	"checks":      {"failing", "pending", "green"},
+	"feedback":    {"new-trusted", "none"},
+	"last-run":    {"failed"},
+	"reset-on":    {"head"},
+	"dedupe":      {"head", "update"},
+	"revisit":     {"every-scan"},
+	"acknowledge": {AcknowledgeFeedback},
+	"since":       {"head", "human", "pause"},
 }
 
 func checkEnum(field, value string) error {
@@ -476,6 +487,10 @@ var (
 		OnPR:    {ReviewInstructions},
 	}
 )
+
+// AcknowledgeFeedback is run.acknowledge's one value: the feedback a PR's
+// task answers.
+const AcknowledgeFeedback = "feedback"
 
 // ReviewInstructions is the input placeholder for the review instructions
 // the pull request and the issues it closes carry: the scanner, which has
@@ -566,6 +581,17 @@ func (r *Rule) Validate() error {
 		return fail("%v", err)
 	}
 
+	if err := checkEnum("acknowledge", r.Run.Acknowledge); err != nil {
+		return fail("run.%v", err)
+	}
+	switch {
+	case r.Run.Recipe == "" && (r.Run.Claim || r.Run.Acknowledge != "" || r.Run.StartComment != ""):
+		return fail("run.claim, acknowledge and start-comment are a recipe's task's")
+	case r.Run.Claim && r.On != OnIssue:
+		return fail("run.claim is for a rule on issues")
+	case r.Run.Acknowledge != "" && r.On != OnPR:
+		return fail("run.acknowledge is for a rule on pull requests")
+	}
 	switch {
 	case r.Run.Recipe != "" && r.Run.writes():
 		return fail("run is a recipe or GitHub writes, not both")

@@ -36,4 +36,16 @@ func Task(task *api.QueueTask, d rules.Decision, r *rules.Rule) {
 	if d.Phase > 0 {
 		task.Phase = api.TaskPhase(d.Phase)
 	}
+	Declare(task, r)
+}
+
+// Declare puts what the rule's task does on GitHub as it starts and ends
+// on the task (claim, acknowledge, start-comment): when the rule decides
+// it, and again just before it starts, from the rule as it is then (a task
+// queued by an older watch, or one the nudge queued, gets them too).
+func Declare(task *api.QueueTask, r *rules.Rule) {
+	if r == nil {
+		return
+	}
+	task.Claim, task.Acknowledge, task.StartComment = r.Run.Claim, r.Run.Acknowledge, r.Run.StartComment
 }

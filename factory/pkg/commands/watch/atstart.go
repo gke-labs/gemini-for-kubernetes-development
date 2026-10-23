@@ -74,6 +74,10 @@ func (c *watcherTaskCoordinator) Redecide(ctx context.Context, filename string, 
 	if rule == "" || w.rulesControl == nil {
 		return false, ""
 	}
+	// What the task does on GitHub as it starts and ends is the rule's as
+	// it is now: a task queued by an older watch, or by the nudge, carries
+	// none of its own.
+	act.Declare(task, w.rulesControl.Set().Named(rule))
 	var it rules.Item
 	var env rules.Env
 	var err error
