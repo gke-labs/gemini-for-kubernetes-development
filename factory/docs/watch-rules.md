@@ -98,19 +98,41 @@ linked to the issue for fix. A rule does not say which; see
 
 ## Which items a rule sees
 
-The watch tracks a fixed set of open items, from the overseer's settings,
-not from the rules:
+The watch tracks these open items:
 
 | tracked because | items |
 |---|---|
 | labelled | open issues and PRs with the trigger label (`overseer`, or the overseer's own) |
 | assigned | open issues and PRs assigned to a bot of the pool |
 | opened by the watcher | open issues the watcher's own login opened (a workflow's, a chore's, a fan-out's children) |
+| labelled for a rule | open PRs with a label a PR rule requires that is in the overseer's own namespace (`overseer/...`, `<trigger>/...`), for the rules nothing above reaches |
 
 A rule sees every tracked item of its `on` kind, and `when` narrows that:
-`labels`, `assignee`, `author`, `opened-by`, in `any-of` if need be. A rule
-cannot widen the set; an item the overseer should look at gets the trigger
-label or a pool assignee.
+`labels`, `assignee`, `author`, `opened-by`, in `any-of` if need be.
+
+The last row is how a rule reaches a PR someone outside the pool opened:
+a rule that does not say `author: pool` or `assignee: pool`, nor requires
+the trigger label, is listed by the namespaced labels in its `labels.all`
+and `labels.any` (placeholders filled, `*/x` in each prefix), all of them in
+one query (an OR) per full listing. Only the overseer's own labels count,
+and never `*/stop` or `*/ready-for-human`, so a label like `bug` widens
+nothing and mislabelling cannot make the watch list arbitrary items. A
+rule nothing reaches gets a warning when the watch starts. For example,
+`.agents/watch/adopt.yaml`:
+
+```yaml
+name: adopt
+on: pr
+order: 8
+when:
+  author: not-pool                       # someone else's PR
+  labels: {any: ["{{trigger}}/adopt"]}   # listed by overseer/adopt
+run: {recipe: adopt, apply: open-pr, inputs: {strategy: reuse}}
+policy: {dedupe: head}
+```
+
+A PR whose author no rule admits (with factory's rules alone, anyone
+outside the pool) is left there: nothing more of it is read.
 
 ---
 
@@ -124,7 +146,7 @@ Every predicate set must hold. A predicate left out is not checked.
 |---|---|---|
 | `labels` | `{any: [...], all: [...], none: [...]}` | the item has any of `any`, all of `all` and none of `none`. `{{trigger}}` is the trigger label; `*/name` is `name` under any of the overseer's prefixes (`overseer/review`, `kcc/review`). Case-insensitive. |
 | `assignee` | `pool`, `not-pool`, `none` | a bot of the pool is assigned; none is; nobody is |
-| `author` | `pool` | a bot of the pool opened it |
+| `author` | `pool`, `not-pool` | a bot of the pool opened it; someone else did. Factory's PR rules say `pool`: they push to the PR's branch |
 | `last-run` | `failed` | the rule's last run on the item failed; on a PR, on its current head |
 | `any-of` | a list of predicate sets | at least one set holds (see [`any-of`](#any-of)) |
 

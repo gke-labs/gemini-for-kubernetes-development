@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -1504,6 +1505,10 @@ type prFixture struct {
 	// closed makes the pull request read closed, though the listing has it
 	// open (closed between the two).
 	closed bool
+	// human makes the pull request someone outside the pool's (alice's),
+	// unassigned and carrying only labels.
+	human  bool
+	labels []string
 
 	calls []string
 }
@@ -1562,7 +1567,7 @@ func (f *prFixture) route(w http.ResponseWriter, r *http.Request) {
 			Mergeable: mergeablePtr,
 			State:     githubv39.String(map[bool]string{true: "closed", false: "open"}[f.closed]),
 			Body:      githubv39.String(f.body),
-			User:      &githubv39.User{Login: githubv39.String("bot1")},
+			User:      &githubv39.User{Login: githubv39.String(f.authorLocked())},
 			Head:      &githubv39.PullRequestBranch{SHA: githubv39.String(f.headSHA)},
 			CreatedAt: &now,
 		})
@@ -1623,6 +1628,30 @@ func (f *prFixture) route(w http.ResponseWriter, r *http.Request) {
 			f.added = append(f.added, labels...)
 		}
 		_ = json.NewEncoder(w).Encode([]*githubv39.Label{})
+
+	case "/graphql":
+		// The listing of open pull requests by an OR of labels.
+		var body struct {
+			Variables struct {
+				Labels []string `json:"labels"`
+			} `json:"variables"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		var nodes []map[string]any
+		issue := f.listingIssueLocked()
+		for _, l := range issue.Labels {
+			if slices.Contains(body.Variables.Labels, l.GetName()) {
+				var labels []map[string]string
+				for _, l := range issue.Labels {
+					labels = append(labels, map[string]string{"name": l.GetName()})
+				}
+				nodes = append(nodes, map[string]any{"number": f.num, "updatedAt": f.updated, "url": "https://github.com/test-owner/test-repo/pull/" + fmt.Sprint(f.num),
+					"author": map[string]string{"__typename": "User", "login": f.authorLocked()}, "labels": map[string]any{"nodes": labels}, "assignees": map[string]any{"nodes": []any{}}})
+				break
+			}
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"repository": map[string]any{"pullRequests": map[string]any{
+			"pageInfo": map[string]any{"hasNextPage": false}, "nodes": nodes}}}})
 
 	case fmt.Sprintf("%s/issues/%d/timeline", base, f.num):
 		timeline := f.timeline
@@ -2105,6 +2134,19 @@ func TestEvaluate_ReadyForHuman_ReviewLabelAndHumanAssignees(t *testing.T) {
 // caller must hold f.mu.
 func (f *prFixture) listingIssueLocked() *githubv39.Issue {
 	updated := f.updated
+	if f.human {
+		var labels []*githubv39.Label
+		for _, l := range f.labels {
+			labels = append(labels, &githubv39.Label{Name: githubv39.String(l)})
+		}
+		return &githubv39.Issue{
+			Number:           githubv39.Int(f.num),
+			UpdatedAt:        &updated,
+			PullRequestLinks: &githubv39.PullRequestLinks{},
+			User:             &githubv39.User{Login: githubv39.String("alice")},
+			Labels:           labels,
+		}
+	}
 	labels := []*githubv39.Label{{Name: githubv39.String("factory")}}
 	if f.readyForHuman {
 		labels = append(labels, &githubv39.Label{Name: githubv39.String("factory/ready-for-human")})
@@ -2116,6 +2158,14 @@ func (f *prFixture) listingIssueLocked() *githubv39.Issue {
 		Assignees:        []*githubv39.User{{Login: githubv39.String("bot1")}},
 		Labels:           labels,
 	}
+}
+
+// authorLocked is who opened the pull request. The caller must hold f.mu.
+func (f *prFixture) authorLocked() string {
+	if f.human {
+		return "alice"
+	}
+	return "bot1"
 }
 
 // TestSweep_PreservesReadyForHumanWhenMergeableUnknown verifies that an

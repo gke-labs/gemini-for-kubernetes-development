@@ -121,7 +121,10 @@ type Watcher struct {
 	repoRecipeAs map[string]string
 	cfg          *config.FactoryConfig
 	triggerLabel string
-	ghClient     *githubv39.Client
+	// prListingLabels are the labels the PR listings add for the rules the
+	// pool and trigger listings do not reach (rules.Set.ListingLabels).
+	prListingLabels []string
+	ghClient        *githubv39.Client
 	// repoClient is the repository-bound view of ghClient, built once and
 	// shared so that subcontrollers take the owner and repo with the client
 	// rather than as three separate pieces of configuration.
@@ -200,9 +203,11 @@ func (w *Watcher) initComponents() {
 	w.warmWorkspace = w.newWarmWorkspaceController()
 	w.reconciler = w.newReconciler()
 	w.chores = w.newChoreScheduler()
-	w.sharedScan = w.newSharedScan()
 	w.repoRecipeAs = w.loadRepoRecipeAs()
 	w.rulesControl = w.newRulesControl()
+	w.prListingLabels = w.ruleListingLabels()
+	// After the rules: what it tracks includes the labels they are listed by.
+	w.sharedScan = w.newSharedScan()
 	w.rulesSummary = w.newRulesSummary()
 	w.rulesRecorder = rules.NewRecorder(w.RulesRecord, rules.DefaultRecordBytes, w.rulesSummary)
 	w.issueScanner = w.newIssueScanner()

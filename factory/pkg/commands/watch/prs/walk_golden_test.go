@@ -16,6 +16,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/api"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/conventions"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/watch/rules"
 )
 
@@ -252,5 +253,91 @@ func TestEvaluate_ClosedSinceTheListing(t *testing.T) {
 	}
 	if !rec.Item.Closed || len(rec.Decided) > 0 {
 		t.Errorf("record: closed %t, decided %v", rec.Item.Closed, rec.Decided)
+	}
+}
+
+// A rule on someone else's pull request: author: not-pool and a label of
+// the overseer's own. The sweep lists the pull request by that label (one
+// GraphQL query), the scan reads on past the author, and the rule's task
+// is queued with its recipe, apply and inputs. Without the rule, the same
+// pull request is left at the author, as before.
+func TestEvaluate_RuleOnSomeoneElsesPR(t *testing.T) {
+	base, err := rules.Builtin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo, err := rules.LoadFiles(map[string][]byte{
+		"adopt.yaml": []byte("name: adopt\non: pr\norder: 8\nwhen: {author: not-pool, labels: {any: [\"{{trigger}}/adopt\"]}}\nrun: {recipe: adopt, apply: open-pr, inputs: {strategy: reuse}}\npolicy: {dedupe: head}\n"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	withAdopt, err := rules.Overlay(base, repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := rules.Env{Trigger: "factory", Prefixes: conventions.Prefixes("factory")}
+	for _, tc := range []struct {
+		name  string
+		set   rules.Set
+		queue bool
+	}{
+		{"with the rule", withAdopt, true},
+		{"factory's rules alone", base, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			control, err := rules.NewControl(nil, tc.set)
+			if err != nil {
+				t.Fatal(err)
+			}
+			f := &prFixture{num: 50, headSHA: "sha-50", updated: time.Now(), human: true, labels: []string{"factory/adopt"}}
+			dir := t.TempDir()
+			s, _ := newTestScanner(t, dir, testOpts{
+				GitHub: f.start(t), BotUsers: []string{"bot1"}, GitHubLogin: "watcher", TriggerLabel: "factory",
+				Recorder: rules.NewRecorder(filepath.Join(dir, "d.jsonl"), 0, nil), Rules: control,
+			})
+			s.cfg.ListingLabels = tc.set.ListingLabels(rules.OnPR, env)
+			candidates, err := s.scanCandidates(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			// The fixture answers every REST listing with the pull request,
+			// so what tells is the label query: made with the rule only.
+			f.mu.Lock()
+			queried := slices.ContainsFunc(f.calls, func(c string) bool { return c == "POST /graphql" })
+			f.mu.Unlock()
+			if queried != tc.queue || (len(s.cfg.ListingLabels) > 0) != tc.queue {
+				t.Fatalf("label query %t, listing labels %v", queried, s.cfg.ListingLabels)
+			}
+			if !slices.ContainsFunc(candidates, func(c *githubv39.Issue) bool { return c.GetNumber() == 50 }) {
+				t.Fatal("not listed")
+			}
+			f.mu.Lock()
+			issue := f.listingIssueLocked()
+			f.mu.Unlock()
+			s.evaluate(context.Background(), issue)
+			data, err := os.ReadFile(filepath.Join(dir, "incoming", api.RuleTaskFile(true, 50, "adopt")))
+			if !tc.queue {
+				if err == nil {
+					t.Error("queued an adoption without the rule")
+				}
+				f.mu.Lock()
+				defer f.mu.Unlock()
+				if slices.ContainsFunc(f.calls, func(c string) bool { return strings.Contains(c, "/commits") }) {
+					t.Errorf("read on past an author no rule admits: %v", f.calls)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("no adopt task: %v", err)
+			}
+			var task api.QueueTask
+			if err := yaml.Unmarshal(data, &task); err != nil {
+				t.Fatal(err)
+			}
+			if task.Rule != "adopt" || task.Recipe != "adopt" || task.Apply != "open-pr" || task.Inputs["strategy"] != "reuse" || task.Type != api.TypePRRule {
+				t.Errorf("task %+v", task)
+			}
+		})
 	}
 }

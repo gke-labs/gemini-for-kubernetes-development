@@ -1,7 +1,9 @@
 // Package scantest is a fake of GitHub's issue listing for tests: it filters,
 // sorts and pages /repos/{owner}/{repo}/issues as GitHub does for the queries
 // the watch makes (labels, assignee, creator, state, since, sort, direction,
-// per_page, page), and counts the requests made to it.
+// per_page, page), answers the GraphQL listing of open pull requests by an OR
+// of labels (github.Client.OpenPRsLabelled), and counts the requests made to
+// it.
 package scantest
 
 import (
@@ -44,6 +46,10 @@ type Repo struct {
 	listCalls int
 	// queries records each listing request's query string.
 	queries []string
+	// graphQLCalls counts the GraphQL label listings; graphQLLabels records
+	// the labels each asked for.
+	graphQLCalls  int
+	graphQLLabels [][]string
 	// Extra, when set, serves every request that is not the issue listing.
 	Extra http.HandlerFunc
 }
@@ -93,6 +99,7 @@ func (r *Repo) ResetCounts() {
 	defer r.mu.Unlock()
 	r.listCalls = 0
 	r.queries = nil
+	r.graphQLCalls, r.graphQLLabels = 0, nil
 }
 
 // Server serves the fake repository; its URL is the base of a go-github client.
@@ -102,6 +109,10 @@ func (r *Repo) Server() *httptest.Server {
 		path := fmt.Sprintf("/repos/%s/%s/issues", r.Owner, r.Name)
 		if req.Method == http.MethodGet && req.URL.Path == path {
 			r.list(w, req, srv.URL+path)
+			return
+		}
+		if req.Method == http.MethodPost && req.URL.Path == "/graphql" {
+			r.labelled(w, req)
 			return
 		}
 		if r.Extra != nil {
@@ -191,6 +202,56 @@ func (r *Repo) list(w http.ResponseWriter, req *http.Request, base string) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(issues)
+}
+
+// GraphQLCalls is how many GraphQL label listings were made, and the labels
+// each asked for.
+func (r *Repo) GraphQLCalls() (int, [][]string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.graphQLCalls, slices.Clone(r.graphQLLabels)
+}
+
+// labelled answers the open pull requests carrying any of the query's
+// labels, in one page.
+func (r *Repo) labelled(w http.ResponseWriter, req *http.Request) {
+	var body struct {
+		Variables struct {
+			Labels []string `json:"labels"`
+		} `json:"variables"`
+	}
+	_ = json.NewDecoder(req.Body).Decode(&body)
+	r.mu.Lock()
+	r.graphQLCalls++
+	r.graphQLLabels = append(r.graphQLLabels, body.Variables.Labels)
+	type name struct {
+		Name  string `json:"name,omitempty"`
+		Login string `json:"login,omitempty"`
+	}
+	var nodes []map[string]any
+	for _, it := range r.items {
+		if !it.PR || it.State != "open" || !slices.ContainsFunc(body.Variables.Labels, func(l string) bool { return hasFold(it.Labels, l) }) {
+			continue
+		}
+		var labels, assignees []name
+		for _, l := range it.Labels {
+			labels = append(labels, name{Name: l})
+		}
+		for _, a := range it.Assignees {
+			assignees = append(assignees, name{Login: a})
+		}
+		nodes = append(nodes, map[string]any{
+			"number": it.Number, "title": it.Title, "createdAt": it.Created, "updatedAt": it.Updated,
+			"url":    fmt.Sprintf("https://github.com/%s/%s/pull/%d", r.Owner, r.Name, it.Number),
+			"author": map[string]string{"__typename": "User", "login": it.Author},
+			"labels": map[string]any{"nodes": labels}, "assignees": map[string]any{"nodes": assignees},
+		})
+	}
+	r.mu.Unlock()
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"repository": map[string]any{"pullRequests": map[string]any{
+		"pageInfo": map[string]any{"hasNextPage": false, "endCursor": ""}, "nodes": nodes,
+	}}}})
 }
 
 func (it *Item) issue(owner, repo string) *githubv39.Issue {
