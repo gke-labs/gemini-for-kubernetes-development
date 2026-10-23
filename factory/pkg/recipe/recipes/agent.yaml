@@ -147,8 +147,8 @@ start:
         body += ".\n\n### Changes\n" + log
         change = {"title": "chore: " + name, "body": body, "draft": False,
                   "labels": [l for l in os.environ.get("INPUT_LABELS", "").split(",") if l]}
-        with open(os.path.join(os.environ["TASK_DIR"], "change.yaml"), "w") as f:
-            json.dump({"change": change}, f)  # JSON is YAML
+        with open(os.path.join(os.environ["TASK_DIR"], "change.yaml"), "w", encoding="utf-8") as f:
+            json.dump({"change": change}, f, ensure_ascii=False)  # JSON is YAML, as UTF-8 (no surrogate escapes)
         PY
     - if: '{{ and (eq .Inputs.skip_pr "false") (eq .Steps.changed.ExitCode 0) }}'
       uses: push
