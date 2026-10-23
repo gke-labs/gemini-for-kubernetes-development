@@ -242,7 +242,7 @@ func (m *TaskQueueManager) LoadFromDisk() error {
 	m.failures = nil
 	for fn, t := range m.processed {
 		if t.Status == api.StatusFailed {
-			m.failures = append(m.failures, api.Failure{FileName: fn, Number: t.Number, URL: t.URL, Type: t.Type, Error: t.Error, At: t.CompletedAt})
+			m.failures = append(m.failures, api.Failure{FileName: fn, Number: t.Number, URL: t.URL, Type: t.Type, Rule: t.Rule, Recipe: t.Recipe, Error: t.Error, At: t.CompletedAt})
 		}
 	}
 	slices.SortFunc(m.failures, func(a, b api.Failure) int { return a.At.Compare(b.At) })
@@ -844,6 +844,8 @@ func (m *TaskQueueManager) noteOutcome(filename string, t *api.QueueTask, status
 		Number:   t.Number,
 		URL:      t.URL,
 		Type:     t.Type,
+		Rule:     t.Rule,
+		Recipe:   t.Recipe,
 		Error:    t.Error,
 		At:       t.CompletedAt,
 	})
@@ -874,6 +876,8 @@ func (m *TaskQueueManager) DropTask(filename string, task *api.QueueTask, reason
 		Number:   task.Number,
 		URL:      task.URL,
 		Type:     task.Type,
+		Rule:     task.Rule,
+		Recipe:   task.Recipe,
 		Reason:   reason,
 		At:       time.Now(),
 	})

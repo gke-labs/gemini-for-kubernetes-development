@@ -99,9 +99,13 @@ func (s *Server) getOverseerLogs(c *gin.Context) {
 }
 
 type QueueTaskItem struct {
-	FileName         string  `json:"fileName"`
-	QueueState       string  `json:"queueState"`
-	Type             string  `json:"type"`
+	FileName   string `json:"fileName"`
+	QueueState string `json:"queueState"`
+	Type       string `json:"type"`
+	// Rule and Recipe are the rule that decided the task and the recipe it
+	// runs; an older watch serves neither (queueRecipes).
+	Rule             string  `json:"rule,omitempty"`
+	Recipe           string  `json:"recipe,omitempty"`
 	URL              string  `json:"url"`
 	Number           int     `json:"number"`
 	Priority         string  `json:"priority"`
@@ -183,6 +187,8 @@ type QueueFailureItem struct {
 	Number   int    `json:"number"`
 	URL      string `json:"url,omitempty"`
 	Type     string `json:"type"`
+	Rule     string `json:"rule,omitempty"`
+	Recipe   string `json:"recipe,omitempty"`
 	// Error is the child's exit status and the error it printed.
 	Error string `json:"error"`
 	At    string `json:"at"`

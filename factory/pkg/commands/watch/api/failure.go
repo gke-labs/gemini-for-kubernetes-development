@@ -9,6 +9,8 @@ type Failure struct {
 	Number   int
 	URL      string
 	Type     TaskType
+	Rule     string
+	Recipe   string
 	Error    string
 	At       time.Time
 }
@@ -20,6 +22,8 @@ func (f Failure) Item() QueueFailure {
 		Number:   f.Number,
 		URL:      f.URL,
 		Type:     f.Type,
+		Rule:     f.Rule,
+		Recipe:   f.Recipe,
 		Error:    f.Error,
 		At:       f.At.UTC().Format(time.RFC3339),
 	}

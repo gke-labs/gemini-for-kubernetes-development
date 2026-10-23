@@ -12,6 +12,8 @@ type Drop struct {
 	Number   int
 	URL      string
 	Type     TaskType
+	Rule     string
+	Recipe   string
 	Reason   string
 	At       time.Time
 }
@@ -23,6 +25,8 @@ func (d Drop) Item() QueueDrop {
 		Number:   d.Number,
 		URL:      d.URL,
 		Type:     d.Type,
+		Rule:     d.Rule,
+		Recipe:   d.Recipe,
 		Reason:   d.Reason,
 		At:       d.At.UTC().Format(time.RFC3339),
 	}

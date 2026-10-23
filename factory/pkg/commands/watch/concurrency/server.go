@@ -84,6 +84,8 @@ func (m *TaskQueueManager) GetQueueResponse() api.QueueResponse {
 			FileName:         filename,
 			QueueState:       queueState,
 			Type:             t.Type,
+			Rule:             t.Rule,
+			Recipe:           t.Recipe,
 			URL:              t.URL,
 			Number:           t.Number,
 			Priority:         tPrio,

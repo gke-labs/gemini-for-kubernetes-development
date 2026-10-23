@@ -126,7 +126,8 @@ type OverseerFailure struct {
 	At     string `json:"at"`
 }
 
-// queueRecipes is the recipe each queue task type runs.
+// queueRecipes is the recipe each queue task type runs, for a watch that
+// does not say (queueRecipe).
 var queueRecipes = map[string]string{
 	"issue-fix":      "fix",
 	"pr-investigate": "care-ci",
@@ -134,6 +135,15 @@ var queueRecipes = map[string]string{
 	"pr-iterate":     "care-rebase",
 	"pr-review":      "review",
 	"agent-chore":    "agent",
+}
+
+// queueRecipe is the recipe a queued or failed task runs: the one the watch
+// says it runs, else its type's (an older watch).
+func queueRecipe(recipe, taskType string) string {
+	if recipe != "" {
+		return recipe
+	}
+	return queueRecipes[taskType]
 }
 
 // fetchOverseerQueue is the watch's queue in the overseer's controller
@@ -440,7 +450,7 @@ func buildOverseerWork(namespace string, sandboxes []unstructured.Unstructured, 
 				}
 				r := row(issue, pr, "")
 				r.Queued = append(r.Queued, OverseerQueuedTask{
-					FileName: t.FileName, Type: t.Type, Recipe: queueRecipes[t.Type], State: state,
+					FileName: t.FileName, Type: t.Type, Recipe: queueRecipe(t.Recipe, t.Type), State: state,
 					Rank: t.Rank, Priority: t.Priority, Assignee: t.Assignee, EnqueuedAt: t.EnqueuedAt,
 				})
 			}
@@ -481,7 +491,7 @@ func buildOverseerWork(namespace string, sandboxes []unstructured.Unstructured, 
 				r.HTMLURL = f.URL
 			}
 			if r.Failure == nil || f.At > r.Failure.At {
-				r.Failure = &OverseerFailure{Type: f.Type, Recipe: queueRecipes[f.Type], Error: f.Error, At: f.At}
+				r.Failure = &OverseerFailure{Type: f.Type, Recipe: queueRecipe(f.Recipe, f.Type), Error: f.Error, At: f.At}
 			}
 		}
 	}
