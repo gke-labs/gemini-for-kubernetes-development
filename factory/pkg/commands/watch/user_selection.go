@@ -8,7 +8,7 @@ import (
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/api"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/k8s"
-	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/watch/rules"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/recipe"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/klog/v2"
 )
@@ -20,19 +20,20 @@ import (
 // the factory role configuration and the cluster: an issue whose sandbox
 // already exists is pinned to the account that sandbox belongs to, so that a
 // resumed task keeps the credentials and the workspace it started with.
-func (w *Watcher) selectUserForTask(ctx context.Context, taskType api.TaskType, as string, prNum int) (string, error) {
+func (w *Watcher) selectUserForTask(ctx context.Context, taskType api.TaskType, recipeName string, prNum int) (string, error) {
 	if w.cfg == nil || len(w.cfg.Roles) == 0 {
 		return "", nil // default fallback to factory-user
 	}
 
-	// 1. The role: the task's rule's run.as - a pool, or author, the
-	// pool the PR's author is in - else, for a task no rule decided (one
-	// queued before rules said, a scheduled chore), its type's.
+	// 1. The role: what the task's recipe says it runs as - a pool, or
+	// author, the pool the PR's author is in - else, for a task with no
+	// recipe (a scheduled chore, a nudged workflow step queued before),
+	// its type's.
 	var role string
-	switch as {
+	switch as := w.recipeAs(recipeName); as {
 	case "":
 		role = w.roleOfTaskType(ctx, taskType, prNum)
-	case rules.AsAuthor:
+	case recipe.AsAuthor:
 		role = w.authorRole(ctx, prNum)
 	default:
 		role = as
@@ -198,4 +199,20 @@ func (w *Watcher) authorRole(ctx context.Context, prNum int) string {
 		}
 	}
 	return "coder"
+}
+
+// recipeAs is who the recipe named runs as (recipe.Recipe.As): the
+// repository's recipe of that name when the watch read one (RepoRecipeAs),
+// else factory's; "" for no recipe, or one neither has.
+func (w *Watcher) recipeAs(name string) string {
+	if name == "" {
+		return ""
+	}
+	if as, ok := w.repoRecipeAs[name]; ok {
+		return as
+	}
+	if _, rec, err := recipe.Builtin(name); err == nil {
+		return rec.As
+	}
+	return ""
 }

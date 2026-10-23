@@ -24,6 +24,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/scan"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/warmworkspace"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/recipe"
 	factorysandbox "github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/sandbox"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/watch/rules"
 )
@@ -118,7 +119,7 @@ func (w *Watcher) proposeFanout(ctx context.Context, n int) error {
 	if w.ProposeFanout == nil {
 		return fmt.Errorf("this watcher cannot run recipes")
 	}
-	user, err := w.selectUserForTask(ctx, api.TypeIssueFix, "coder", n)
+	user, err := w.selectUserForTask(ctx, api.TypeIssueFix, "fanout", n)
 	if err != nil {
 		return fmt.Errorf("choosing the account for the fanout recipe on #%d: %w", n, err)
 	}
@@ -147,7 +148,7 @@ func (w *Watcher) newWarmWorkspaceController() *warmworkspace.Controller {
 		Warm: func(ctx context.Context) error {
 			// The account a fix would clone as: the repository may be
 			// private, and the watcher's own may be no coder's.
-			user, err := w.selectUserForTask(ctx, api.TypeIssueFix, "coder", 0)
+			user, err := w.selectUserForTask(ctx, api.TypeIssueFix, "warm", 0)
 			if err != nil {
 				return fmt.Errorf("choosing the account for the warm recipe: %w", err)
 			}
@@ -424,8 +425,8 @@ type watcherUserSelector struct {
 var _ issues.UserSelector = watcherUserSelector{}
 
 // SelectUser returns the bot account a task for the given entity should run as.
-func (s watcherUserSelector) SelectUser(ctx context.Context, taskType api.TaskType, as string, number int) (string, error) {
-	return s.w.selectUserForTask(ctx, taskType, as, number)
+func (s watcherUserSelector) SelectUser(ctx context.Context, taskType api.TaskType, recipeName string, number int) (string, error) {
+	return s.w.selectUserForTask(ctx, taskType, recipeName, number)
 }
 
 // watcherTaskCoordinator adapts the watcher's GitHub interactions to the TaskCoordinator interface.
@@ -468,8 +469,8 @@ func shortSHA(sha string) string {
 func (c *watcherTaskCoordinator) SelectUser(ctx context.Context, task *api.QueueTask) (string, error) {
 	w := c.w
 	selectedUser := task.Assignee
-	if selectedUser == "" || (api.IsPRTask(task.Type) && strings.EqualFold(selectedUser, w.targetAssignee)) || !w.inPool(task.As, selectedUser) {
-		return w.selectUserForTask(ctx, task.Type, task.As, task.Number)
+	if selectedUser == "" || (api.IsPRTask(task.Type) && strings.EqualFold(selectedUser, w.targetAssignee)) || !w.inPool(w.recipeAs(task.Recipe), selectedUser) {
+		return w.selectUserForTask(ctx, task.Type, task.Recipe, task.Number)
 	}
 	return selectedUser, nil
 }
@@ -478,7 +479,7 @@ func (c *watcherTaskCoordinator) SelectUser(ctx context.Context, task *api.Queue
 // for author (the PR's own bot) or a task no rule decided, else a member
 // of that pool - a review the PR's author was put on runs as a reviewer.
 func (w *Watcher) inPool(as, user string) bool {
-	if as == "" || as == rules.AsAuthor || w.cfg == nil {
+	if as == "" || as == recipe.AsAuthor || w.cfg == nil {
 		return true
 	}
 	role, ok := w.cfg.Roles[as]

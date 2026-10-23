@@ -20,6 +20,7 @@
 name: care-rebase
 label: Rebase
 on: [my-pr]
+as: author
 session: care
 
 inputs:

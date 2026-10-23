@@ -157,3 +157,48 @@ func composeRepoWatchRules(base rules.Set, files map[string][]byte, repoRecipes 
 	}
 	return set, append(skipped, more...), len(repoRules), nil
 }
+
+// repoRecipeAs is who owner/repo's own recipes (.agents/recipes) run as, by
+// name, as the repository recipe mode lets them in: augment, the recipes of
+// names of their own (parseRepoRecipe: author or coder); replace, any
+// (parseReplacingRecipe), a built-in's name included. Off or unset, none.
+// A file that is not such a recipe is left out, with a warning.
+func repoRecipeAs(owner, repo string) func(ctx context.Context) (map[string]string, error) {
+	return func(ctx context.Context) (map[string]string, error) {
+		mode := repoRecipeMode()
+		if mode == "" || mode == "off" {
+			return nil, nil
+		}
+		gh, err := github.NewClient(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("creating github client: %w", err)
+		}
+		files, rev, err := repoDirFiles(ctx, gh, owner, repo, repoRecipesDir)
+		if err != nil {
+			return nil, err
+		}
+		return recipeAsOf(files, mode, rev), nil
+	}
+}
+
+// recipeAsOf is the as of each recipe file the mode lets in, by name.
+func recipeAsOf(files map[string][]byte, mode, rev string) map[string]string {
+	parse := parseRepoRecipe
+	if mode == "replace" {
+		parse = parseReplacingRecipe
+	}
+	as := map[string]string{}
+	for file, data := range files {
+		name, ok := strings.CutSuffix(file, ".yaml")
+		if !ok {
+			continue
+		}
+		rec, err := parse(name, data)
+		if err != nil {
+			klog.Warningf("The repository's recipe %s/%s at %s: %v; left out", repoRecipesDir, file, rev, err)
+			continue
+		}
+		as[name] = rec.As
+	}
+	return as
+}

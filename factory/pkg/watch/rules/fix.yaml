@@ -37,7 +37,6 @@ when:
   workflow: none
 run:
   recipe: fix
-  as: coder
   apply: open-pr
   inputs:
     draft: "false"

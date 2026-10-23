@@ -11,6 +11,7 @@
 name: fanout
 label: Fan out
 on: [issue]
+as: coder
 # Applies only to an issue marked a fan-out parent, as the watch daemon
 # marks one: overseer/fanout or <trigger>/fanout.
 applicable-when:

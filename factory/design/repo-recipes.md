@@ -72,6 +72,7 @@ A repository recipe gets nothing a built-in does not, and less by default:
 - the token-holding steps are still the closed `uses:` set (`NamedSteps`): a recipe can choose among them but cannot add one;
 - `identity: deployer` in a repository recipe needs the board to allow it (`spec.repoRecipes.identity: true`), because it reaches the member's GCP project;
 - `credentials:` defaults to `full`, as for built-ins (the engine GitHub write-access note applies to every recipe alike);
+- `as:` is required, and may be only `author` or `coder`: the operator decides which bots review or act as agents (in replace mode, which hands the repository its recipes, any role);
 - task-output actions are the known verbs; nothing in a recipe adds one.
 
 ## Results are files the agent writes

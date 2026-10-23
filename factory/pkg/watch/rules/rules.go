@@ -194,15 +194,6 @@ type Run struct {
 	Apply  string            `yaml:"apply,omitempty" json:"apply,omitempty"`
 	Inputs map[string]string `yaml:"inputs,omitempty" json:"inputs,omitempty"`
 
-	// As is who runs the recipe's task: author, the PR's own bot (the pool
-	// bot assigned to it, else its author: its branch is in that bot's
-	// fork), or a pool of the overseer's roles - coder, agent, reviewer -
-	// pinned to the item (its sandbox's bot, then a pool bot assigned to
-	// it), else any of the pool. Which bots are in which pool is the
-	// operator's (spec.roles); a repository's rule names only author or
-	// coder.
-	As string `yaml:"as,omitempty" json:"as,omitempty"`
-
 	// What the recipe's task does on GitHub as it starts and ends, made by
 	// the watcher. Claim (issues) assigns the issue to the task's bot when
 	// it starts, in the watcher's place. Acknowledge feedback (PRs) marks
@@ -411,7 +402,6 @@ var enums = map[string][]string{
 	"dedupe":      {"head", "update"},
 	"revisit":     {"every-scan"},
 	"acknowledge": {AcknowledgeFeedback},
-	"as":          {AsAuthor, "coder", "agent", "reviewer"},
 	"since":       {"head", "human", "pause"},
 }
 
@@ -497,9 +487,6 @@ var (
 		OnPR:    {ReviewInstructions},
 	}
 )
-
-// AsAuthor is run.as for the PR's own bot.
-const AsAuthor = "author"
 
 // AcknowledgeFeedback is run.acknowledge's one value: the feedback a PR's
 // task answers.
@@ -596,20 +583,6 @@ func (r *Rule) Validate() error {
 
 	if err := checkEnum("acknowledge", r.Run.Acknowledge); err != nil {
 		return fail("run.%v", err)
-	}
-	if err := checkEnum("as", r.Run.As); err != nil {
-		return fail("run.%v", err)
-	}
-	switch {
-	case r.Run.Recipe != "" && r.Run.As == "":
-		return fail("run.as is required with a recipe: who runs it (author, coder, agent or reviewer)")
-	case r.Run.Recipe == "" && r.Run.As != "":
-		return fail("run.as is a recipe's task's")
-	case r.Run.As == AsAuthor && r.On != OnPR:
-		return fail("run.as author is for a rule on pull requests")
-	case r.Source == SourceRepo && r.Run.As != "" && r.Run.As != AsAuthor && r.Run.As != "coder":
-		// The operator, not a repository, decides which bot does what.
-		return fail("run.as %s: a repository's rule runs as author or coder", r.Run.As)
 	}
 	switch {
 	case r.Run.Recipe == "" && (r.Run.Claim || r.Run.Acknowledge != "" || r.Run.StartComment != ""):

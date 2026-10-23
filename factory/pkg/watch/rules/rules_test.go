@@ -83,7 +83,6 @@ when:
 run:
   recipe: care-ci
   apply: post-replies
-  as: author
 `
 
 func TestValidateErrors(t *testing.T) {
@@ -136,7 +135,7 @@ func TestValidateErrors(t *testing.T) {
 		// The counts' resets, the cooldown's reset and skip.
 		{"since a list", base + "policy:\n  give-up: {attempts: 3, since: [head, human, pause]}\n", ""},
 		{"since unknown", base + "policy:\n  give-up: {attempts: 3, since: [head, moon]}\n", `since: "moon"`},
-		{"reset-on head on issue", strings.Replace(strings.Replace(base, "on: pr", "on: issue", 1), "as: author", "as: coder", 1) + "policy:\n  cooldown: {success: 1h, reset-on: [head]}\n", "reset-on: head is a PR's"},
+		{"reset-on head on issue", strings.Replace(base, "on: pr", "on: issue", 1) + "policy:\n  cooldown: {success: 1h, reset-on: [head]}\n", "reset-on: head is a PR's"},
 		{"skip-when beyond assignee", base + "policy:\n  cooldown: {success: 1h, skip-when: {checks: failing}}\n", "skip-when says assignee, and only that"},
 
 		// Placeholders and named durations are the engine's closed set.
@@ -235,9 +234,9 @@ func TestOverlay(t *testing.T) {
 		"review.yaml":   {Data: []byte("name: review\nenabled: false\n")},
 		"inactive.yaml": {Data: []byte("name: inactive\nenabled: true\n")},
 		"ci.yaml": {Data: []byte("name: ci\non: pr\norder: 30\n" +
-			"when: {labels: {any: [\"{{trigger}}\"]}, checks: failing}\nrun: {recipe: care-ci, as: author}\n" +
+			"when: {labels: {any: [\"{{trigger}}\"]}, checks: failing}\nrun: {recipe: care-ci}\n" +
 			"policy: {give-up: {attempts: 5}}\n")},
-		"docs.yaml": {Data: []byte("name: docs\non: issue\norder: 30\nwhen: {labels: {any: [docs]}}\nrun: {recipe: fix, as: coder}\n")},
+		"docs.yaml": {Data: []byte("name: docs\non: issue\norder: 30\nwhen: {labels: {any: [docs]}}\nrun: {recipe: fix}\n")},
 		"README.md": {Data: []byte("not a rule")},
 	})
 	if err != nil {
@@ -301,7 +300,7 @@ func TestCompose(t *testing.T) {
 	}
 	repo, err := LoadFiles(map[string][]byte{
 		"review.yaml": []byte("name: review\nenabled: false\n"),
-		"extra.yaml":  []byte("name: extra\non: pr\norder: 99\nwhen: {checks: green}\nrun: {recipe: summarize, as: author}\n"),
+		"extra.yaml":  []byte("name: extra\non: pr\norder: 99\nwhen: {checks: green}\nrun: {recipe: summarize}\n"),
 		"notes.txt":   []byte("ignored"),
 	})
 	if err != nil || len(repo) != 2 {
@@ -326,7 +325,7 @@ func TestCompose(t *testing.T) {
 // policy.revisit is every-scan or nothing; {{review-instructions}} is an
 // input of a rule on pull requests, which Asks reports.
 func TestRevisitAndReviewInstructions(t *testing.T) {
-	ok := "name: r\non: pr\norder: 99\nwhen: {checks: green}\nrun: {recipe: review, as: reviewer, inputs: {instructions: \"{{review-instructions}}\"}}\npolicy: {revisit: every-scan}\n"
+	ok := "name: r\non: pr\norder: 99\nwhen: {checks: green}\nrun: {recipe: review, inputs: {instructions: \"{{review-instructions}}\"}}\npolicy: {revisit: every-scan}\n"
 	r, err := Parse([]byte(ok))
 	if err != nil {
 		t.Fatal(err)
@@ -339,7 +338,7 @@ func TestRevisitAndReviewInstructions(t *testing.T) {
 	}
 	for name, y := range map[string]string{
 		"bad revisit":           strings.Replace(ok, "every-scan", "sometimes", 1),
-		"instructions on issue": "name: r\non: issue\norder: 99\nwhen: {labels: {all: [x]}}\nrun: {recipe: review, as: reviewer, inputs: {instructions: \"{{review-instructions}}\"}}\n",
+		"instructions on issue": "name: r\non: issue\norder: 99\nwhen: {labels: {all: [x]}}\nrun: {recipe: review, inputs: {instructions: \"{{review-instructions}}\"}}\n",
 	} {
 		r, err := Parse([]byte(y))
 		if err == nil {

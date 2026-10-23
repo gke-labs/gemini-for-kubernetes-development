@@ -22,6 +22,7 @@
 name: agent
 label: Agent
 on: [repo]
+as: agent
 sandbox:
   kind: agent
 task-type: agent

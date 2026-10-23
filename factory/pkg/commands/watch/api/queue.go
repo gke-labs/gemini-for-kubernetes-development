@@ -136,10 +136,6 @@ type QueueTask struct {
 	CommitSHA    string   `yaml:"commitSHA,omitempty"`
 	RetryCount   int      `yaml:"retryCount,omitempty"`
 	Instructions []string `yaml:"instructions,omitempty"`
-	// As is who runs the task, its rule's run.as: author (the PR's own
-	// bot) or a pool (coder, agent, reviewer); empty for a task no rule
-	// decided, which runs as its type's role.
-	As string `yaml:"as,omitempty"`
 	// Claim, Acknowledge and StartComment are what the task does on GitHub
 	// as it starts and ends, the rule's (rules.Run): assign the issue to
 	// its bot, acknowledge the feedback it answers, post a comment.

@@ -14,7 +14,6 @@ when:
   checks: failing
 run:
   recipe: care-ci
-  as: author
   apply: post-replies
   start-comment: "🤖 AI Factory started investigating CI check failures for this pull request.\n\nNote: We recommend waiting for the 'ready-for-human' label before leaving review comments. Comments added while the system is actively working may be associated with outdated commits once a new commit is pushed, causing them to be ignored."
 policy:

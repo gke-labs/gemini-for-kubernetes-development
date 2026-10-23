@@ -218,8 +218,8 @@ func (n *Nudger) selectUser(ctx context.Context, num int) string {
 	if n.users == nil {
 		return n.cfg.TargetAssignee
 	}
-	// A workflow step runs as the workflow rule's: an agent.
-	assignee, err := n.users.SelectUser(ctx, api.TypeAgentChore, "agent", num)
+	// A workflow step runs the workflow recipe, as it says.
+	assignee, err := n.users.SelectUser(ctx, api.TypeAgentChore, "workflow", num)
 	if err != nil {
 		klog.Errorf("Failed to select user for issue #%d: %v", num, err)
 		return n.cfg.TargetAssignee

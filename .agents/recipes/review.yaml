@@ -17,6 +17,7 @@
 name: review
 timeout: 45m
 on: [pr]
+as: reviewer
 credentials: clone
 
 inputs:

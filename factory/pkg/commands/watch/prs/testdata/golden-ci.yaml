@@ -12,7 +12,6 @@ task:
     assignee: bot1
     status: Pending
     commitSHA: 0123456789abcdef
-    as: author
     startComment: "\U0001F916 AI Factory started investigating CI check failures for this pull request.\n\nNote: We recommend waiting for the 'ready-for-human' label before leaving review comments. Comments added while the system is actively working may be associated with outdated commits once a new commit is pushed, causing them to be ignored."
     runName: investigate-10-0123456-<enqueued>
     rule: ci

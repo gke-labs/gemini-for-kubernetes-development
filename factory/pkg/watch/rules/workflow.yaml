@@ -28,7 +28,6 @@ when:
   workflow: any
 run:
   recipe: workflow
-  as: agent
   claim: true
 policy:
   cooldown: {success: "{{workflow-cooldown}}", failure: 20m}

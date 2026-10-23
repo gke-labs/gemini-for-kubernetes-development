@@ -515,13 +515,13 @@ func TestTaskRecipe(t *testing.T) {
 // file, or declare a sandbox of its own.
 func TestResolveRepoRecipe(t *testing.T) {
 	files := map[string]string{
-		".agents/recipes/explain-pr.yaml": "name: explain-pr\non: [pr]\nstart: {steps: [{ask: explain}]}\n",
-		".agents/recipes/misnamed.yaml":   "name: other\nstart: {steps: [{run: x}]}\n",
-		".agents/recipes/fix.yaml":        "name: fix\nstart: {steps: [{run: evil}]}\n",
-		".agents/recipes/own.yaml":        "name: own\non: [repo]\nsandbox: {kind: warm}\nstart: {steps: [{run: x}]}\n",
-		".agents/recipes/caring.yaml":     "name: caring\non: [my-pr]\nsession: care\nstart: {steps: [{ask: a}]}\n",
-		".agents/recipes/sized.yaml":      "name: sized\non: [repo]\nsandbox: {prefix: tools, cpu-request: '8', cpu-limit: '8', memory-request: 8Gi, memory-limit: 8Gi, ephemeral-storage: 10Gi, disk: 100Gi}\nstart: {steps: [{ask: a}]}\n",
-		".agents/recipes/revised.yaml":    "name: revised\nstart: {steps: [{ask: a, capture: out.md}]}\noutputs: [out.md]\ntask-output: {kind: Summary, from: out.md}\nrevise: [{id: again, label: Again, steps: [{ask: b, capture: out.md}]}]\n",
+		".agents/recipes/explain-pr.yaml": "name: explain-pr\nas: coder\non: [pr]\nstart: {steps: [{ask: explain}]}\n",
+		".agents/recipes/misnamed.yaml":   "name: other\nas: coder\nstart: {steps: [{run: x}]}\n",
+		".agents/recipes/fix.yaml":        "name: fix\nas: coder\nstart: {steps: [{run: evil}]}\n",
+		".agents/recipes/own.yaml":        "name: own\nas: coder\non: [repo]\nsandbox: {kind: warm}\nstart: {steps: [{run: x}]}\n",
+		".agents/recipes/caring.yaml":     "name: caring\nas: coder\non: [my-pr]\nsession: care\nstart: {steps: [{ask: a}]}\n",
+		".agents/recipes/sized.yaml":      "name: sized\nas: coder\non: [repo]\nsandbox: {prefix: tools, cpu-request: '8', cpu-limit: '8', memory-request: 8Gi, memory-limit: 8Gi, ephemeral-storage: 10Gi, disk: 100Gi}\nstart: {steps: [{ask: a}]}\n",
+		".agents/recipes/revised.yaml":    "name: revised\nas: coder\nstart: {steps: [{ask: a, capture: out.md}]}\noutputs: [out.md]\ntask-output: {kind: Summary, from: out.md}\nrevise: [{id: again, label: Again, steps: [{ask: b, capture: out.md}]}]\n",
 	}
 	var read []string
 	repo := func(_ context.Context, path string) ([]byte, string, error) {
@@ -566,9 +566,9 @@ func TestResolveRepoRecipe(t *testing.T) {
 // factory's when it has none.
 func TestRepoRecipeModes(t *testing.T) {
 	files := map[string]string{
-		".agents/recipes/fix.yaml":        "name: fix\non: [issue]\nstart: {steps: [{run: kcc-fix}]}\n",
-		".agents/recipes/explain-pr.yaml": "name: explain-pr\non: [pr]\nstart: {steps: [{ask: explain}]}\n",
-		".agents/recipes/misnamed.yaml":   "name: other\nstart: {steps: [{run: x}]}\n",
+		".agents/recipes/fix.yaml":        "name: fix\nas: coder\non: [issue]\nstart: {steps: [{run: kcc-fix}]}\n",
+		".agents/recipes/explain-pr.yaml": "name: explain-pr\nas: coder\non: [pr]\nstart: {steps: [{ask: explain}]}\n",
+		".agents/recipes/misnamed.yaml":   "name: other\nas: coder\nstart: {steps: [{run: x}]}\n",
 	}
 	var read []string
 	repo := func(_ context.Context, path string) ([]byte, string, error) {
@@ -749,7 +749,7 @@ func TestMergeCatalog(t *testing.T) {
 	triage, _, _ := recipe.Builtin("triage")
 	care, _, _ := recipe.Builtin("care-ci")
 	warm, _, _ := recipe.Builtin("warm")
-	own := "name: mine\non: [issue]\nstart: {steps: [{ask: a}]}\n"
+	own := "name: mine\nas: coder\non: [issue]\nstart: {steps: [{ask: a}]}\n"
 
 	got := source(mergeCatalog(builtins, []catalogEntry{entry("triage", string(triage), parseRepoRecipe), entry("mine", own, parseRepoRecipe)}, false))
 	if got["triage"] != "builtin" || got["mine"] != ".agents/recipes/mine.yaml" || !strings.Contains(got["triage!"], "built-in recipe's name") {
@@ -780,7 +780,7 @@ func TestMergeCatalog(t *testing.T) {
 		t.Errorf("a broken group = %v", got)
 	}
 	// So does a repository's own group without its default.
-	got = source(mergeCatalog(builtins, []catalogEntry{entry("deploy-check", "name: deploy-check\non: [issue]\nsession: deploy\nstart: {steps: [{ask: a}]}\n", parseRepoRecipe)}, false))
+	got = source(mergeCatalog(builtins, []catalogEntry{entry("deploy-check", "name: deploy-check\nas: coder\non: [issue]\nsession: deploy\nstart: {steps: [{ask: a}]}\n", parseRepoRecipe)}, false))
 	if _, ok := got["deploy-check"]; ok || !strings.Contains(got["deploy-check!"], "no recipe is named deploy") {
 		t.Errorf("a repository group = %v", got)
 	}

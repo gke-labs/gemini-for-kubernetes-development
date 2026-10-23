@@ -4,6 +4,7 @@
 # publishes, or `--apply` once the task is done.
 name: triage
 on: [issue]
+as: coder
 
 inputs:
   instructions:
