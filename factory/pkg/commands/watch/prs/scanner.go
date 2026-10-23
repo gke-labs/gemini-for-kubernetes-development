@@ -503,6 +503,13 @@ func (s *Scanner) evaluate(ctx context.Context, prIssue *githubv39.Issue) {
 		return
 	}
 	s.rec.Fill(func(it *rules.Item) { fillPR(it, pr) })
+	// Closed since the listing (a human closing it with a comment, say):
+	// nothing more on it, as for the stop label.
+	if pr.GetState() == "closed" {
+		klog.Infof("Skipping PR #%d because it was closed after the listing", num)
+		_ = s.queue.RemovePendingTasksForNumber(num)
+		return
+	}
 
 	// A pull request in the merge queue is out of the watcher's hands: pushing
 	// to it now would only knock it back out.
