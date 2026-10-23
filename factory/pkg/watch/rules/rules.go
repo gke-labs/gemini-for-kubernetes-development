@@ -157,7 +157,7 @@ type When struct {
 	// Any item.
 	Labels   *Labels `yaml:"labels,omitempty" json:"labels,omitempty"`
 	Assignee string  `yaml:"assignee,omitempty" json:"assignee,omitempty"` // pool | not-pool | none | owner
-	Author   string  `yaml:"author,omitempty" json:"author,omitempty"`     // pool | trusted
+	Author   string  `yaml:"author,omitempty" json:"author,omitempty"`     // pool | not-pool
 	// LastRun is the outcome of the rule's last run on the item, and on a
 	// PR on its current head: failed.
 	LastRun string `yaml:"last-run,omitempty" json:"last-run,omitempty"`
@@ -395,7 +395,7 @@ func (w When) set() []string {
 // enums are the values a string predicate or field may take.
 var enums = map[string][]string{
 	"assignee":     {"pool", "not-pool", "none"},
-	"author":       {"pool"},
+	"author":       {"pool", "not-pool"},
 	"linked-pr":    {"none", "open"},
 	"connected-pr": {"none", "open"},
 	"workflow":     {"none", "any", "missing"},

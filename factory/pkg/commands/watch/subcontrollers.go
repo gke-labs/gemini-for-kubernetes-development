@@ -228,8 +228,29 @@ func (w *Watcher) newSharedScan() *scan.Store {
 		TriggerLabel: w.triggerLabel,
 		BotUsers:     w.allBotUsers,
 		GitHubLogin:  w.githubLogin,
+		Labels:       w.prListingLabels,
 		StatePath:    w.scanStatePath(),
 	}, w.repoClient)
+}
+
+// ruleListingLabels are the labels the PR listings add for the rules on
+// pull requests that the pool and trigger listings do not reach - their
+// overseer-namespaced labels (rules.Set.ListingLabels) - logged, with a
+// warning for a rule no listing reaches at all.
+func (w *Watcher) ruleListingLabels() []string {
+	if w.rulesControl == nil {
+		return nil
+	}
+	set := w.rulesControl.Set()
+	env := rules.Env{Trigger: w.triggerLabel, Prefixes: conventions.Prefixes(w.triggerLabel)}
+	for _, name := range set.Unlisted(rules.OnPR, env) {
+		klog.Warningf("Watch rules: the rule %s names nothing a listing narrows on (author: pool, assignee: pool, the trigger label, or a label of the overseer's own, %s/...): it sees only pull requests listed for other rules", name, strings.Join(env.Prefixes, "/..., "))
+	}
+	labels := set.ListingLabels(rules.OnPR, env)
+	if len(labels) > 0 {
+		klog.Infof("Watch rules: pull requests are also listed by %s", strings.Join(labels, ", "))
+	}
+	return labels
 }
 
 // scanStatePath is where the shared scan's snapshot persists: ScanState,
@@ -313,6 +334,7 @@ func (w *Watcher) prScannerConfig() prs.Config {
 	return prs.Config{
 		Interval:          prs.DefaultInterval,
 		SweepInterval:     prs.DefaultSweepInterval,
+		ListingLabels:     w.prListingLabels,
 		TriggerLabel:      w.triggerLabel,
 		GitHubLogin:       w.githubLogin,
 		BotUsers:          w.allBotUsers,

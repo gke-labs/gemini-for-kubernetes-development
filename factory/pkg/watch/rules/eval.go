@@ -210,11 +210,8 @@ func (w When) holds(r *Rule, it Item, env Env, runs []PastRun) bool {
 			return false
 		}
 	}
-	switch w.Author {
-	case "pool":
-		if !anyIn([]string{it.Author}, env.Pool) {
-			return false
-		}
+	if !w.admitsAuthor(it.Author, env) {
+		return false
 	}
 	if w.LastRun == "failed" {
 		last, ok := lastRun(runs)

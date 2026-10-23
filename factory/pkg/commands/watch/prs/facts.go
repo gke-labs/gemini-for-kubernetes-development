@@ -3,8 +3,6 @@ package prs
 import (
 	"context"
 	"fmt"
-	"slices"
-	"strings"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/watch/rules"
 )
@@ -14,7 +12,7 @@ import (
 // rules explain. It writes nothing - no label sync, no pause, no state -
 // and, unlike a scan, does not stop at an active task: the caller decides
 // as if its own task were not there. It stops where nothing more can
-// decide: a gate, or a PR the pool did not author (every PR rule needs
+// decide: a gate, or a PR whose author no rule admits (factory's need
 // author: pool).
 //
 // Each fact comes from the function the scan records it with, so the two
@@ -40,7 +38,7 @@ func (s *Scanner) Facts(ctx context.Context, num int) (rules.Item, rules.Env, er
 	if it.MergeQueue, err = s.gh.IsInMergeQueue(ctx, num); err != nil {
 		return it, env, fmt.Errorf("checking the merge queue: %w", err)
 	}
-	if it.MergeQueue || !slices.ContainsFunc(s.cfg.BotUsers, func(b string) bool { return strings.EqualFold(b, it.Author) }) {
+	if it.MergeQueue || !s.rules.Set().AdmitsAuthor(it, env) {
 		return it, env, nil
 	}
 	it.Closes = closesOf(ctx, newRefIssues(s.gh, pr))

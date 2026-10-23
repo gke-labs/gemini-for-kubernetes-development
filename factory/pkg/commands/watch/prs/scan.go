@@ -8,7 +8,8 @@ import (
 )
 
 // scanCandidates lists every pull request the watcher is responsible for: those
-// assigned to a bot in the pool, and those carrying the trigger label.
+// assigned to a bot in the pool, those carrying the trigger label, and those
+// carrying a label the rules are listed by (Config.ListingLabels).
 //
 // Both queries are fully paginated, which is what makes this the sweep's
 // listing rather than the fast pass's. The two sets overlap heavily - a pull
@@ -30,6 +31,7 @@ func (s *Scanner) scanCandidates(ctx context.Context) ([]*githubv39.Issue, error
 			all = append(all, prsOnly(s.listings.Assigned(botUser))...)
 		}
 		all = append(all, prsOnly(s.listings.Labelled())...)
+		all = append(all, prsOnly(s.listings.RuleLabelled())...)
 		return dedupe(all), err
 	}
 
@@ -83,6 +85,18 @@ func (s *Scanner) scanCandidates(ctx context.Context) ([]*githubv39.Issue, error
 			break
 		}
 		labelOpts.Page = resp.NextPage
+	}
+
+	// The labels the rules are listed by, in one query (an OR of them).
+	if len(s.cfg.ListingLabels) > 0 {
+		got, err := s.gh.OpenPRsLabelled(ctx, s.cfg.ListingLabels)
+		if err != nil {
+			klog.Errorf("Failed to list PRs labelled %v: %v", s.cfg.ListingLabels, err)
+			if firstErr == nil {
+				firstErr = err
+			}
+		}
+		all = append(all, got...)
 	}
 
 	return dedupe(all), firstErr

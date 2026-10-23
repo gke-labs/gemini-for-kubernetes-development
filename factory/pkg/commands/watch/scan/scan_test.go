@@ -274,3 +274,58 @@ func TestViewsAreCopies(t *testing.T) {
 		t.Errorf("labelled = %v after changing a view's copy", got)
 	}
 }
+
+// The labels the rules are listed by track a pull request carrying one -
+// listed in one GraphQL query by a full refresh, seen by the incremental
+// listing once labelled - and only pull requests; a changed set of labels
+// is a snapshot of something else.
+func TestRuleLabelsTrackPullRequests(t *testing.T) {
+	dir := t.TempDir()
+	cfg := Config{Labels: []string{"overseer/adopt", "overseer/review"}, StatePath: filepath.Join(dir, "scan_state.json")}
+	w := newWorld(t, cfg)
+	w.seed()
+	w.repo.Put(scantest.Item{Number: 7, PR: true, Labels: []string{"overseer/adopt"}, Author: "alice", Updated: t0.Add(-time.Hour)})
+	w.repo.Put(scantest.Item{Number: 8, Labels: []string{"overseer/adopt"}, Author: "alice", Updated: t0.Add(-time.Hour)}) // an issue
+	ctx := context.Background()
+	if err := w.store.Refresh(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := numbers(w.store.RuleLabelled()); !slices.Equal(got, []int{7}) {
+		t.Errorf("rule labelled = %v, want [7]", got)
+	}
+	if n, labels := w.repo.GraphQLCalls(); n != 1 || !slices.Equal(labels[0], cfg.Labels) {
+		t.Errorf("graphql listings %d %v, want one of %v", n, labels, cfg.Labels)
+	}
+	if st := w.store.LastStats(); !st.Full || st.Calls != 5 {
+		t.Errorf("stats = %+v, want 4 listings and the label query", st)
+	}
+
+	// Labelled since: the incremental listing brings it in, no label query.
+	w.now = t0.Add(2 * time.Minute)
+	w.repo.Put(scantest.Item{Number: 9, PR: true, Author: "bob", Updated: t0.Add(-time.Hour)})
+	w.repo.Update(9, t0.Add(time.Minute), func(it *scantest.Item) { it.Labels = []string{"overseer/review"} })
+	w.repo.ResetCounts()
+	if err := w.store.Refresh(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := numbers(w.store.RuleLabelled()); !slices.Equal(got, []int{7, 9}) {
+		t.Errorf("after labelling, rule labelled = %v, want [7 9]", got)
+	}
+	if n, _ := w.repo.GraphQLCalls(); n != 0 {
+		t.Errorf("an incremental refresh made %d label queries", n)
+	}
+
+	// Another set of labels: the persisted snapshot is not reused.
+	other := cfg
+	other.Labels = []string{"overseer/adopt"}
+	w2 := newWorld(t, other)
+	w2.store.load()
+	if !w2.store.cursor.IsZero() {
+		t.Error("a snapshot of other labels was read")
+	}
+	same := newWorld(t, cfg)
+	same.store.load()
+	if same.store.cursor.IsZero() {
+		t.Error("a snapshot of the same labels was not read")
+	}
+}

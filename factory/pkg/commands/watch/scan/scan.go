@@ -64,6 +64,15 @@ type Lister interface {
 
 var _ Lister = (*github.Client)(nil)
 
+// labelledLister lists the open pull requests carrying any of a set of
+// labels in one query (github.Client.OpenPRsLabelled): how a full refresh
+// lists Config.Labels.
+type labelledLister interface {
+	OpenPRsLabelled(ctx context.Context, labels []string) ([]*githubv39.Issue, error)
+}
+
+var _ labelledLister = (*github.Client)(nil)
+
 // Config says what a Store tracks and how it refreshes.
 type Config struct {
 	// Repo is "owner/repo", recorded with the snapshot so that a snapshot of
@@ -75,6 +84,12 @@ type Config struct {
 	TriggerLabel string
 	BotUsers     []string
 	GitHubLogin  string
+	// Labels make an open pull request carrying any of them tracked too:
+	// the overseer-namespaced labels its rules require that no other
+	// listing reaches (rules.Set.ListingLabels). A full refresh lists them
+	// in one query; between full refreshes the incremental listing sees a
+	// pull request labelled since.
+	Labels []string
 	// FullEvery, Margin and ReuseFor default to DefaultFullEvery,
 	// DefaultMargin and DefaultReuseFor.
 	FullEvery time.Duration
@@ -206,6 +221,18 @@ func (s *Store) full(ctx context.Context, start time.Time) error {
 			}
 		}
 	}
+	if ll, ok := s.gh.(labelledLister); ok && len(s.cfg.Labels) > 0 {
+		got, err := ll.OpenPRsLabelled(ctx, s.cfg.Labels)
+		calls++
+		if err != nil {
+			return fmt.Errorf("full listing of %v: %w", s.cfg.Labels, err)
+		}
+		for _, item := range got {
+			if s.tracked(item) {
+				items[item.GetNumber()] = reduce(item)
+			}
+		}
+	}
 	s.stats = Stats{Full: true, Calls: calls, Changed: changedCount(s.items, items), Items: len(items)}
 	s.items = items
 	s.lastFull = start
@@ -277,6 +304,9 @@ func (s *Store) tracked(item *githubv39.Issue) bool {
 	if s.cfg.TriggerLabel != "" && hasLabel(item, s.cfg.TriggerLabel) {
 		return true
 	}
+	if item.IsPullRequest() && s.ruleLabelled(item) {
+		return true
+	}
 	if s.cfg.GitHubLogin != "" && strings.EqualFold(item.GetUser().GetLogin(), s.cfg.GitHubLogin) {
 		return true
 	}
@@ -292,6 +322,17 @@ func (s *Store) tracked(item *githubv39.Issue) bool {
 // requests alike, as the full label listing returned them.
 func (s *Store) Labelled() []*githubv39.Issue {
 	return s.view(func(item *githubv39.Issue) bool { return hasLabel(item, s.cfg.TriggerLabel) }, 0)
+}
+
+// RuleLabelled is every tracked pull request carrying one of
+// Config.Labels.
+func (s *Store) RuleLabelled() []*githubv39.Issue {
+	return s.view(func(item *githubv39.Issue) bool { return item.IsPullRequest() && s.ruleLabelled(item) }, 0)
+}
+
+// ruleLabelled is whether item carries one of Config.Labels.
+func (s *Store) ruleLabelled(item *githubv39.Issue) bool {
+	return slices.ContainsFunc(s.cfg.Labels, func(l string) bool { return hasLabel(item, l) })
 }
 
 // Assigned is every tracked item assigned to user, as the full assignee
@@ -348,6 +389,7 @@ type persisted struct {
 	TriggerLabel string             `json:"triggerLabel"`
 	BotUsers     []string           `json:"botUsers"`
 	GitHubLogin  string             `json:"githubLogin"`
+	Labels       []string           `json:"labels,omitempty"`
 	Cursor       time.Time          `json:"cursor"`
 	LastFull     time.Time          `json:"lastFull"`
 	Items        []*githubv39.Issue `json:"items"`
@@ -374,7 +416,7 @@ func (s *Store) load() {
 		return
 	}
 	if p.Version != stateVersion || p.Repo != s.cfg.Repo || p.TriggerLabel != s.cfg.TriggerLabel ||
-		p.GitHubLogin != s.cfg.GitHubLogin || !slices.Equal(p.BotUsers, s.sortedBots()) {
+		p.GitHubLogin != s.cfg.GitHubLogin || !slices.Equal(p.BotUsers, s.sortedBots()) || !slices.Equal(p.Labels, s.cfg.Labels) {
 		klog.Infof("Shared scan: %s is a snapshot of something else; listing in full", s.cfg.StatePath)
 		return
 	}
@@ -398,7 +440,7 @@ func (s *Store) persist() {
 	}
 	p := persisted{
 		Version: stateVersion, Repo: s.cfg.Repo, TriggerLabel: s.cfg.TriggerLabel,
-		BotUsers: s.sortedBots(), GitHubLogin: s.cfg.GitHubLogin,
+		BotUsers: s.sortedBots(), GitHubLogin: s.cfg.GitHubLogin, Labels: s.cfg.Labels,
 		Cursor: s.cursor, LastFull: s.lastFull,
 	}
 	for _, item := range s.items {

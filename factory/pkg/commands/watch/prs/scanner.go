@@ -13,7 +13,6 @@ package prs
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	githubv39 "github.com/google/go-github/v39/github"
@@ -99,6 +98,9 @@ type Listings interface {
 	Refresh(ctx context.Context) error
 	// Labelled is every open item carrying the trigger label.
 	Labelled() []*githubv39.Issue
+	// RuleLabelled is every open pull request carrying one of the labels
+	// the rules are listed by (Config.ListingLabels).
+	RuleLabelled() []*githubv39.Issue
 	// Assigned is every open item assigned to user.
 	Assigned(user string) []*githubv39.Issue
 	// AssignedFirst is the first n open items assigned to user, newest
@@ -113,6 +115,11 @@ type Config struct {
 	Interval time.Duration
 	// SweepInterval is the delay between full sweeps. Defaults to DefaultSweepInterval.
 	SweepInterval time.Duration
+	// ListingLabels are the labels a sweep lists open pull requests by,
+	// besides the trigger label: the overseer-namespaced labels of the rules
+	// the pool and trigger listings do not reach (rules.Set.ListingLabels),
+	// a pull request someone outside the pool opened, say.
+	ListingLabels []string
 	// TriggerLabel is the label marking a pull request as the watcher's to work on.
 	TriggerLabel string
 	// GitHubLogin is the watcher's own account, whose comments are never
@@ -529,18 +536,13 @@ func (s *Scanner) evaluate(ctx context.Context, prIssue *githubv39.Issue) {
 		return
 	}
 
-	// Only pull requests created by a bot in the pool can be worked on: we do
-	// not have permission to push to an external fork.
+	// Only a rule that admits the author can decide on the pull request:
+	// factory's all say author: pool (they push to the PR's branch, which
+	// an outside author's fork does not let them), a rule on someone else's
+	// pull request author: not-pool. None: nothing more read.
 	author := pr.GetUser().GetLogin()
-	isBotPR := false
-	for _, bot := range s.cfg.BotUsers {
-		if strings.EqualFold(author, bot) {
-			isBotPR = true
-			break
-		}
-	}
-	if !isBotPR {
-		klog.Infof("Skipping PR #%d because it was created by %s (not in our bot pool). We do not have permission to push to external forks.", num, author)
+	if !s.rules.Set().AdmitsAuthor(rules.Item{Kind: rules.OnPR, Author: author}, s.rulesEnv()) {
+		klog.Infof("Skipping PR #%d because it was created by %s, whom no rule admits (factory's need an author in the bot pool)", num, author)
 		return
 	}
 
