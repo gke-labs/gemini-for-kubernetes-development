@@ -1322,6 +1322,12 @@ export function ResearchConversation({
     fetch(`${api}/stop`, { method: 'POST' })
       .then(async res => {
         if (res.ok || res.status === 409) return;
+        // The session exists (Stop reached it), so a 404 is the route:
+        // the sandbox's agent server predates force stop.
+        if (res.status === 404) {
+          setError('force stop failed: this sandbox\'s agent predates force stop — restart the sandbox from its card on the board (Restart), which also updates it');
+          return;
+        }
         const body = await res.json().catch(() => ({}));
         setError(body.error || `force stop failed: HTTP ${res.status}`);
       })

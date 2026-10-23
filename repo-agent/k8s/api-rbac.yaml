@@ -39,6 +39,12 @@ rules:
 - apiGroups: [""]
   resources: ["pods", "pods/exec", "pods/log", "pods/portforward"]
   verbs: ["get", "list", "create"]
+# Can delete a sandbox's pod, for the sandbox card's Restart: the sandbox
+# controller makes it again on the same disk (a stuck agent turn, an
+# evicted pod). Pods only, not their exec/log/portforward subresources.
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["delete"]
 # Can proxy to nodes for exec
 - apiGroups: [""]
   resources: ["nodes", "nodes/proxy"]
