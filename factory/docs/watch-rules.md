@@ -355,6 +355,21 @@ them only when a rule that would step on every other fact uses them, so a
 rule of your own may use them as freely as factory's do. A fact that
 cannot be read holds the issue for that pass.
 
+A PR's facts are read in stages: the PR and its closing issues, then its
+history (commits, comments, reviews), then its feedback and checks. After
+each stage the scan carries out the writes of the rules decided so far:
+the walk in `order`, up to the first rule a fact not read yet could
+change. So a rule of writes runs where its `order` and its facts put it,
+whatever its name:
+
+- before `inactive` (order below 7) on labels, the author or the closing
+  issues: right after the first stage - also on a PR whose task is queued
+  or running, where the scan stops before the history;
+- after the care rules: once everything is read, like `ready`.
+
+A stop label written at any stage (`inactive`'s, or one inherited from a
+closing issue) ends the pass: no later stage is read.
+
 ---
 
 ## How a decision is made

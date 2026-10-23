@@ -1,0 +1,14 @@
+added: []
+calls:
+    - GET /repos/test-owner/test-repo/pulls/30
+    - GET /repos/test-owner/test-repo/pulls/30/commits?per_page=100
+    - GET /repos/test-owner/test-repo/issues/30/comments?per_page=100
+    - GET /repos/test-owner/test-repo/pulls/30/reviews?per_page=100
+    - GET /repos/test-owner/test-repo/pulls/30/comments?per_page=100
+    - GET /repos/test-owner/test-repo/commits/sha-30/check-runs?per_page=200
+    - GET /repos/test-owner/test-repo/commits/sha-30/statuses?per_page=100
+decided:
+    - ci run
+gate: ""
+queued:
+    - incoming/task-pr-30-rule-ci.yaml

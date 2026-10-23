@@ -1,0 +1,12 @@
+added: []
+calls:
+    - GET /repos/test-owner/test-repo/pulls/30
+    - GET /repos/test-owner/test-repo/pulls/30/commits?per_page=100
+    - GET /repos/test-owner/test-repo/issues/30/comments?per_page=100
+    - GET /repos/test-owner/test-repo/pulls/30/reviews?per_page=100
+    - GET /repos/test-owner/test-repo/pulls/30/comments?per_page=100
+decided:
+    - conflict run
+gate: ""
+queued:
+    - incoming/task-pr-30-rule-conflict.yaml

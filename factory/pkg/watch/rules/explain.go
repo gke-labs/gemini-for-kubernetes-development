@@ -107,8 +107,17 @@ func explainRule(r *Rule, it Item, env Env, st Step) Step {
 		return st
 	}
 	// The give-up is decided on the condition: a rule that would run, but
-	// has run its attempts out.
-	if g := r.Policy.GiveUp; g != nil && countSince(giveUpRuns(g, runs), since(g.Since, it)) >= g.Attempts {
+	// has run its attempts out. Counted since the head, a human or a pause,
+	// it waits for the PR's history: asking, the rule could run.
+	g := r.Policy.GiveUp
+	if g != nil && len(g.Since) > 0 && it.unknown(FactHistory) {
+		if !it.assume {
+			st.Held = "give-up: the history is not read"
+			return st
+		}
+		g = nil
+	}
+	if g != nil && countSince(giveUpRuns(g, runs), since(g.Since, it)) >= g.Attempts {
 		d := Decision{Rule: r.Name, Kind: it.Kind, Number: it.Number, Outcome: OutcomeGiveUp}
 		d.Writes = Writes{Stop: true, Comment: g.Comment}
 		st.Decision = &d
@@ -204,7 +213,7 @@ func factOf(predicate string, it Item, env Env, runs []PastRun) string {
 	case "fanout":
 		return fmt.Sprintf("fanout %t", it.FanoutParent)
 	case "checks":
-		if it.Checks == "" {
+		if it.Checks == "" || it.unknown(FactChecks) {
 			return "checks not read"
 		}
 		return "checks " + it.Checks
@@ -214,6 +223,9 @@ func factOf(predicate string, it Item, env Env, runs []PastRun) string {
 		}
 		return fmt.Sprintf("mergeable %t", *it.Mergeable)
 	case "feedback":
+		if it.unknown(FactFeedback) {
+			return "feedback not read"
+		}
 		if it.NewTrustedFeedback {
 			return "new trusted feedback"
 		}
@@ -227,11 +239,20 @@ func factOf(predicate string, it Item, env Env, runs []PastRun) string {
 			return "closing issues without labels"
 		}
 		return "closing issues labelled " + strings.Join(labels, ", ")
+	case "reviewed-at-head", "changes-requested", "inactive-for":
+		if it.unknown(FactHistory) {
+			return "history not read"
+		}
+	}
+	switch predicate {
 	case "reviewed-at-head":
 		return fmt.Sprintf("reviewed-at-head %t", it.ReviewedAtHead)
 	case "changes-requested":
 		return fmt.Sprintf("changes-requested %t", it.ChangesRequested)
 	case "approved":
+		if it.unknown(FactChecks) {
+			return "checks not read"
+		}
 		return fmt.Sprintf("approved %t", it.Approved)
 	case "draft":
 		return fmt.Sprintf("draft %t", it.Draft)
@@ -420,6 +441,42 @@ func (s Set) Needs(it Item, env Env) []string {
 	return out
 }
 
+// Settled are the decisions of the walk up to its first rule whose step a
+// fact not read yet (Item.Unknown) could change: deciding (a predicate on
+// it fails) and asking (it could go either way) give that rule the same
+// step, and every rule before it. A scanner reading an item's facts a
+// stage at a time carries out what is settled after each stage: a rule
+// after one still open waits, whatever its own facts, so a rule's place
+// (order) is kept - an earlier rule's stop ends the walk before it.
+func (s Set) Settled(it Item, env Env) []Decision {
+	decided := s.Explain(it, env)
+	if len(it.Unknown) == 0 {
+		return decided.Decisions()
+	}
+	asking := it
+	asking.assume = true
+	open := s.Explain(asking, env)
+	var out []Decision
+	for i, st := range decided.Steps {
+		if i >= len(open.Steps) || !sameStep(st, open.Steps[i]) {
+			break
+		}
+		if st.Decision != nil {
+			out = append(out, *st.Decision)
+		}
+	}
+	return out
+}
+
+// sameStep is whether two steps of a rule come to the same: decided the
+// same outcome or nothing, skipped the same, and end the walk the same.
+func sameStep(a, b Step) bool {
+	if (a.Decision == nil) != (b.Decision == nil) || a.Skipped != b.Skipped || a.Ends != b.Ends {
+		return false
+	}
+	return a.Decision == nil || a.Decision.Outcome == b.Decision.Outcome
+}
+
 // facts are the facts read on demand the rule's decision turns on, given
 // its runs: a predicate on one, in its condition or any alternative, or the
 // workflow definition's cooldown when its last run succeeded (a failure's
@@ -438,6 +495,18 @@ func (r *Rule) facts(runs []PastRun) []string {
 		if w.Workflow == "any" || w.Workflow == "missing" {
 			add(FactWorkflowDefinition)
 		}
+		if w.ReviewedAtHead != nil || w.ChangesRequested != nil || w.InactiveFor.IsSet() {
+			add(FactHistory)
+		}
+		if w.Feedback != "" {
+			add(FactFeedback)
+		}
+		if w.Checks != "" || w.Approved != nil {
+			add(FactChecks)
+		}
+	}
+	if g := r.Policy.GiveUp; g != nil && len(g.Since) > 0 {
+		add(FactHistory)
 	}
 	if c := r.Policy.Cooldown; c != nil {
 		if last, ok := lastRun(runs); ok {

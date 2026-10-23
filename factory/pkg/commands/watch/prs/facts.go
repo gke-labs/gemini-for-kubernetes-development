@@ -55,13 +55,15 @@ func (s *Scanner) Facts(ctx context.Context, num int) (rules.Item, rules.Env, er
 	s.fillHistory(&it, pr, history, head)
 	it.NewTrustedFeedback = s.evaluateComments(ctx, pr, history, history.lastCommitTime, s.state.get(num).lastCommentAddressedTime).hasNewComments
 	// As a scan: the checks and approval of a PR that does not merge are
-	// not read (nothing but conflict decides on it).
+	// not read (nothing but conflict decides on it), and so unknown.
 	if pr.Mergeable == nil || *pr.Mergeable {
 		checks, err := s.evaluateChecks(ctx, head)
 		if err != nil {
 			return it, env, fmt.Errorf("reading the checks: %w", err)
 		}
 		fillChecks(&it, checks, isPRApprovedOrLGTM(pr, prIssue, history.reviews))
+	} else {
+		it.Unknown = []string{rules.FactChecks}
 	}
 	return it, env, nil
 }
