@@ -206,8 +206,13 @@ A rule runs a recipe or makes GitHub writes, not both.
 | `recipe` | a built-in recipe (`fix`, `workflow`, `agent`, `care-comments`, `care-rebase`, `care-ci`, `review`, ...) |
 | `apply` | the action its task output is applied with when the run ends (`open-pr`, `post-replies`, `submit-review`); none leaves the output for a person |
 | `inputs` | the recipe's inputs, by name; values may use `{{trigger}}`, on issues `{{pr-labels}}`, and on PRs `{{review-instructions}}` |
+| `claim` | issues: `true` assigns the issue to the task's bot when it starts, in the watcher's place (the prebaked fix and workflow) |
+| `acknowledge` | PRs: `feedback` marks the feedback the task answers as seen (👀) when it starts, and resolved (👍) or failed (😕) when it ends (the prebaked comments) |
+| `start-comment` | a comment the watcher posts on the item when the task starts |
 
-The task is queued and runs in the item's sandbox. A rule does not say
+`claim`, `acknowledge` and `start-comment` are read from the rule again
+just before the task starts, so a task queued earlier does what the rule
+says now. The task is queued and runs in the item's sandbox. A rule does not say
 which bot runs it: that is the recipe's and the overseer's (see [Who runs
 it](#who-runs-it)).
 

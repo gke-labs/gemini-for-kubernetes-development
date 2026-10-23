@@ -13,6 +13,8 @@ task:
     status: Pending
     commitSHA: 0123456789abcdef
     retryCount: 2
+    acknowledge: feedback
+    startComment: "\U0001F916 AI Factory started addressing review feedback for this pull request."
     runName: comments-10-0123456-<enqueued>
     rule: comments
     recipe: care-comments

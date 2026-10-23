@@ -16,11 +16,13 @@ import (
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/clients"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/common"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/act"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/api"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/dispatcher"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/config"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/k8s"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/watch/rules"
 	githubv39 "github.com/google/go-github/v39/github"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -187,21 +189,34 @@ func TestWatcherTaskCoordinator_ShouldCancelTask_NoGitHubClient(t *testing.T) {
 	}
 }
 
-func TestTaskStartedComment(t *testing.T) {
-	for _, tc := range []struct {
-		taskType api.TaskType
-		want     bool
-	}{
-		{api.TypeIssueFix, true},
-		{api.TypePRInvestigate, true},
-		{api.TypePRComments, true},
-		{api.TypePRIterate, true},
-		{api.TypePRReview, true},
-		{api.TypeAgentChore, false},
+// What a task does on GitHub as it starts and ends is its rule's: the
+// prebaked rules post a start comment for fix, ci, comments, conflict and
+// review (none for a workflow step), claim the issue for fix and workflow,
+// and acknowledge feedback for comments; the recheck at start puts them
+// on a task that carries none (queued by an older watch, or the nudge).
+func TestTaskDeclarations(t *testing.T) {
+	set, err := rules.Builtin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for rule, want := range map[string]string{
+		"fix": "claim comment", "workflow": "claim", "comments": "acknowledge comment",
+		"ci": "comment", "conflict": "comment", "review": "comment",
 	} {
-		got := taskStartedComment(tc.taskType) != ""
-		if got != tc.want {
-			t.Errorf("taskStartedComment(%s) has comment = %v, want %v", tc.taskType, got, tc.want)
+		task := &api.QueueTask{}
+		act.Declare(task, set.Named(rule))
+		var got []string
+		if task.Claim {
+			got = append(got, "claim")
+		}
+		if task.Acknowledge == rules.AcknowledgeFeedback {
+			got = append(got, "acknowledge")
+		}
+		if task.StartComment != "" {
+			got = append(got, "comment")
+		}
+		if strings.Join(got, " ") != want {
+			t.Errorf("%s declares %v, want %s", rule, got, want)
 		}
 	}
 }
@@ -273,6 +288,7 @@ func TestWatcherTaskCoordinator_NotifyTaskFinished_ResolvesTaskFeedback(t *testi
 				Type:             api.TypePRComments,
 				Number:           7,
 				TriggerEventTime: trigger,
+				Acknowledge:      rules.AcknowledgeFeedback,
 			}, tc.taskErr)
 
 			mu.Lock()

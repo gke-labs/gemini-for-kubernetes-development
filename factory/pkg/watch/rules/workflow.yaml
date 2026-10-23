@@ -28,6 +28,7 @@ when:
   workflow: any
 run:
   recipe: workflow
+  claim: true
 policy:
   cooldown: {success: "{{workflow-cooldown}}", failure: 20m}
   phase: 4

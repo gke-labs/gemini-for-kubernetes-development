@@ -25,6 +25,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/warmworkspace"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
 	factorysandbox "github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/sandbox"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/watch/rules"
 )
 
 // newDispatcher constructs the task dispatcher used by the watcher, wiring it to
@@ -473,14 +474,16 @@ func (c *watcherTaskCoordinator) SelectUser(ctx context.Context, task *api.Queue
 	return selectedUser, nil
 }
 
-// NotifyTaskStarted claims the issue for the assignee and posts a start comment on GitHub.
+// NotifyTaskStarted does on GitHub what the task's rule declares for its
+// start (act.Declare): claims the issue for its bot, acknowledges the
+// feedback it answers, posts its start comment.
 func (c *watcherTaskCoordinator) NotifyTaskStarted(ctx context.Context, task *api.QueueTask) {
 	w := c.w
 	if task.Number <= 0 || w.ghClient == nil {
 		return
 	}
 
-	if (task.Type == api.TypeIssueFix || task.Type == api.TypeAgentChore) && task.Assignee != "" {
+	if task.Claim && task.Assignee != "" {
 		klog.Infof("Assigning issue #%d to %s as claimed", task.Number, task.Assignee)
 		if err := w.repoClient.AddAssignees(ctx, task.Number, []string{task.Assignee}); err != nil {
 			klog.Errorf("Failed to assign issue #%d to %s: %v", task.Number, task.Assignee, err)
@@ -495,7 +498,7 @@ func (c *watcherTaskCoordinator) NotifyTaskStarted(ctx context.Context, task *ap
 	// A comments task acknowledges the feedback it answers now that it
 	// starts, not when it was queued: one dropped before it starts leaves
 	// the feedback for the next scan.
-	if task.Type == api.TypePRComments && w.cfg != nil {
+	if task.Acknowledge == rules.AcknowledgeFeedback && w.cfg != nil {
 		conventions.AcknowledgeCommentReactions(ctx, w.repoClient, conventions.ResolveOptions{
 			PRNumber:        task.Number,
 			SelfLogin:       w.githubLogin,
@@ -510,18 +513,19 @@ func (c *watcherTaskCoordinator) NotifyTaskStarted(ctx context.Context, task *ap
 		}
 	}
 
-	if commentBody := taskStartedComment(task.Type); commentBody != "" {
-		if err := w.repoClient.AddComment(ctx, task.Number, commentBody); err != nil {
+	if task.StartComment != "" {
+		if err := w.repoClient.AddComment(ctx, task.Number, task.StartComment); err != nil {
 			klog.Errorf("Failed to create GitHub comment on #%d: %v", task.Number, err)
 		}
 	}
 }
 
 // NotifyTaskFinished resolves the acknowledgement reactions on PR feedback -
-// conversation comments, review bodies, and inline review comments.
+// conversation comments, review bodies, and inline review comments - of a
+// task whose rule acknowledges feedback.
 func (c *watcherTaskCoordinator) NotifyTaskFinished(ctx context.Context, task *api.QueueTask, taskErr error) {
 	w := c.w
-	if task.Type != api.TypePRComments || w.cfg == nil {
+	if task.Acknowledge != rules.AcknowledgeFeedback || w.cfg == nil {
 		return
 	}
 	resolution := conventions.ReactionResolved
@@ -539,23 +543,4 @@ func (c *watcherTaskCoordinator) NotifyTaskFinished(ctx context.Context, task *a
 		// feedback it picked up, so nothing older can be this task's.
 		Since: task.TriggerEventTime,
 	})
-}
-
-// taskStartedComment returns the GitHub comment announcing that a task has started,
-// or an empty string if the task type does not warrant a comment.
-func taskStartedComment(taskType api.TaskType) string {
-	switch taskType {
-	case api.TypeIssueFix:
-		return "🤖 AI Factory started fixing this issue in a sandbox."
-	case api.TypePRInvestigate:
-		return "🤖 AI Factory started investigating CI check failures for this pull request.\n\nNote: We recommend waiting for the 'ready-for-human' label before leaving review comments. Comments added while the system is actively working may be associated with outdated commits once a new commit is pushed, causing them to be ignored."
-	case api.TypePRComments:
-		return "🤖 AI Factory started addressing review feedback for this pull request."
-	case api.TypePRIterate:
-		return "🤖 AI Factory started resolving merge conflicts / rebasing this pull request in a sandbox.\n\nNote: We recommend waiting for the 'ready-for-human' label before leaving review comments. Comments added while the system is actively working may be associated with outdated commits once a new commit is pushed, causing them to be ignored."
-	case api.TypePRReview:
-		return "🤖 AI Factory started reviewing this pull request in a sandbox."
-	default:
-		return ""
-	}
 }

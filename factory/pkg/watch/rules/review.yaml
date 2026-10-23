@@ -26,6 +26,7 @@ run:
   apply: submit-review
   inputs:
     instructions: "{{review-instructions}}"
+  start-comment: "🤖 AI Factory started reviewing this pull request in a sandbox."
 policy:
   dedupe: head
   phase: 1

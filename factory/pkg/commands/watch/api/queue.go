@@ -136,6 +136,12 @@ type QueueTask struct {
 	CommitSHA    string   `yaml:"commitSHA,omitempty"`
 	RetryCount   int      `yaml:"retryCount,omitempty"`
 	Instructions []string `yaml:"instructions,omitempty"`
+	// Claim, Acknowledge and StartComment are what the task does on GitHub
+	// as it starts and ends, the rule's (rules.Run): assign the issue to
+	// its bot, acknowledge the feedback it answers, post a comment.
+	Claim        bool   `yaml:"claim,omitempty"`
+	Acknowledge  string `yaml:"acknowledge,omitempty"`
+	StartComment string `yaml:"startComment,omitempty"`
 	// RunName is the run's name (factory --run-name), stamped when the task
 	// is queued (RunNameOf): a recovered task follows the run it started,
 	// whatever a later watch would name it.
