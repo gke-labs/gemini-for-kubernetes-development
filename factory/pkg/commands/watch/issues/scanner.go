@@ -572,9 +572,9 @@ type issueTaskShape struct {
 func (s *Scanner) queueIssueRuleTask(ctx context.Context, issue *githubv39.Issue, rule string, shape issueTaskShape, timeline []*githubv39.Timeline) {
 	num := issue.GetNumber()
 	workflowName, workflowPath := shape.workflowName, shape.workflowPath
-	filename := issueTaskFilename(num, workflowName)
-	if workflowName == "" && rule != "fix" {
-		filename = api.RuleTaskFile(false, num, rule)
+	filename := api.RuleTaskFile(false, num, rule)
+	if workflowName != "" {
+		filename = issueTaskFilename(num, workflowName)
 	}
 	if timeline == nil && s.gh.Ready() {
 		if tl, _, err := s.gh.ListIssueTimeline(ctx, num); err != nil {
