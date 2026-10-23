@@ -274,7 +274,7 @@ Measured by hand on staging (`barney-s`) on KCC `7106e14276`, which includes [#1
   - `warm-snapshot`: `FinishWarm` waits for `readyToUse`, deletes all but the newest `keep`, then deletes the sandbox. A failed snapshot is deleted along with the sandbox.
   - `warm-failed`: wait 6 hours (`warmRetryAfter`, or the `interval` if shorter), then delete the sandbox and start again.
   - otherwise: `EnsureWarmSandbox`, then `runRecipe("warm", …, run name from warm-run)` with abort-on-cancel off. On success, `SnapshotWarmSandbox` suspends the sandbox, waits for its pod to go, creates `warm-<repo>-<yyyymmdd-hhmm>` (class `warm-workspace`) and records it.
-  - It clones as `selectUserForTask(issue-fix)`.
+  - It clones as `selectUserForTask(issue-rule, warm)`.
 - **runRecipe** routes the `warm` recipe on a repository to `EnsureWarmSandbox`, and skips `MarkResearchReady` for it. `recipe list` (the board's catalog) leaves `warm` out; `factory recipe warm --url <repo>` still runs it by hand.
 - **The recipe** writes `warm-head` (the commit) and `warm-go` (`go version`) to its task directory. The hook copies them onto the snapshot with `warm-script` (provenance). For `scriptPath` the provenance is `path <p>@<commit>`.
 - **Not done as designed.**

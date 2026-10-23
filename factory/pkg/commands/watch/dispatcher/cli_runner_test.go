@@ -34,9 +34,10 @@ func TestCLIRunner_BuildArgs(t *testing.T) {
 
 	t.Run("issue-fix task runs the fix recipe", func(t *testing.T) {
 		task := &api.QueueTask{
-			Type:   api.TypeIssueFix,
+			Type:   api.TypeIssueRule,
 			URL:    "https://github.com/test-owner/test-repo/issues/123",
-			Recipe: "fix", Apply: "open-pr", PRLabels: true, Inputs: map[string]string{"draft": "false"},
+			Recipe: "fix",
+			Rule:   "fix", Apply: "open-pr", PRLabels: true, Inputs: map[string]string{"draft": "false"},
 			Number:     123,
 			EnqueuedAt: time.Unix(1760000000, 0),
 		}
@@ -81,13 +82,14 @@ func TestCLIRunner_BuildArgs(t *testing.T) {
 
 	t.Run("pr-review task with instructions", func(t *testing.T) {
 		task := &api.QueueTask{
-			Type:         api.TypePRReview,
+			Type:         api.TypePRRule,
 			URL:          "https://github.com/test-owner/test-repo/pull/456",
 			Number:       456,
 			CommitSHA:    "0123456789abcdef",
 			EnqueuedAt:   time.Unix(1760000000, 0),
 			Instructions: []string{"check security", "check unit tests"},
-			Recipe:       "review", Apply: "submit-review",
+			Recipe:       "review",
+			Rule:         "review", Apply: "submit-review",
 		}
 		args := r.BuildArgs(task, "reviewer-bot")
 		if len(args) == 0 {
@@ -117,15 +119,16 @@ func TestCLIRunner_BuildArgs(t *testing.T) {
 
 	t.Run("pr-investigate task runs care-ci", func(t *testing.T) {
 		task := &api.QueueTask{
-			Recipe: "care-ci", Apply: "post-replies",
-			Type:       api.TypePRInvestigate,
+			Recipe: "care-ci",
+			Rule:   "ci", Apply: "post-replies",
+			Type:       api.TypePRRule,
 			URL:        "https://github.com/test-owner/test-repo/pull/456",
 			Number:     456,
 			CommitSHA:  "0123456789abcdef",
 			EnqueuedAt: time.Unix(1760000000, 0),
 		}
 		args := r.BuildArgs(task, "coder-bot")
-		want := []string{"recipe", "care-ci", "--url", task.URL, "--run-name", "investigate-456-0123456-1760000000", "--apply", "--action", "post-replies"}
+		want := []string{"recipe", "care-ci", "--url", task.URL, "--run-name", "ci-456-0123456-1760000000", "--apply", "--action", "post-replies"}
 		if len(args) < len(want) || !slices.Equal(args[:len(want)], want) {
 			t.Errorf("args = %v, want them to start %v", args, want)
 		}
@@ -133,8 +136,9 @@ func TestCLIRunner_BuildArgs(t *testing.T) {
 
 	t.Run("pr-comments task runs care-comments", func(t *testing.T) {
 		task := &api.QueueTask{
-			Recipe: "care-comments", Apply: "post-replies",
-			Type:       api.TypePRComments,
+			Recipe: "care-comments",
+			Rule:   "comments", Apply: "post-replies",
+			Type:       api.TypePRRule,
 			URL:        "https://github.com/test-owner/test-repo/pull/456",
 			Number:     456,
 			CommitSHA:  "0123456789abcdef",
@@ -149,15 +153,16 @@ func TestCLIRunner_BuildArgs(t *testing.T) {
 
 	t.Run("pr-iterate task runs care-rebase", func(t *testing.T) {
 		task := &api.QueueTask{
-			Recipe: "care-rebase", Apply: "post-replies",
-			Type:       api.TypePRIterate,
+			Recipe: "care-rebase",
+			Rule:   "conflict", Apply: "post-replies",
+			Type:       api.TypePRRule,
 			URL:        "https://github.com/test-owner/test-repo/pull/456",
 			Number:     456,
 			CommitSHA:  "0123456789abcdef",
 			EnqueuedAt: time.Unix(1760000000, 0),
 		}
 		args := r.BuildArgs(task, "coder-bot")
-		want := []string{"recipe", "care-rebase", "--url", task.URL, "--run-name", "iterate-456-0123456-1760000000", "--apply", "--action", "post-replies"}
+		want := []string{"recipe", "care-rebase", "--url", task.URL, "--run-name", "conflict-456-0123456-1760000000", "--apply", "--action", "post-replies"}
 		if len(args) < len(want) || !slices.Equal(args[:len(want)], want) {
 			t.Errorf("args = %v, want them to start %v", args, want)
 		}
@@ -216,8 +221,9 @@ func TestCLIRunner_Run_ExecutesChildProcessAndWritesLog(t *testing.T) {
 	}
 
 	task := &api.QueueTask{
-		Type:   api.TypeIssueFix,
+		Type:   api.TypeIssueRule,
 		Recipe: "fix",
+		Rule:   "fix",
 		Number: 10,
 		URL:    "https://github.com/test-owner/test-repo/issues/10",
 	}
@@ -248,7 +254,7 @@ func TestCLIRunner_Run_ReturnsErrorOnFailure(t *testing.T) {
 		return exec.CommandContext(ctx, "false")
 	}
 
-	task := &api.QueueTask{Type: api.TypeIssueFix, Number: 11}
+	task := &api.QueueTask{Type: api.TypeIssueRule, Number: 11}
 	if err := r.Run(context.Background(), "task-11.yaml", task, ""); err == nil {
 		t.Error("expected an error when the child process exits non-zero")
 	}
@@ -275,7 +281,7 @@ func TestCLIRunner_Run_PropagatesExecutableResolutionError(t *testing.T) {
 	r := testCLIRunner(t.TempDir())
 	r.resolveExecutable = func() (string, error) { return "", errors.New("boom") }
 
-	task := &api.QueueTask{Type: api.TypeIssueFix, Number: 13}
+	task := &api.QueueTask{Type: api.TypeIssueRule, Number: 13}
 	if err := r.Run(context.Background(), "task-13.yaml", task, ""); err == nil {
 		t.Error("expected an error when the factory executable cannot be resolved")
 	}
@@ -285,12 +291,12 @@ func TestCLIRunner_Run_PropagatesExecutableResolutionError(t *testing.T) {
 // each one's command names its run: a recipe task's, or an agent chore's.
 func TestEveryTaskTypeNamesItsRun(t *testing.T) {
 	r := testCLIRunner(t.TempDir())
-	for _, typ := range []api.TaskType{api.TypeIssueFix, api.TypePRInvestigate, api.TypePRComments, api.TypePRIterate, api.TypePRReview, api.TypeAgentChore} {
-		task := &api.QueueTask{Type: typ, URL: "https://github.com/o/r/pull/1", Number: 1, AgentFile: ".agents/x.md", Recipe: "r", EnqueuedAt: time.Unix(1760000000, 0)}
+	for _, typ := range []api.TaskType{api.TypeIssueRule, api.TypePRRule, api.TypeAgentChore} {
+		task := &api.QueueTask{Type: typ, URL: "https://github.com/o/r/pull/1", Number: 1, AgentFile: ".agents/x.md", Rule: "ci", Recipe: "r", EnqueuedAt: time.Unix(1760000000, 0)}
 		args := r.BuildArgs(task, "coder-bot")
 		want := api.ChoreRunName(task)
-		if rt, ok := api.RecipeTaskOf(typ); ok {
-			want = rt.RunName(task)
+		if api.IsRuleTask(typ) {
+			want = api.RuleRunName(task)
 		}
 		if !slices.Contains(args, "--run-name") || args[slices.Index(args, "--run-name")+1] != want {
 			t.Errorf("%s: BuildArgs %v, want --run-name %s", typ, args, want)

@@ -119,7 +119,7 @@ func (w *Watcher) proposeFanout(ctx context.Context, n int) error {
 	if w.ProposeFanout == nil {
 		return fmt.Errorf("this watcher cannot run recipes")
 	}
-	user, err := w.selectUserForTask(ctx, api.TypeIssueFix, "fanout", n)
+	user, err := w.selectUserForTask(ctx, api.TypeIssueRule, "fanout", n)
 	if err != nil {
 		return fmt.Errorf("choosing the account for the fanout recipe on #%d: %w", n, err)
 	}
@@ -148,7 +148,7 @@ func (w *Watcher) newWarmWorkspaceController() *warmworkspace.Controller {
 		Warm: func(ctx context.Context) error {
 			// The account a fix would clone as: the repository may be
 			// private, and the watcher's own may be no coder's.
-			user, err := w.selectUserForTask(ctx, api.TypeIssueFix, "warm", 0)
+			user, err := w.selectUserForTask(ctx, api.TypeIssueRule, "warm", 0)
 			if err != nil {
 				return fmt.Errorf("choosing the account for the warm recipe: %w", err)
 			}

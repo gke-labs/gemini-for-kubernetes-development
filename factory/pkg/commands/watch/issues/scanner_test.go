@@ -62,7 +62,7 @@ func (q *fakeQueue) HasActiveIssueTask(number int) bool {
 		}
 	}
 	for fn := range q.existing {
-		if fn == fmt.Sprintf("task-issue-%d.yaml", number) || (strings.HasPrefix(fn, "task-workflow-") && strings.HasSuffix(fn, fmt.Sprintf("-issue-%d.yaml", number))) {
+		if fn == fmt.Sprintf("task-issue-%d-rule-fix.yaml", number) || (strings.HasPrefix(fn, "task-workflow-") && strings.HasSuffix(fn, fmt.Sprintf("-issue-%d.yaml", number))) {
 			return true
 		}
 	}
@@ -271,15 +271,15 @@ func TestQueueTasks_ReadsFinishedWorkFromQueue(t *testing.T) {
 			issue(7, time.Now().Add(-3*time.Hour)),
 		}, map[int]bool{})
 
-		if _, ok := queue.enqueued["task-issue-7.yaml"]; !ok {
+		if _, ok := queue.enqueued["task-issue-7-rule-fix.yaml"]; !ok {
 			t.Fatalf("issue 7 was not queued; queued: %v", queue.enqueued)
 		}
 	})
 
 	t.Run("skips an issue not updated since its last task finished", func(t *testing.T) {
 		s, queue := newIssueScanner(t)
-		queue.finish("task-issue-7.yaml", &api.QueueTask{
-			Type:        api.TypeIssueFix,
+		queue.finish("task-issue-7-rule-fix.yaml", &api.QueueTask{
+			Type:        api.TypeIssueRule,
 			Number:      7,
 			Status:      api.StatusCompleted,
 			CompletedAt: time.Now().Add(-2 * time.Hour),
@@ -296,8 +296,8 @@ func TestQueueTasks_ReadsFinishedWorkFromQueue(t *testing.T) {
 
 	t.Run("skips an issue whose last task is still in cooldown", func(t *testing.T) {
 		s, queue := newIssueScanner(t)
-		queue.finish("task-issue-7.yaml", &api.QueueTask{
-			Type:        api.TypeIssueFix,
+		queue.finish("task-issue-7-rule-fix.yaml", &api.QueueTask{
+			Type:        api.TypeIssueRule,
 			Number:      7,
 			Status:      api.StatusCompleted,
 			CompletedAt: time.Now().Add(-time.Minute),
@@ -317,8 +317,8 @@ func TestQueueTasks_ReadsFinishedWorkFromQueue(t *testing.T) {
 	// someone touched the issue again.
 	t.Run("a failed task gates nothing", func(t *testing.T) {
 		s, queue := newIssueScanner(t)
-		queue.finish("task-issue-7.yaml", &api.QueueTask{
-			Type:        api.TypeIssueFix,
+		queue.finish("task-issue-7-rule-fix.yaml", &api.QueueTask{
+			Type:        api.TypeIssueRule,
 			Number:      7,
 			Status:      api.StatusFailed,
 			CompletedAt: time.Now().Add(-2 * time.Hour),
@@ -328,7 +328,7 @@ func TestQueueTasks_ReadsFinishedWorkFromQueue(t *testing.T) {
 			issue(7, time.Now().Add(-3*time.Hour)),
 		}, map[int]bool{})
 
-		if _, ok := queue.enqueued["task-issue-7.yaml"]; !ok {
+		if _, ok := queue.enqueued["task-issue-7-rule-fix.yaml"]; !ok {
 			t.Errorf("issue 7 was gated by a task that failed; queued: %v", queue.enqueued)
 		}
 	})
@@ -478,12 +478,12 @@ func TestScanOnce_QueuesAssignedIssue(t *testing.T) {
 
 	s.ScanOnce(context.Background())
 
-	task, ok := queue.enqueued["task-issue-7.yaml"]
+	task, ok := queue.enqueued["task-issue-7-rule-fix.yaml"]
 	if !ok {
 		t.Fatalf("issue 7 was not queued; queued: %v", queue.enqueued)
 	}
-	if task.Type != api.TypeIssueFix {
-		t.Errorf("task type = %q, want %q", task.Type, api.TypeIssueFix)
+	if task.Type != api.TypeIssueRule {
+		t.Errorf("task type = %q, want %q", task.Type, api.TypeIssueRule)
 	}
 	if task.Assignee != "bot1" {
 		t.Errorf("task assignee = %q, want 'bot1'", task.Assignee)
@@ -501,11 +501,11 @@ func TestScanOnce_QueuesAssignedIssue(t *testing.T) {
 
 	// A second cycle must not re-queue: the task finished and the issue has
 	// not been updated since (the fix rule's once per update).
-	delete(queue.existing, "task-issue-7.yaml")
-	delete(queue.enqueued, "task-issue-7.yaml")
-	queue.finish("task-issue-7.yaml", &api.QueueTask{Status: api.StatusCompleted, StartedAt: time.Now().Add(-time.Minute), CompletedAt: time.Now()})
+	delete(queue.existing, "task-issue-7-rule-fix.yaml")
+	delete(queue.enqueued, "task-issue-7-rule-fix.yaml")
+	queue.finish("task-issue-7-rule-fix.yaml", &api.QueueTask{Status: api.StatusCompleted, StartedAt: time.Now().Add(-time.Minute), CompletedAt: time.Now()})
 	s.ScanOnce(context.Background())
-	if _, ok := queue.enqueued["task-issue-7.yaml"]; ok {
+	if _, ok := queue.enqueued["task-issue-7-rule-fix.yaml"]; ok {
 		t.Error("issue 7 was queued twice without having been updated in between")
 	}
 }
@@ -517,8 +517,8 @@ func TestScanOnce_QueuesAssignedIssue(t *testing.T) {
 // (k8s-config-connector#13652 → #13244).
 func TestPublishOpenIssues_LeavesOutProcessedIssues(t *testing.T) {
 	s, queue, entities := newScanner(t, Config{}, Deps{})
-	queue.finish("task-issue-7.yaml", &api.QueueTask{
-		Type:        api.TypeIssueFix,
+	queue.finish("task-issue-7-rule-fix.yaml", &api.QueueTask{
+		Type:        api.TypeIssueRule,
 		Number:      7,
 		Status:      api.StatusCompleted,
 		CompletedAt: time.Now().Add(-time.Hour),

@@ -229,8 +229,8 @@ func TestTaskPriorityQueue_ToSortedSlice(t *testing.T) {
 func TestTaskPriorityQueue_HasActivePRTask(t *testing.T) {
 	pq := NewTaskPriorityQueue()
 
-	pq.Enqueue("task-issue-10.yaml", &api.QueueTask{Type: api.TypeIssueFix, Number: 10})
-	pq.Enqueue("task-pr-42-review.yaml", &api.QueueTask{Type: api.TypePRReview, Number: 42})
+	pq.Enqueue("task-issue-10-rule-fix.yaml", &api.QueueTask{Type: api.TypeIssueRule, Number: 10})
+	pq.Enqueue("task-pr-42-rule-review.yaml", &api.QueueTask{Type: api.TypePRRule, Number: 42})
 
 	if !pq.HasActivePRTask(42) {
 		t.Error("expected HasActivePRTask(42) to be true")

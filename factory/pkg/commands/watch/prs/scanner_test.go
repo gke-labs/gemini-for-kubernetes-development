@@ -44,8 +44,8 @@ func TestEvaluate_Filters(t *testing.T) {
 	})
 
 	// A pending task for the stopped pull request, which must be withdrawn.
-	stopTaskFile := filepath.Join(incomingDir, "task-pr-20-iterate.yaml")
-	if err := os.WriteFile(stopTaskFile, []byte("type: pr-iterate\n"), 0644); err != nil {
+	stopTaskFile := filepath.Join(incomingDir, "task-pr-20-rule-conflict.yaml")
+	if err := os.WriteFile(stopTaskFile, []byte("type: pr-rule\n"), 0644); err != nil {
 		t.Fatalf("writing task file: %v", err)
 	}
 	_ = queue.LoadFromDisk()
@@ -164,8 +164,8 @@ func TestEvaluate_ReadyForHuman_GatedByActiveTask(t *testing.T) {
 	}
 
 	// 1. When a task is pending in incomingDir, PR must NOT be marked ready for human
-	taskPath := filepath.Join(incomingDir, "task-pr-10-comments.yaml")
-	_ = os.WriteFile(taskPath, []byte("type: pr-comments\n"), 0644)
+	taskPath := filepath.Join(incomingDir, "task-pr-10-rule-comments.yaml")
+	_ = os.WriteFile(taskPath, []byte("type: pr-rule\n"), 0644)
 
 	s.evaluateAll(context.Background(), []*githubv39.Issue{prIssue})
 
@@ -178,8 +178,8 @@ func TestEvaluate_ReadyForHuman_GatedByActiveTask(t *testing.T) {
 
 	// 2. When the task moves to processingDir, PR must still NOT be marked ready for human
 	_ = os.Remove(taskPath)
-	processingTaskPath := filepath.Join(processingDir, "task-pr-10-comments.yaml")
-	_ = os.WriteFile(processingTaskPath, []byte("type: pr-comments\n"), 0644)
+	processingTaskPath := filepath.Join(processingDir, "task-pr-10-rule-comments.yaml")
+	_ = os.WriteFile(processingTaskPath, []byte("type: pr-rule\n"), 0644)
 
 	s.evaluateAll(context.Background(), []*githubv39.Issue{prIssue})
 
@@ -192,8 +192,8 @@ func TestEvaluate_ReadyForHuman_GatedByActiveTask(t *testing.T) {
 
 	// 3. When the task is completed and moved to processedDir, PR SHOULD be marked ready for human
 	_ = os.Remove(processingTaskPath)
-	processedTaskPath := filepath.Join(processedDir, "task-pr-10-comments.yaml")
-	_ = os.WriteFile(processedTaskPath, []byte("type: pr-comments\nstatus: Completed\n"), 0644)
+	processedTaskPath := filepath.Join(processedDir, "task-pr-10-rule-comments.yaml")
+	_ = os.WriteFile(processedTaskPath, []byte("type: pr-rule\nstatus: Completed\n"), 0644)
 
 	s.evaluateAll(context.Background(), []*githubv39.Issue{prIssue})
 
@@ -636,7 +636,7 @@ func TestEvaluate_Review_GatedByPendingCheckRuns(t *testing.T) {
 
 	// 1. While CI is in_progress -> review task must NOT be queued
 	s.evaluateAll(context.Background(), []*githubv39.Issue{prIssue})
-	reviewTaskFile := filepath.Join(incomingDir, "task-pr-10-review.yaml")
+	reviewTaskFile := filepath.Join(incomingDir, "task-pr-10-rule-review.yaml")
 	if _, err := os.Stat(reviewTaskFile); !os.IsNotExist(err) {
 		t.Errorf("expected review task NOT to be created while CI is in_progress")
 	}
@@ -774,7 +774,7 @@ func TestEvaluate_RepositoryRuleQueuesARuleTask(t *testing.T) {
 	checkRunStatus = "completed"
 	checkRunConclusion = "success"
 	s.evaluateAll(context.Background(), []*githubv39.Issue{prIssue})
-	if _, err := os.Stat(filepath.Join(incomingDir, "task-pr-10-review.yaml")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(incomingDir, "task-pr-10-rule-review.yaml")); !os.IsNotExist(err) {
 		t.Error("the review was queued, though the preview rule takes the PR first")
 	}
 	data, err := os.ReadFile(filepath.Join(incomingDir, "task-pr-10-rule-preview.yaml"))
@@ -896,25 +896,25 @@ func TestEvaluate_CommentsPrioritizedOverCIFailures(t *testing.T) {
 	// When both failing CI and new comments exist, comments (Phase 1) must be prioritized over investigate (Phase 3)
 	s.evaluateAll(context.Background(), []*githubv39.Issue{prIssue})
 
-	commentsTaskFile := filepath.Join(incomingDir, "task-pr-10-comments.yaml")
+	commentsTaskFile := filepath.Join(incomingDir, "task-pr-10-rule-comments.yaml")
 	if _, err := os.Stat(commentsTaskFile); os.IsNotExist(err) {
-		t.Fatalf("expected task-pr-10-comments.yaml to be created when unaddressed comments exist despite CI failure")
+		t.Fatalf("expected task-pr-10-rule-comments.yaml to be created when unaddressed comments exist despite CI failure")
 	}
 
-	investigateTaskFile := filepath.Join(incomingDir, "task-pr-10-investigate.yaml")
+	investigateTaskFile := filepath.Join(incomingDir, "task-pr-10-rule-ci.yaml")
 	if _, err := os.Stat(investigateTaskFile); !os.IsNotExist(err) {
-		t.Fatalf("expected task-pr-10-investigate.yaml NOT to be created when comments take priority")
+		t.Fatalf("expected task-pr-10-rule-ci.yaml NOT to be created when comments take priority")
 	}
 
 	// 2. Clear incomingDir and simulate that investigate already ran for this SHA without fixing CI.
 	// When another new comment arrives, comments task MUST still be created (no starvation due to failing CI).
 	_ = os.Remove(commentsTaskFile)
-	_ = queue.RemoveTask("task-pr-10-comments.yaml")
+	_ = queue.RemoveTask("task-pr-10-rule-comments.yaml")
 	commentTime = commentTime.Add(10 * time.Minute)
 	s.evaluateAll(context.Background(), []*githubv39.Issue{prIssue})
 
 	if _, err := os.Stat(commentsTaskFile); os.IsNotExist(err) {
-		t.Fatalf("expected task-pr-10-comments.yaml to be created when new comment arrives on a PR with previously investigated failing CI")
+		t.Fatalf("expected task-pr-10-rule-comments.yaml to be created when new comment arrives on a PR with previously investigated failing CI")
 	}
 }
 
@@ -1014,14 +1014,14 @@ func TestEvaluate_CommentsPrioritizedOverMergeConflicts(t *testing.T) {
 	// When both merge conflicts and new comments exist, comments (Phase 1) must be prioritized over iterate (Phase 2)
 	s.evaluateAll(context.Background(), []*githubv39.Issue{prIssue})
 
-	commentsTaskFile := filepath.Join(incomingDir, "task-pr-10-comments.yaml")
+	commentsTaskFile := filepath.Join(incomingDir, "task-pr-10-rule-comments.yaml")
 	if _, err := os.Stat(commentsTaskFile); os.IsNotExist(err) {
-		t.Fatalf("expected task-pr-10-comments.yaml to be created when unaddressed comments exist despite merge conflict")
+		t.Fatalf("expected task-pr-10-rule-comments.yaml to be created when unaddressed comments exist despite merge conflict")
 	}
 
-	iterateTaskFile := filepath.Join(incomingDir, "task-pr-10-iterate.yaml")
+	iterateTaskFile := filepath.Join(incomingDir, "task-pr-10-rule-conflict.yaml")
 	if _, err := os.Stat(iterateTaskFile); !os.IsNotExist(err) {
-		t.Fatalf("expected task-pr-10-iterate.yaml NOT to be created when comments take priority")
+		t.Fatalf("expected task-pr-10-rule-conflict.yaml NOT to be created when comments take priority")
 	}
 }
 
@@ -1108,8 +1108,8 @@ func TestEvaluate_InMergeQueue(t *testing.T) {
 	}
 
 	// Create a dummy pending task file to verify it gets removed when PR is in merge queue
-	taskFile := filepath.Join(incomingDir, "task-pr-10-iterate.yaml")
-	_ = os.WriteFile(taskFile, []byte("type: pr-iterate\n"), 0644)
+	taskFile := filepath.Join(incomingDir, "task-pr-10-rule-conflict.yaml")
+	_ = os.WriteFile(taskFile, []byte("type: pr-rule\n"), 0644)
 	_ = queue.LoadFromDisk()
 
 	// Execute one evaluation cycle
@@ -1765,8 +1765,8 @@ func TestFastPass_ReevaluatesWhenTaskFinishes(t *testing.T) {
 
 	// A task is in flight, so the first pass records the pull request as
 	// having work against it.
-	taskPath := filepath.Join(tempDir, "incoming", "task-pr-10-comments.yaml")
-	if err := os.WriteFile(taskPath, []byte("type: pr-comments\n"), 0644); err != nil {
+	taskPath := filepath.Join(tempDir, "incoming", "task-pr-10-rule-comments.yaml")
+	if err := os.WriteFile(taskPath, []byte("type: pr-rule\n"), 0644); err != nil {
 		t.Fatalf("writing task file: %v", err)
 	}
 	s.fastPass(ctx)
@@ -2043,7 +2043,7 @@ func TestEvaluate_ReadyForHuman_ReviewLabelAndHumanAssignees(t *testing.T) {
 	if len(addedPRLabels) != 0 {
 		t.Fatalf("step 2: addedPRLabels = %v, want none (overseer/review must not be re-synced from parent issue)", addedPRLabels)
 	}
-	reviewTaskFile := filepath.Join(incomingDir, "task-pr-10-review.yaml")
+	reviewTaskFile := filepath.Join(incomingDir, "task-pr-10-rule-review.yaml")
 	if _, err := os.Stat(reviewTaskFile); !os.IsNotExist(err) {
 		t.Fatalf("step 2: expected no review task to be queued when overseer/review was only on the parent issue")
 	}
@@ -2076,7 +2076,7 @@ func TestEvaluate_ReadyForHuman_ReviewLabelAndHumanAssignees(t *testing.T) {
 	// 4. Bot review completes on sha-2 and review task finishes:
 	// PR settles again and removes overseer/review from the PR again.
 	_ = os.Remove(reviewTaskFile)
-	_ = queue.RemoveTask("task-pr-10-review.yaml")
+	_ = queue.RemoveTask("task-pr-10-rule-review.yaml")
 	reviews = []*githubv39.PullRequestReview{
 		{
 			User:        &githubv39.User{Login: stringPtr("reviewbot")},

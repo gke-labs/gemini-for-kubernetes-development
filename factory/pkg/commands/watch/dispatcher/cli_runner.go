@@ -59,7 +59,7 @@ func NewCLIRunner(cfg CLIRunnerConfig) *CLIRunner {
 // task type is unknown or, for a recipe task, no rule decided it (no recipe).
 func (r *CLIRunner) BuildArgs(t *api.QueueTask, selectedUser string) []string {
 	var args []string
-	if _, ok := api.RecipeTaskOf(t.Type); ok {
+	if api.IsRuleTask(t.Type) {
 		// The recipe the rule that decided t names, its result applied
 		// by the CLI as the user picked (--user); none without one. The
 		// run name is this enqueue's: a restarted watcher's recovered
@@ -139,7 +139,7 @@ func (r *CLIRunner) withCommonArgs(args []string, selectedUser string) []string 
 func (r *CLIRunner) Run(ctx context.Context, taskFilename string, task *api.QueueTask, selectedUser string) error {
 	args := r.BuildArgs(task, selectedUser)
 	if args == nil {
-		if _, ok := api.RecipeTaskOf(task.Type); ok {
+		if api.IsRuleTask(task.Type) {
 			return fmt.Errorf("task %s carries no recipe: no rule decided it", taskFilename)
 		}
 		return fmt.Errorf("unknown task type: %s", task.Type)

@@ -138,7 +138,7 @@ func TestCollectGarbageSkipsLeasedSandboxes(t *testing.T) {
 		newSandbox("factory-pr-7", map[string]interface{}{annotationLastTaskState: "Completed"}),
 	)
 	locks := concurrency.NewSandboxLockRegistry()
-	if !locks.TryAcquire("factory-pr-7", "task-pr-7-comments.yaml") {
+	if !locks.TryAcquire("factory-pr-7", "task-pr-7-rule-comments.yaml") {
 		t.Fatalf("failed to acquire the sandbox lease used by this test")
 	}
 
@@ -168,7 +168,7 @@ func TestCollectGarbageHoldsLeaseWhileConfirmingWithGitHub(t *testing.T) {
 	var leasedDuringConfirm atomic.Bool
 	gh := newEntityGitHub(t, func() {
 		// Stand in for the dispatcher trying to claim the sandbox mid-sweep.
-		leasedDuringConfirm.Store(!locks.TryAcquire("factory-pr-7", "task-pr-7-comments.yaml"))
+		leasedDuringConfirm.Store(!locks.TryAcquire("factory-pr-7", "task-pr-7-rule-comments.yaml"))
 	})
 
 	r := New(Config{}, Deps{
@@ -454,7 +454,7 @@ func TestCollectGarbageSuspendsIdleSandboxes(t *testing.T) {
 
 func TestCollectGarbageSkipsSuspendingLeasedSandboxes(t *testing.T) {
 	locks := concurrency.NewSandboxLockRegistry()
-	if !locks.TryAcquire("factory-pr-7", "task-pr-7-comments.yaml") {
+	if !locks.TryAcquire("factory-pr-7", "task-pr-7-rule-comments.yaml") {
 		t.Fatalf("failed to acquire the sandbox lease used by this test")
 	}
 

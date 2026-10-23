@@ -37,10 +37,18 @@ watch as it was; "As built" is the watch now.
   writes - labels, assignees, a stop's label and comment
   (`act.ApplyWrites`). workflow-missing's stop keeps a handler, which posts
   the rule's comment with the definition's path and load error.
-- **The dispatcher runs what the rule names.** `api.RecipeTask` keeps only
-  the run-name prefix and the sandbox; the recipe, `--apply --action`,
-  `--pr-labels` and inputs come from the task (`api.RecipeArgs`). Which
-  bot runs it is `SelectUser`.
+- **The dispatcher runs what the rule names.** Every rule's task is a rule
+  task - type `pr-rule` or `issue-rule`, file `task-<kind>-<n>-rule-<rule>.yaml`,
+  its run named `<rule>-<n>-<sha>-<enqueued>` and stamped when queued -
+  whatever the rule; a workflow step or a chore is an `agent-chore`. The
+  recipe, `--apply --action`, `--pr-labels` and inputs come from the task
+  (`api.RecipeArgs`); the sandbox, from the recipe (`credentials: clone`
+  has its own); which bot runs it, from the recipe's `as` (`SelectUser`).
+  A watch upgraded from one with a type and a file name per rule
+  (`pr-investigate`, `task-pr-<n>-investigate.yaml`, ...) renames and
+  converts those tasks when it loads the queue, keeping the run name their
+  old type gave them, and reads their journalled runs under the new names
+  (`api.MigrateTask`, `api.MigratedTaskID`).
 - **The decision at start.** Just before a task starts, `Redecide` reads
   the item's facts again and asks the engine, as if the task were not
   there: a gate, a moved head, or a rule that no longer decides drops it,

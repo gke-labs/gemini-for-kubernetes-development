@@ -8,7 +8,7 @@ This document describes the design, lifecycle, and identity model for automated 
 
 ## 1. Overview & Motivation
 
-Pull Requests created by automated workflows (such as migration checklists in `.agents/workflows/kcc-example.txt`) or standalone issue-fix agents require rigorous, independent code review before human approval or merging.
+Pull Requests created by automated workflows (such as migration checklists in `.agents/workflows/kcc-example.txt`) or standalone fix runs require rigorous, independent code review before human approval or merging.
 
 Rather than coupling review lifecycle loops into individual workflow scripts, the AI Factory uses a **Watch-Driven Automated Review** model combined with **Markdown-Bounded Contextual Hints**:
 - **Opt-In Triggering (`overseer/review`)**: To prevent reviewing too many PRs unnecessarily, automated AI review is gated on the presence of the `overseer/review` label (or `<triggerLabel>/review`) on either the PR or its referenced parent Issue. Once opted in, the PR receives a code review when CI passes on the current HEAD SHA (rule `review`).
@@ -22,16 +22,16 @@ Rather than coupling review lifecycle loops into individual workflow scripts, th
 ```mermaid
 graph TD
     A[Coder Bot Pushes Commit HEAD SHA] --> B[CI Checks Run]
-    B -->|Failure| C[Queue pr-investigate Task]
+    B -->|Failure| C[Queue the ci rule task]
     C -->|Coder Fixes CI| A
     B -->|Success Green CI| D{Is HEAD SHA reviewed by Reviewer Bot?}
     D -->|Yes| E{New Review Comments?}
     D -->|No| F[Parse '## Review Instructions' from PR / Parent Issue Body]
-    F --> G[Queue pr-review Task with Instructions]
+    F --> G[Queue the review rule task with Instructions]
     G --> H[Run review recipe in sandbox review-REPO-NUM as Reviewer Bot]
     H --> I[submit-review action posts the review to GitHub]
     I --> E
-    E -->|Yes| J[Queue pr-comments Task for Coder Bot]
+    E -->|Yes| J[Queue the comments rule task for the PR bot]
     J -->|Coder Pushes Fixes| A
     E -->|No / Approved| K[PR Ready for Human LGTM / Merge]
 ```
@@ -72,10 +72,10 @@ Pay special attention to field conversion accuracy.
 ## 4. Execution Sandbox & Reviewer Identity
 
 ### Decision
-The rule `review` (`factory/pkg/watch/rules/review.yaml`) decides the review: a PR of the bot pool's, CI green, no pending trusted feedback, not approved (`isPRApprovedOrLGTM`, `prs/labels.go`, is read as a fact), head not yet reviewed by the automated reviewer, and `*/review` on the PR, or on an issue it closes while the PR is not `ready-for-human`. It runs once per head (`dedupe: head`) and takes the PR after `comments`, `conflict` and `ci`. The PR scanner (`prs/scanner.go evaluate`) carries the decision out in `handlePRReview` (`prs/handlers.go`), which collects the review instructions and enqueues the `pr-review` task stamped with the rule's recipe (`review`) and apply (`submit-review`).
+The rule `review` (`factory/pkg/watch/rules/review.yaml`) decides the review: a PR of the bot pool's, CI green, no pending trusted feedback, not approved (`isPRApprovedOrLGTM`, `prs/labels.go`, is read as a fact), head not yet reviewed by the automated reviewer, and `*/review` on the PR, or on an issue it closes while the PR is not `ready-for-human`. It runs once per head (`dedupe: head`) and takes the PR after `comments`, `conflict` and `ci`. The PR scanner (`prs/scanner.go evaluate`) carries the decision out in `handlePRReview` (`prs/handlers.go`), which collects the review instructions and enqueues the `pr-rule` (`task-pr-<n>-rule-review`) task stamped with the rule's recipe (`review`) and apply (`submit-review`).
 
 ### A. Role Resolution (`selectUserForTask`)
-When the dispatcher starts a `pr-review` task, it routes execution through `selectUserForTask` (`factory/pkg/commands/watch/user_selection.go`):
+When the dispatcher starts the review rule task, it routes execution through `selectUserForTask` (`factory/pkg/commands/watch/user_selection.go`):
 ```go
 case taskType == api.TypePRReview:
     role = "reviewer"

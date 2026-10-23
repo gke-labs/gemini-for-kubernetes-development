@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/api"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/watch/rules"
 )
 
 // prState records what has already been done for a pull request, and is what
@@ -131,27 +132,16 @@ func processedPRStates(tasks map[string]*api.QueueTask) map[int]prState {
 		if t == nil || !strings.HasPrefix(filename, "task-pr-") {
 			continue
 		}
-		name := strings.TrimSuffix(strings.TrimPrefix(filename, "task-pr-"), ".yaml")
-
-		var numStr string
-		switch {
-		case strings.HasSuffix(name, "-comments"):
-			numStr = strings.TrimSuffix(name, "-comments")
-		case strings.HasSuffix(name, "-investigate"):
-			numStr = strings.TrimSuffix(name, "-investigate")
-		case strings.HasSuffix(name, "-review"):
-			numStr = strings.TrimSuffix(name, "-review")
-		case strings.HasSuffix(name, "-iterate"):
-			numStr = strings.TrimSuffix(name, "-iterate")
-		default:
+		// task-pr-<n>-rule-<rule>.yaml (api.RuleTaskFile).
+		numStr, _, ok := strings.Cut(strings.TrimPrefix(filename, "task-pr-"), "-rule-")
+		if !ok {
 			continue
 		}
-
 		num, err := strconv.Atoi(numStr)
 		if err != nil {
 			continue
 		}
-		processedPRs[num] = foldProcessedPRTask(t, name, processedPRs[num])
+		processedPRs[num] = foldProcessedPRTask(t, processedPRs[num])
 	}
 	return processedPRs
 }
@@ -159,18 +149,19 @@ func processedPRStates(tasks map[string]*api.QueueTask) map[int]prState {
 // foldProcessedPRTask folds one finished task into the state of its pull
 // request.
 //
-// For address-comments tasks, the enqueue timestamp is recorded even when the
+// For a task that acknowledges the feedback it answers (the comments
+// rule's, acknowledge: feedback), the enqueue timestamp is recorded even when the
 // task failed so that a restart does not mistake pre-existing comments for new
 // ones while still picking up comments posted while the task was running;
 // retries of a failed address-comments task are the comments rule's
 // (last-run: failed). The other tasks record nothing here: the rules read
 // their runs from the queue.
-func foldProcessedPRTask(t *api.QueueTask, name string, state prState) prState {
+func foldProcessedPRTask(t *api.QueueTask, state prState) prState {
 	// The queue dates every finished task, falling back to the task file's own
 	// timestamp for one that recorded no completion time.
 	tTime := t.CompletedAt
 
-	if strings.HasSuffix(name, "-comments") {
+	if t.Acknowledge == rules.AcknowledgeFeedback {
 		cTime := t.EnqueuedAt
 		if cTime.IsZero() {
 			cTime = t.StartedAt

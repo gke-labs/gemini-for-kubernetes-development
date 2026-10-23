@@ -75,7 +75,7 @@ func TestQueueTasks_RulesControl(t *testing.T) {
 				Labels: []*githubv39.Label{{Name: githubv39.String("factory")}},
 				User:   &githubv39.User{Login: githubv39.String("someone")},
 			}}, map[int]bool{})
-			if _, got := queue.enqueued["task-issue-7.yaml"]; got != tc.fixed {
+			if _, got := queue.enqueued["task-issue-7-rule-fix.yaml"]; got != tc.fixed {
 				t.Errorf("fix queued %v, want %v", got, tc.fixed)
 			}
 		})

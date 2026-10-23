@@ -48,14 +48,14 @@ Every sandbox setting can be overridden per command by the matching flag (shown 
   * **`value`** (string): The environment variable value.
 
 ### Multi-Identity & Bot Pools (`roles`)
-* **`roles`** (map of role names to role specs): Groups task types and defines a pool of bot user accounts that are randomly selected to run them. This prevents API rate limits and conflicts when running concurrent sandboxes.
+* **`roles`** (map of role names to role specs): Pools of bot user accounts. Which pool runs a task is its recipe's (`as:`), not configured here. This prevents API rate limits and conflicts when running concurrent sandboxes.
   * **Role Spec**:
-    * **`tasks`** (array of strings): The list of task types mapped to this role (e.g., `issue-fix`, `pr-investigate`, `pr-comments`, `pr-iterate`, `pr-review`, `agent-chore`).
-    * **`users`** (array of strings): The list of bot user accounts belonging to this pool. The `factory` CLI will select one randomly.
-  * *Note*: Standard role names are:
-    * `coder` (default for coding tasks: `issue-fix`, `pr-investigate`, `pr-comments`, `pr-iterate`)
-    * `reviewer` (default for PR review tasks: `pr-review`)
-    * `agent` (default for custom agent tasks: `agent-chore`. Falls back to the `coder` role if the `agent` role is not explicitly configured).
+    * **`users`** (array of strings): The bot user accounts in this pool.
+  * *Note*: The role names recipes say are:
+    * `coder`: fix, plan, triage and the other issue recipes, a pool bot pinned to the issue (the bot owning its sandbox, then a pool bot assigned to it, else any).
+    * `reviewer`: review.
+    * `agent`: workflow steps and chores (falls back to `coder` when there is no `agent` pool).
+    * A recipe that says `as: author` (the care recipes) runs as the PR's own bot: the pool bot assigned to it, else its author.
 
 ### Parsed but not used
 This key is accepted for compatibility and has no effect:
@@ -105,17 +105,10 @@ env:
 # Bot Pool & Roles
 roles:
   coder:
-    tasks:
-      - issue-fix
-      - pr-investigate
-      - pr-comments
-      - pr-iterate
     users:
       - coder-bot-1
       - coder-bot-2
   reviewer:
-    tasks:
-      - pr-review
     users:
       - reviewer-bot-1
       - reviewer-bot-2

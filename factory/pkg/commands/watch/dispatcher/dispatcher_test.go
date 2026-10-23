@@ -257,13 +257,13 @@ func TestDispatchOnce_ExecutesTaskAndCompletesIt(t *testing.T) {
 	d, queue, _, coordinator, runner := testDispatcher(t, tempDir, nil)
 	coordinator.user = "coder-bot"
 
-	enqueueTestTask(t, queue, "task-issue-1.yaml", 1)
+	enqueueTestTask(t, queue, "task-issue-1-rule-fix.yaml", 1)
 
 	d.DispatchOnce(context.Background())
 	d.Wait()
 
 	calls := runner.invocations()
-	if len(calls) != 1 || calls[0].filename != "task-issue-1.yaml" {
+	if len(calls) != 1 || calls[0].filename != "task-issue-1-rule-fix.yaml" {
 		t.Fatalf("expected runner to be invoked once for the task, got %+v", calls)
 	}
 	if calls[0].user != "coder-bot" {
@@ -281,7 +281,7 @@ func TestDispatchOnce_DryRunLeavesTaskInIncoming(t *testing.T) {
 		cfg.DryRun = true
 	})
 
-	fn := "task-issue-1.yaml"
+	fn := "task-issue-1-rule-fix.yaml"
 	enqueueTestTask(t, queue, fn, 1)
 
 	d.DispatchOnce(context.Background())
@@ -309,7 +309,7 @@ func TestDispatchOnce_DrainModeDoesNotClaim(t *testing.T) {
 		t.Fatalf("failed to write drain file: %v", err)
 	}
 
-	enqueueTestTask(t, queue, "task-issue-2.yaml", 2)
+	enqueueTestTask(t, queue, "task-issue-2-rule-fix.yaml", 2)
 
 	d.DispatchOnce(context.Background())
 	d.Wait()
@@ -331,7 +331,7 @@ func TestDispatchOnce_SkipsTaskWhileSandboxIsLeased(t *testing.T) {
 		t.Fatalf("failed to pre-acquire lease")
 	}
 
-	fn := "task-issue-42.yaml"
+	fn := "task-issue-42-rule-fix.yaml"
 	enqueueTestTask(t, queue, fn, 42)
 
 	d.DispatchOnce(context.Background())
@@ -356,7 +356,7 @@ func TestDispatchOnce_SkipsTaskWhileSandboxIsRunning(t *testing.T) {
 	d, queue, sandboxes, _, runner := testDispatcher(t, tempDir, nil)
 	sandboxes.running["sandbox"] = true
 
-	enqueueTestTask(t, queue, "task-issue-3.yaml", 3)
+	enqueueTestTask(t, queue, "task-issue-3-rule-fix.yaml", 3)
 
 	d.DispatchOnce(context.Background())
 	d.Wait()
@@ -374,7 +374,7 @@ func TestDispatchOnce_RemovesCancelledTask(t *testing.T) {
 		return true, "target #4 is closed"
 	}
 
-	enqueueTestTask(t, queue, "task-issue-4.yaml", 4)
+	enqueueTestTask(t, queue, "task-issue-4-rule-fix.yaml", 4)
 
 	d.DispatchOnce(context.Background())
 	d.Wait()
@@ -393,7 +393,7 @@ func TestDispatchOnce_RemovesTaskForASandboxThatNeedsAPerson(t *testing.T) {
 	d, queue, sandboxes, _, runner := testDispatcher(t, tempDir, nil)
 	sandboxes.requiresHuman = map[string]string{"sandbox": "step 8:ask: over the token limit"}
 
-	enqueueTestTask(t, queue, "task-issue-4.yaml", 4)
+	enqueueTestTask(t, queue, "task-issue-4-rule-fix.yaml", 4)
 
 	d.DispatchOnce(context.Background())
 	d.Wait()
@@ -413,12 +413,12 @@ func TestDispatchOnce_RunsRecoveredTaskDespiteCompletedSandboxAnnotation(t *test
 	d, queue, _, _, runner := testDispatcher(t, tempDir, nil)
 
 	task := &api.QueueTask{
-		Type:       api.TypeIssueFix,
+		Type:       api.TypeIssueRule,
 		Number:     5,
 		Recovered:  true,
 		EnqueuedAt: time.Now(),
 	}
-	if err := queue.Enqueue("task-issue-5.yaml", task); err != nil {
+	if err := queue.Enqueue("task-issue-5-rule-fix.yaml", task); err != nil {
 		t.Fatalf("Enqueue failed: %v", err)
 	}
 
@@ -441,8 +441,8 @@ func TestDispatchOnce_RespectsMaxActions(t *testing.T) {
 		return "sandbox-" + string(rune('a'+number))
 	}
 
-	enqueueTestTask(t, queue, "task-issue-1.yaml", 1)
-	enqueueTestTask(t, queue, "task-issue-2.yaml", 2)
+	enqueueTestTask(t, queue, "task-issue-1-rule-fix.yaml", 1)
+	enqueueTestTask(t, queue, "task-issue-2-rule-fix.yaml", 2)
 
 	d.DispatchOnce(context.Background())
 	d.Wait()
@@ -460,7 +460,7 @@ func TestDispatchOnce_RespectsMaxPending(t *testing.T) {
 	})
 	sandboxes.runningCount = 1
 
-	enqueueTestTask(t, queue, "task-issue-1.yaml", 1)
+	enqueueTestTask(t, queue, "task-issue-1-rule-fix.yaml", 1)
 
 	d.DispatchOnce(context.Background())
 	d.Wait()
@@ -482,8 +482,8 @@ func TestDispatchOnce_CountsRunningTasksOnceAndIncrementsWithinCycle(t *testing.
 		return fmt.Sprintf("fix-repo-%d", number)
 	}
 
-	enqueueTestTask(t, queue, "task-issue-1.yaml", 1)
-	enqueueTestTask(t, queue, "task-issue-2.yaml", 2)
+	enqueueTestTask(t, queue, "task-issue-1-rule-fix.yaml", 1)
+	enqueueTestTask(t, queue, "task-issue-2-rule-fix.yaml", 2)
 
 	d.DispatchOnce(context.Background())
 	d.Wait()
@@ -503,7 +503,7 @@ func TestDispatchOnce_FailedTaskIsMarkedFailed(t *testing.T) {
 		return errors.New("task blew up")
 	}
 
-	enqueueTestTask(t, queue, "task-issue-6.yaml", 6)
+	enqueueTestTask(t, queue, "task-issue-6-rule-fix.yaml", 6)
 
 	d.DispatchOnce(context.Background())
 	d.Wait()
@@ -524,13 +524,13 @@ func TestDispatchOnce_FailedTaskRecordsTheChildsError(t *testing.T) {
 		return &RunError{Err: errors.New("exit status 1"), Reason: "applying the Change: replying to comment 1: nope"}
 	}
 
-	enqueueTestTask(t, queue, "task-issue-8.yaml", 8)
+	enqueueTestTask(t, queue, "task-issue-8-rule-fix.yaml", 8)
 
 	d.DispatchOnce(context.Background())
 	d.Wait()
 
 	waitForCounts(t, queue, 0, 0, 1)
-	failed := queue.GetProcessedTask("task-issue-8.yaml")
+	failed := queue.GetProcessedTask("task-issue-8-rule-fix.yaml")
 	if failed == nil || failed.Error != "exit status 1: applying the Change: replying to comment 1: nope" {
 		t.Errorf("processed task = %+v, want the child's error", failed)
 	}
@@ -546,7 +546,7 @@ func TestDispatchOnce_TimedOutTaskDeletesSandbox(t *testing.T) {
 		return ctx.Err()
 	}
 
-	enqueueTestTask(t, queue, "task-issue-7.yaml", 7)
+	enqueueTestTask(t, queue, "task-issue-7-rule-fix.yaml", 7)
 
 	d.DispatchOnce(context.Background())
 	d.Wait()
@@ -562,7 +562,7 @@ func TestDispatchOnce_UserSelectionFailureFailsTask(t *testing.T) {
 	d, queue, _, coordinator, runner := testDispatcher(t, tempDir, nil)
 	coordinator.userErr = errors.New("no eligible bot")
 
-	enqueueTestTask(t, queue, "task-issue-8.yaml", 8)
+	enqueueTestTask(t, queue, "task-issue-8-rule-fix.yaml", 8)
 
 	d.DispatchOnce(context.Background())
 	d.Wait()
@@ -591,7 +591,7 @@ func TestRun_DispatchesTaskEnqueuedAfterStartup(t *testing.T) {
 
 	// Enqueue only after the initial dispatch cycle has already run
 	time.Sleep(20 * time.Millisecond)
-	enqueueTestTask(t, queue, "task-issue-99.yaml", 99)
+	enqueueTestTask(t, queue, "task-issue-99-rule-fix.yaml", 99)
 
 	waitForCounts(t, queue, 0, 0, 1)
 
@@ -608,7 +608,7 @@ func TestRun_WaitsForInFlightWorkers(t *testing.T) {
 		return nil
 	}
 
-	enqueueTestTask(t, queue, "task-issue-88.yaml", 88)
+	enqueueTestTask(t, queue, "task-issue-88-rule-fix.yaml", 88)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	dispatcherDone := make(chan struct{})
@@ -673,16 +673,16 @@ func TestDispatchOnce_ShutdownLeavesTaskInProcessingForRecovery(t *testing.T) {
 	tempDir := t.TempDir()
 	d, queue, _, coordinator, runner := testDispatcher(t, tempDir, nil)
 
-	startInterruptedTask(t, d, queue, runner, "task-issue-9.yaml", 9)
+	startInterruptedTask(t, d, queue, runner, "task-issue-9-rule-fix.yaml", 9)
 
 	// The workload is detached and still running in its sandbox, so the task must stay
 	// in processing for Recover to triage rather than be buried in processed as Failed.
 	waitForCounts(t, queue, 0, 1, 0)
 
-	if _, err := os.Stat(filepath.Join(tempDir, "processing", "task-issue-9.yaml")); err != nil {
+	if _, err := os.Stat(filepath.Join(tempDir, "processing", "task-issue-9-rule-fix.yaml")); err != nil {
 		t.Errorf("expected the task file to remain in processing: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(tempDir, "processed", "task-issue-9.yaml")); err == nil {
+	if _, err := os.Stat(filepath.Join(tempDir, "processed", "task-issue-9-rule-fix.yaml")); err == nil {
 		t.Errorf("expected the task file not to be moved to processed")
 	}
 	if outcomes := coordinator.outcomes(); len(outcomes) != 0 {
@@ -700,7 +700,7 @@ func TestDispatchOnce_TaskTimeoutStillFailsDuringShutdown(t *testing.T) {
 		return runCtx.Err()
 	}
 
-	enqueueTestTask(t, queue, "task-issue-11.yaml", 11)
+	enqueueTestTask(t, queue, "task-issue-11-rule-fix.yaml", 11)
 
 	// The parent context stays alive: only the task's own deadline elapses, so the task
 	// has genuinely failed and must still be recorded and cleaned up.
@@ -751,7 +751,7 @@ func TestRun_DrainLetsInFlightTaskFinishAfterShutdown(t *testing.T) {
 		}
 	}
 
-	enqueueTestTask(t, queue, "task-issue-12.yaml", 12)
+	enqueueTestTask(t, queue, "task-issue-12-rule-fix.yaml", 12)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	runDone := runDispatcher(ctx, d)
@@ -786,7 +786,7 @@ func TestRun_DrainCancelsTasksThatOutlastGracePeriod(t *testing.T) {
 		return errors.New("signal: killed")
 	}
 
-	enqueueTestTask(t, queue, "task-issue-13.yaml", 13)
+	enqueueTestTask(t, queue, "task-issue-13-rule-fix.yaml", 13)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	runDone := runDispatcher(ctx, d)
@@ -869,7 +869,7 @@ func TestDispatchOnce_DoesNotSuspendSandboxForNonChoreTask(t *testing.T) {
 	tempDir := t.TempDir()
 	d, queue, sandboxes, _, _ := testDispatcher(t, tempDir, nil)
 
-	if err := queue.Enqueue("task-issue-1.yaml", &api.QueueTask{Type: api.TypeIssueFix, Number: 1, URL: "https://github.com/test-owner/test-repo/issues/1", EnqueuedAt: time.Now()}); err != nil {
+	if err := queue.Enqueue("task-issue-1-rule-fix.yaml", &api.QueueTask{Type: api.TypeIssueRule, Number: 1, URL: "https://github.com/test-owner/test-repo/issues/1", EnqueuedAt: time.Now()}); err != nil {
 		t.Fatal(err)
 	}
 

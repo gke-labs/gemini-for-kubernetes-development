@@ -14,16 +14,16 @@ import (
 func TestTaskQueueManager_GetQueueResponse(t *testing.T) {
 	mgr, _ := setupTestQueueManager(t)
 
-	_ = mgr.Enqueue("task-issue-1.yaml", &api.QueueTask{Type: "issue-fix", Number: 1, Priority: "critical"})
-	_ = mgr.Enqueue("task-issue-2.yaml", &api.QueueTask{Type: "issue-fix", Number: 2, Priority: "high"})
-	_ = mgr.Enqueue("task-issue-3.yaml", &api.QueueTask{Type: "pr-review", Number: 3, Priority: "critical"})
+	_ = mgr.Enqueue("task-issue-1-rule-fix.yaml", &api.QueueTask{Type: "issue-rule", Number: 1, Priority: "critical"})
+	_ = mgr.Enqueue("task-issue-2-rule-fix.yaml", &api.QueueTask{Type: "issue-rule", Number: 2, Priority: "high"})
+	_ = mgr.Enqueue("task-issue-3-rule-fix.yaml", &api.QueueTask{Type: "pr-rule", Number: 3, Priority: "critical"})
 
 	// Move one to processing
 	_, claimed, _ := claimAndStartTask(mgr)
 
-	completeFn := "task-issue-1.yaml"
+	completeFn := "task-issue-1-rule-fix.yaml"
 	if claimed.Number != 1 {
-		completeFn = fmt.Sprintf("task-issue-%d.yaml", claimed.Number)
+		completeFn = fmt.Sprintf("task-issue-%d-rule-fix.yaml", claimed.Number)
 	}
 	_ = mgr.CompleteTask(completeFn, claimed)
 
@@ -51,7 +51,7 @@ func TestTaskQueueManager_GetQueueResponse_StartedCompletedDuration(t *testing.T
 	endTime := time.Date(2026, 8, 1, 10, 5, 30, 0, time.UTC)
 
 	processingTask := &api.QueueTask{
-		Type:      "pr-review",
+		Type:      "pr-rule",
 		URL:       "https://github.com/owner/repo/pull/1",
 		Number:    1,
 		Status:    "Running",
@@ -59,12 +59,12 @@ func TestTaskQueueManager_GetQueueResponse_StartedCompletedDuration(t *testing.T
 		Priority:  "high",
 		Phase:     2,
 	}
-	if err := writeTaskAtomically(processingDir, "task-pr-1-review.yaml", processingTask); err != nil {
+	if err := writeTaskAtomically(processingDir, "task-pr-1-rule-review.yaml", processingTask); err != nil {
 		t.Fatalf("writeTaskAtomically processing failed: %v", err)
 	}
 
 	completedTask := &api.QueueTask{
-		Type:        "issue-fix",
+		Type:        "issue-rule",
 		URL:         "https://github.com/owner/repo/issues/2",
 		Number:      2,
 		Status:      "Completed",
@@ -107,8 +107,8 @@ func TestTaskQueueManager_GetQueueResponse_StartedCompletedDuration(t *testing.T
 func TestTaskQueueManager_UpdateTaskPriority(t *testing.T) {
 	mgr, _ := setupTestQueueManager(t)
 
-	fn := "task-issue-42.yaml"
-	_ = mgr.Enqueue(fn, &api.QueueTask{Type: "issue-fix", Number: 42, Priority: "low"})
+	fn := "task-issue-42-rule-fix.yaml"
+	_ = mgr.Enqueue(fn, &api.QueueTask{Type: "issue-rule", Number: 42, Priority: "low"})
 
 	if err := mgr.UpdateTaskPriority(fn, "critical"); err != nil {
 		t.Fatalf("UpdateTaskPriority failed: %v", err)
@@ -125,7 +125,7 @@ func TestTaskQueueManager_UpdateTaskPriority_FallbackDisk(t *testing.T) {
 	incomingDir := filepath.Join(queueDir, "incoming")
 
 	fn := "task-direct-priority.yaml"
-	task := &api.QueueTask{Type: "issue-fix", Number: 201, Priority: "low"}
+	task := &api.QueueTask{Type: "issue-rule", Number: 201, Priority: "low"}
 	if err := writeTaskAtomically(incomingDir, fn, task); err != nil {
 		t.Fatalf("failed to write task to disk: %v", err)
 	}
@@ -207,7 +207,7 @@ createdAt: "2026-08-10T11:00:00Z"
 			{
 				FileName:   "task1.yaml",
 				QueueState: "incoming",
-				Type:       "pr-review",
+				Type:       "pr-rule",
 				URL:        "https://github.com/org/repo/pull/42",
 				Number:     42,
 				Priority:   "critical",
@@ -222,7 +222,7 @@ createdAt: "2026-08-10T11:00:00Z"
 			{
 				FileName:   "task2.yaml",
 				QueueState: "incoming",
-				Type:       "issue-fix",
+				Type:       "issue-rule",
 				URL:        "https://github.com/org/repo/issues/99",
 				Number:     99,
 				Priority:   "medium",
@@ -266,7 +266,7 @@ createdAt: "2026-08-10T11:00:00Z"
 		}
 
 		for _, task := range tasks {
-			content := fmt.Sprintf("type: pr-review\npriority: %s\nphase: %d\ncreatedAt: %s\nenqueuedAt: %s\n", task.priority, task.phase, task.created, task.created)
+			content := fmt.Sprintf("type: pr-rule\npriority: %s\nphase: %d\ncreatedAt: %s\nenqueuedAt: %s\n", task.priority, task.phase, task.created, task.created)
 			if err := os.WriteFile(filepath.Join(incomingDir, task.filename), []byte(content), 0644); err != nil {
 				t.Fatal(err)
 			}
@@ -311,13 +311,13 @@ createdAt: "2026-08-10T11:00:00Z"
 		baseTime := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
 
 		// 3 tasks for PR 10
-		_ = os.WriteFile(filepath.Join(incomingDir, "pr10_1.yaml"), fmt.Appendf(nil, "number: 10\ntype: pr-comments\npriority: medium\nphase: 3\nenqueuedAt: %s\n", baseTime.Add(1*time.Minute).Format(time.RFC3339)), 0644)
-		_ = os.WriteFile(filepath.Join(incomingDir, "pr10_2.yaml"), fmt.Appendf(nil, "number: 10\ntype: pr-comments\npriority: medium\nphase: 3\nenqueuedAt: %s\n", baseTime.Add(3*time.Minute).Format(time.RFC3339)), 0644)
-		_ = os.WriteFile(filepath.Join(incomingDir, "pr10_3.yaml"), fmt.Appendf(nil, "number: 10\ntype: pr-comments\npriority: medium\nphase: 3\nenqueuedAt: %s\n", baseTime.Add(4*time.Minute).Format(time.RFC3339)), 0644)
+		_ = os.WriteFile(filepath.Join(incomingDir, "pr10_1.yaml"), fmt.Appendf(nil, "number: 10\ntype: pr-rule\npriority: medium\nphase: 3\nenqueuedAt: %s\n", baseTime.Add(1*time.Minute).Format(time.RFC3339)), 0644)
+		_ = os.WriteFile(filepath.Join(incomingDir, "pr10_2.yaml"), fmt.Appendf(nil, "number: 10\ntype: pr-rule\npriority: medium\nphase: 3\nenqueuedAt: %s\n", baseTime.Add(3*time.Minute).Format(time.RFC3339)), 0644)
+		_ = os.WriteFile(filepath.Join(incomingDir, "pr10_3.yaml"), fmt.Appendf(nil, "number: 10\ntype: pr-rule\npriority: medium\nphase: 3\nenqueuedAt: %s\n", baseTime.Add(4*time.Minute).Format(time.RFC3339)), 0644)
 
 		// 2 tasks for PR 20
-		_ = os.WriteFile(filepath.Join(incomingDir, "pr20_1.yaml"), fmt.Appendf(nil, "number: 20\ntype: pr-comments\npriority: medium\nphase: 3\nenqueuedAt: %s\n", baseTime.Add(5*time.Minute).Format(time.RFC3339)), 0644)
-		_ = os.WriteFile(filepath.Join(incomingDir, "pr20_2.yaml"), fmt.Appendf(nil, "number: 20\ntype: pr-comments\npriority: medium\nphase: 3\nenqueuedAt: %s\n", baseTime.Add(6*time.Minute).Format(time.RFC3339)), 0644)
+		_ = os.WriteFile(filepath.Join(incomingDir, "pr20_1.yaml"), fmt.Appendf(nil, "number: 20\ntype: pr-rule\npriority: medium\nphase: 3\nenqueuedAt: %s\n", baseTime.Add(5*time.Minute).Format(time.RFC3339)), 0644)
+		_ = os.WriteFile(filepath.Join(incomingDir, "pr20_2.yaml"), fmt.Appendf(nil, "number: 20\ntype: pr-rule\npriority: medium\nphase: 3\nenqueuedAt: %s\n", baseTime.Add(6*time.Minute).Format(time.RFC3339)), 0644)
 
 		resp := newTestQueueManager(tempDir).GetQueueResponse()
 		if len(resp.Incoming) != 5 {
@@ -349,16 +349,16 @@ createdAt: "2026-08-10T11:00:00Z"
 		}
 
 		// 3 incoming tasks (2 critical pr-review, 1 high issue-fix)
-		_ = os.WriteFile(filepath.Join(incomingDir, "task1.yaml"), []byte("type: pr-review\npriority: critical\n"), 0644)
-		_ = os.WriteFile(filepath.Join(incomingDir, "task2.yaml"), []byte("type: pr-review\npriority: critical\n"), 0644)
-		_ = os.WriteFile(filepath.Join(incomingDir, "task3.yaml"), []byte("type: issue-fix\npriority: high\n"), 0644)
+		_ = os.WriteFile(filepath.Join(incomingDir, "task1.yaml"), []byte("type: pr-rule\npriority: critical\n"), 0644)
+		_ = os.WriteFile(filepath.Join(incomingDir, "task2.yaml"), []byte("type: pr-rule\npriority: critical\n"), 0644)
+		_ = os.WriteFile(filepath.Join(incomingDir, "task3.yaml"), []byte("type: issue-rule\npriority: high\n"), 0644)
 
 		// 2 processing tasks
-		_ = os.WriteFile(filepath.Join(processingDir, "proc1.yaml"), []byte("type: pr-review\npriority: critical\n"), 0644)
+		_ = os.WriteFile(filepath.Join(processingDir, "proc1.yaml"), []byte("type: pr-rule\npriority: critical\n"), 0644)
 		_ = os.WriteFile(filepath.Join(processingDir, "proc2.yaml"), []byte("type: agent-chore\npriority: low\n"), 0644)
 
 		// 1 processed task
-		_ = os.WriteFile(filepath.Join(processedDir, "done1.yaml"), []byte("type: pr-review\nstatus: Completed\n"), 0644)
+		_ = os.WriteFile(filepath.Join(processedDir, "done1.yaml"), []byte("type: pr-rule\nstatus: Completed\n"), 0644)
 
 		resp := newTestQueueManager(tempDir).GetQueueResponse()
 
@@ -376,7 +376,7 @@ createdAt: "2026-08-10T11:00:00Z"
 			t.Errorf("expected byPriority map [critical:2, high:1], got %+v", resp.Summary.ByPriority)
 		}
 
-		if resp.Summary.ByType["pr-review"] != 2 || resp.Summary.ByType["issue-fix"] != 1 {
+		if resp.Summary.ByType["pr-rule"] != 2 || resp.Summary.ByType["issue-rule"] != 1 {
 			t.Errorf("expected byType map [pr-review:2, issue-fix:1], got %+v", resp.Summary.ByType)
 		}
 	})
@@ -390,7 +390,7 @@ createdAt: "2026-08-10T11:00:00Z"
 
 		for i := 1; i <= 30; i++ {
 			fn := fmt.Sprintf("task-%02d.yaml", i)
-			_ = os.WriteFile(filepath.Join(processedDir, fn), []byte("type: pr-review\nstatus: Completed\n"), 0644)
+			_ = os.WriteFile(filepath.Join(processedDir, fn), []byte("type: pr-rule\nstatus: Completed\n"), 0644)
 		}
 
 		resp := newTestQueueManager(tempDir).GetQueueResponse()
@@ -415,7 +415,7 @@ func TestBuildQueueResponseTriggerFields(t *testing.T) {
 	enqueuedTime := time.Date(2026, 8, 1, 10, 15, 0, 0, time.UTC)
 
 	task := &api.QueueTask{
-		Type:             api.TypePRComments,
+		Type:             api.TypePRRule,
 		URL:              "https://github.com/owner/repo/pull/123",
 		Number:           123,
 		Priority:         api.PriorityMedium,
@@ -428,7 +428,7 @@ func TestBuildQueueResponseTriggerFields(t *testing.T) {
 		Status:           api.StatusPending,
 	}
 
-	if err := mgr.Enqueue("task-pr-123-comments.yaml", task); err != nil {
+	if err := mgr.Enqueue("task-pr-123-rule-comments.yaml", task); err != nil {
 		t.Fatalf("failed to enqueue task: %v", err)
 	}
 
@@ -493,7 +493,7 @@ func TestCooldownsAreServedUntilTheyEnd(t *testing.T) {
 	if m.NoteCooldown(held) {
 		t.Error("the same window was news twice")
 	}
-	expired := api.Cooldown{FileName: "task-issue-7.yaml", Number: 7, Until: time.Now().Add(-time.Second)}
+	expired := api.Cooldown{FileName: "task-issue-7-rule-fix.yaml", Number: 7, Until: time.Now().Add(-time.Second)}
 	m.NoteCooldown(expired)
 
 	resp := m.GetQueueResponse()
@@ -526,8 +526,8 @@ func TestFailuresAreServedUntilTheTaskSucceeds(t *testing.T) {
 	dir := t.TempDir()
 	m := newTestQueueManager(dir)
 	for _, n := range []int{1, 2} {
-		fn := fmt.Sprintf("task-pr-%d-comments.yaml", n)
-		task := &api.QueueTask{Type: api.TypePRComments, Number: n, URL: fmt.Sprintf("https://github.com/o/r/pull/%d", n)}
+		fn := fmt.Sprintf("task-pr-%d-rule-comments.yaml", n)
+		task := &api.QueueTask{Type: api.TypePRRule, Number: n, URL: fmt.Sprintf("https://github.com/o/r/pull/%d", n)}
 		if err := m.Enqueue(fn, task); err != nil {
 			t.Fatal(err)
 		}
@@ -548,14 +548,14 @@ func TestFailuresAreServedUntilTheTaskSucceeds(t *testing.T) {
 		t.Errorf("after a restart, failures = %+v, want both", got)
 	}
 
-	task := &api.QueueTask{Type: api.TypePRComments, Number: 1}
-	if err := m.Enqueue("task-pr-1-comments.yaml", task); err != nil {
+	task := &api.QueueTask{Type: api.TypePRRule, Number: 1}
+	if err := m.Enqueue("task-pr-1-rule-comments.yaml", task); err != nil {
 		t.Fatal(err)
 	}
-	if err := m.StartTask("task-pr-1-comments.yaml", task); err != nil {
+	if err := m.StartTask("task-pr-1-rule-comments.yaml", task); err != nil {
 		t.Fatal(err)
 	}
-	if err := m.CompleteTask("task-pr-1-comments.yaml", task); err != nil {
+	if err := m.CompleteTask("task-pr-1-rule-comments.yaml", task); err != nil {
 		t.Fatal(err)
 	}
 	if got := m.GetQueueResponse().Failures; len(got) != 1 || got[0].Number != 2 {

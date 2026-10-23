@@ -32,11 +32,8 @@ func TestIsPRTask(t *testing.T) {
 		taskType TaskType
 		expected bool
 	}{
-		{TypePRInvestigate, true},
-		{TypePRComments, true},
-		{TypePRIterate, true},
-		{TypePRReview, false},
-		{TypeIssueFix, false},
+		{TypePRRule, true},
+		{TypeIssueRule, false},
 		{TypeAgentChore, false},
 		{"", false},
 		{"unknown", false},
@@ -62,7 +59,7 @@ func TestQueueTask_DeepCopy(t *testing.T) {
 
 	t.Run("copies every field", func(t *testing.T) {
 		original := &QueueTask{
-			Type:         TypeIssueFix,
+			Type:         TypeIssueRule,
 			Number:       7,
 			Status:       StatusCompleted,
 			CompletedAt:  time.Now(),
