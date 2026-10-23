@@ -1,0 +1,10 @@
+added:
+    - factory/stop
+calls:
+    - GET /repos/test-owner/test-repo/pulls/30
+    - GET /repos/test-owner/test-repo/issues/7
+    - POST /repos/test-owner/test-repo/issues/30/labels
+decided:
+    - inherit-labels run
+gate: ""
+queued: []

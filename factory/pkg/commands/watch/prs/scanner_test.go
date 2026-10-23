@@ -1499,6 +1499,8 @@ type prFixture struct {
 	reviews []*githubv39.PullRequestReview
 	// inline are the review comments the pull request-wide listing returns.
 	inline []*githubv39.PullRequestComment
+	// refLabels are the labels of the issue the body's "Fixes #7" closes.
+	refLabels []string
 
 	calls []string
 }
@@ -1629,9 +1631,13 @@ func (f *prFixture) route(w http.ResponseWriter, r *http.Request) {
 	default:
 		// Referenced issue reads, assignee writes and anything else the
 		// evaluation happens to touch.
+		labels := []interface{}{}
+		for _, l := range f.refLabels {
+			labels = append(labels, map[string]string{"name": l})
+		}
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"number": 7,
-			"labels": []interface{}{},
+			"labels": labels,
 		})
 	}
 }
