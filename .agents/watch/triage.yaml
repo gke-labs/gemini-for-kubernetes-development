@@ -8,6 +8,10 @@
 # by it; the issue does not get the trigger label (that would point fix at
 # it too).
 #
+# A triage that succeeds leaves {{trigger}}/triaged on the issue (on-success,
+# the watcher's write); the suggested labels themselves are a maintainer's
+# to apply.
+#
 # The label is a command: the watcher takes it off when the task ends,
 # whatever happened (on-end), so each label is one try - apply it again to
 # triage again.
@@ -21,6 +25,8 @@ when:
 run:
   recipe: triage
   apply: comment
+  on-success:
+    label: ["{{trigger}}/triaged"]   # done: the watcher's own write
   on-failure:
     comment: "Triaging this issue failed; apply the triage label again to retry."
   on-end:
