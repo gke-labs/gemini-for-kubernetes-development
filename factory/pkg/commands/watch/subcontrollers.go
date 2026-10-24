@@ -248,7 +248,13 @@ func (w *Watcher) ruleListingLabels(kind string) []string {
 	set := w.rulesControl.Set()
 	env := rules.Env{Trigger: w.triggerLabel, Prefixes: conventions.Prefixes(w.triggerLabel)}
 	items := map[string]string{rules.OnPR: "pull requests", rules.OnIssue: "issues"}[kind]
+	// The components are built once before the configuration is read
+	// (NewWatcher), with no trigger label yet: every rule the trigger label
+	// reaches would look unreached. Warn once it is known.
 	for _, name := range set.Unlisted(kind, env) {
+		if w.triggerLabel == "" {
+			break
+		}
 		klog.Warningf("Watch rules: the rule %s names nothing a listing narrows on (author: pool, assignee: pool, the trigger label, or a label of the overseer's own, %s/...): it sees only %s listed for other rules", name, strings.Join(env.Prefixes, "/..., "), items)
 	}
 	labels := set.ListingLabels(kind, env)
