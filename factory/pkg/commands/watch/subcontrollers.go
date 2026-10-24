@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -553,6 +554,11 @@ func (c *watcherTaskCoordinator) hookWrites(ctx context.Context, task *api.Queue
 		return out
 	}
 	writes.Assign, writes.Unassign = bot(writes.Assign), bot(writes.Unassign)
+	// Never unassign whom the hook assigns: a task run as the watcher
+	// itself keeps it.
+	writes.Unassign = slices.DeleteFunc(writes.Unassign, func(u string) bool {
+		return slices.ContainsFunc(writes.Assign, func(a string) bool { return strings.EqualFold(a, u) })
+	})
 	mode := w.IssueMode
 	if api.IsPRTask(task.Type) {
 		mode = w.PRMode
@@ -576,19 +582,8 @@ func (c *watcherTaskCoordinator) NotifyTaskStarted(ctx context.Context, task *ap
 		return
 	}
 
-	if task.Claim && task.Assignee != "" {
-		klog.Infof("Assigning issue #%d to %s as claimed", task.Number, task.Assignee)
-		if err := w.repoClient.AddAssignees(ctx, task.Number, []string{task.Assignee}); err != nil {
-			klog.Errorf("Failed to assign issue #%d to %s: %v", task.Number, task.Assignee, err)
-		}
-		if task.Assignee != w.targetAssignee {
-			if err := w.repoClient.RemoveAssignees(ctx, task.Number, []string{w.targetAssignee}); err != nil {
-				klog.Errorf("Failed to remove watcher bot %s from issue #%d: %v", w.targetAssignee, task.Number, err)
-			}
-		}
-	}
-
-	// The rule's on-start hook: after the claim, so {{bot}} is assigned.
+	// The rule's on-start hook: claiming the item ({{bot}}), its start
+	// comment.
 	c.hookWrites(ctx, task, "on-start", task.OnStart)
 
 	// A comments task acknowledges the feedback it answers now that it
@@ -606,12 +601,6 @@ func (c *watcherTaskCoordinator) NotifyTaskStarted(ctx context.Context, task *ap
 		})
 		if w.prScanner != nil {
 			w.prScanner.MarkCommentsAddressed(task.Number, task.EnqueuedAt)
-		}
-	}
-
-	if task.StartComment != "" {
-		if err := w.repoClient.AddComment(ctx, task.Number, task.StartComment); err != nil {
-			klog.Errorf("Failed to create GitHub comment on #%d: %v", task.Number, err)
 		}
 	}
 }

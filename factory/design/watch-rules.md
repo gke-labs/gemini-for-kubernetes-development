@@ -983,6 +983,7 @@ together once staging's shadow had agreed on every rule:
 | | a PR's write rules carried out by order and facts, a stage at a time (`Set.Settled`), none by name | #2096 |
 | | `author: not-pool`; the author check from the rules (`Set.AdmitsAuthor`); PRs also listed by the rules' namespaced labels, one GraphQL OR query (`Set.ListingLabels`) | #2100 |
 | | lifecycle hooks: `run.on-start`, `on-success`, `on-failure`, `on-end`, the watcher's writes at points of a task's life (`rules.Hooks`, stamped on the task, executed in `NotifyTaskStarted`/`Finished`); a label taken off when done makes a rule a command | #2106 |
+| | the prebaked rules' `claim` and `start-comment` become `on-start` (`assign: "{{bot}}"`, `unassign: "{{watcher}}"`, `comment`); both fields gone | #2107 |
 
 **Phase 5, the repository's rules** (partly built): the watch reads
 `.agents/watch/*.yaml` once when it starts, under `spec.repoRecipe` (one

@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -189,34 +190,45 @@ func TestWatcherTaskCoordinator_ShouldCancelTask_NoGitHubClient(t *testing.T) {
 	}
 }
 
-// What a task does on GitHub as it starts and ends is its rule's: the
-// prebaked rules post a start comment for fix, ci, comments, conflict and
-// review (none for a workflow step), claim the issue for fix and workflow,
-// and acknowledge feedback for comments; the recheck at start puts them
-// on a task that carries none (queued by an older watch, or the nudge).
+// What a task does on GitHub as it starts is its rule's on-start hook, and
+// the prebaked rules' make the very calls claim and start-comment made: fix
+// and workflow assign the issue to the task's bot and take the watcher off
+// it; fix, ci, conflict, comments and review post the start comment they
+// did, word for word (the watcher adds the 🤖); comments still
+// acknowledges feedback.
 func TestTaskDeclarations(t *testing.T) {
 	set, err := rules.Builtin()
 	if err != nil {
 		t.Fatal(err)
 	}
-	for rule, want := range map[string]string{
-		"fix": "claim comment", "workflow": "claim", "comments": "acknowledge comment",
-		"ci": "comment", "conflict": "comment", "review": "comment",
-	} {
+	// start-comment as the prebaked rules wrote it before on-start.
+	before := map[string]string{
+		"fix":      "🤖 AI Factory started fixing this issue in a sandbox.",
+		"ci":       "🤖 AI Factory started investigating CI check failures for this pull request.\n\nNote: We recommend waiting for the 'ready-for-human' label before leaving review comments. Comments added while the system is actively working may be associated with outdated commits once a new commit is pushed, causing them to be ignored.",
+		"conflict": "🤖 AI Factory started resolving merge conflicts / rebasing this pull request in a sandbox.\n\nNote: We recommend waiting for the 'ready-for-human' label before leaving review comments. Comments added while the system is actively working may be associated with outdated commits once a new commit is pushed, causing them to be ignored.",
+		"comments": "🤖 AI Factory started addressing review feedback for this pull request.",
+		"review":   "🤖 AI Factory started reviewing this pull request in a sandbox.",
+	}
+	env := rules.Env{Trigger: "overseer", Prefixes: []string{"overseer"}, Watcher: "watcher-bot"}
+	for _, rule := range []string{"fix", "workflow", "ci", "conflict", "comments", "review"} {
+		r := set.Named(rule)
+		it := rules.Item{Kind: r.On, Number: 7, Assignees: []string{"watcher-bot"}}
+		start := rules.Hooks(r, it, env).OnStart
+		claims := rule == "fix" || rule == "workflow"
+		if got := slices.Equal(start.Assign, []string{rules.Bot}) && slices.Equal(start.Unassign, []string{"watcher-bot"}); got != claims {
+			t.Errorf("%s claims %t (%+v), want %t", rule, got, start, claims)
+		}
+		if want, ok := before[rule]; ok {
+			if got := "🤖 " + start.Comment; got != want {
+				t.Errorf("%s start comment %q, want %q", rule, got, want)
+			}
+		} else if start.Comment != "" {
+			t.Errorf("%s comments on start: %q", rule, start.Comment)
+		}
 		task := &api.QueueTask{}
-		act.Declare(task, set.Named(rule))
-		var got []string
-		if task.Claim {
-			got = append(got, "claim")
-		}
-		if task.Acknowledge == rules.AcknowledgeFeedback {
-			got = append(got, "acknowledge")
-		}
-		if task.StartComment != "" {
-			got = append(got, "comment")
-		}
-		if strings.Join(got, " ") != want {
-			t.Errorf("%s declares %v, want %s", rule, got, want)
+		act.Declare(task, r)
+		if (task.Acknowledge == rules.AcknowledgeFeedback) != (rule == "comments") {
+			t.Errorf("%s acknowledge %q", rule, task.Acknowledge)
 		}
 	}
 }

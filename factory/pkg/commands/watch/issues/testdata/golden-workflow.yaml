@@ -13,6 +13,8 @@ task:
     status: Pending
     agentFile: .agents/workflows/greenfield.md
     sessionId: issue-12
-    claim: true
+    onStart:
+        assign:
+            - '{{bot}}'
     rule: workflow
     recipe: workflow
