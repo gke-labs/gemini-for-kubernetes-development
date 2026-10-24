@@ -139,6 +139,14 @@ type QueueTask struct {
 	Claim        bool   `yaml:"claim,omitempty"`
 	Acknowledge  string `yaml:"acknowledge,omitempty"`
 	StartComment string `yaml:"startComment,omitempty"`
+	// OnStart, OnSuccess, OnFailure and OnEnd are what the watcher writes
+	// on GitHub at points of the task's life: when it starts, when it
+	// completed, when it failed, and when it ended either way (the rule's
+	// run.on-* hooks, filled in for the item).
+	OnStart   *TaskWrites `yaml:"onStart,omitempty"`
+	OnSuccess *TaskWrites `yaml:"onSuccess,omitempty"`
+	OnFailure *TaskWrites `yaml:"onFailure,omitempty"`
+	OnEnd     *TaskWrites `yaml:"onEnd,omitempty"`
 	// RunName is the run's name (factory --run-name), stamped when the task
 	// is queued (RunNameOf): a recovered task follows the run it started,
 	// whatever a later watch would name it.
@@ -221,4 +229,16 @@ func IsPRTask(taskType TaskType) bool {
 	default:
 		return false
 	}
+}
+
+// TaskWrites are GitHub writes on a task's item the watcher makes at a
+// point of the task's life (QueueTask.OnSuccess, OnEnd).
+type TaskWrites struct {
+	Label    []string `yaml:"label,omitempty"`
+	Unlabel  []string `yaml:"unlabel,omitempty"`
+	Assign   []string `yaml:"assign,omitempty"`
+	Unassign []string `yaml:"unassign,omitempty"`
+	Comment  string   `yaml:"comment,omitempty"`
+	// Stop puts the stop label on the item, with Comment (on failure only).
+	Stop bool `yaml:"stop,omitempty"`
 }

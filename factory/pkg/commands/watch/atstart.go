@@ -91,7 +91,11 @@ func (c *watcherTaskCoordinator) Redecide(ctx context.Context, filename string, 
 	}
 	if drop {
 		w.rulesSummary.Dropped(rule, why)
+		return drop, why
 	}
+	// What the watcher writes when the task ends is the rule's as it is
+	// now, filled in for the item as it is now.
+	act.Hooks(task, rules.Hooks(w.rulesControl.Set().Named(rule), it, env))
 	return drop, why
 }
 

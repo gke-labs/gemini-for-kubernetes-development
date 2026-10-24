@@ -233,12 +233,57 @@ A rule runs a recipe or makes GitHub writes, not both.
 | `claim` | issues: `true` assigns the issue to the task's bot when it starts, in the watcher's place (the prebaked fix and workflow) |
 | `acknowledge` | PRs: `feedback` marks the feedback the task answers as seen (👀) when it starts, and resolved (👍) or failed (😕) when it ends (the prebaked comments) |
 | `start-comment` | a comment the watcher posts on the item when the task starts |
+| `on-start`, `on-success`, `on-failure`, `on-end` | the [lifecycle hooks](#lifecycle-hooks): writes the watcher makes when the task starts, completes, fails, and ends either way |
 
-`claim`, `acknowledge` and `start-comment` are read from the rule again
-just before the task starts, so a task queued earlier does what the rule
-says now. The task is queued and runs in the item's sandbox. A rule does not say
+`claim`, `acknowledge`, `start-comment` and the hooks are read from the
+rule again just before the task starts, so a task queued earlier does
+what the rule says now. The task is queued and runs in the item's sandbox. A rule does not say
 which bot runs it: that is the recipe's and the overseer's (see [Who runs
 it](#who-runs-it)).
+
+### Lifecycle hooks
+
+A recipe rule may say what the watcher writes on the item at points of
+its task's life, with the vocabulary of [GitHub writes](#github-writes)
+(`label`, `unlabel`, `assign`, `unassign`, `comment`):
+
+| hook | when |
+|---|---|
+| `on-start` | the task starts (after `claim`); `{{bot}}` in `assign`/`unassign` is the bot it runs as |
+| `on-success` | the task completed: its steps passed, its result was read and its `apply` worked |
+| `on-failure` | the task failed: a step, its result (missing, empty or unreadable) or its apply; the only hook that may `stop` the item, which also drops its queued tasks |
+| `on-end` | the task ended either way, after `on-success` or `on-failure` |
+
+The watcher writes them with its own token: it may label and assign where
+the bot a task runs as may only comment and open its own PR. A task
+dropped before it starts runs none; one a restart interrupts ends when it
+really does.
+
+A rule whose trigger is a label it takes off when it is done is a **command**:
+apply the label to run it, apply it again to run it again - no new commit,
+no policy to wait out, and the label tells everyone whether it is pending
+(there) or done (gone). For example, adopting someone else's PR:
+
+```yaml
+name: adopt
+on: pr
+order: 8
+when:
+  author: not-pool
+  labels: {any: ["{{trigger}}/adopt"]}
+run:
+  recipe: adopt
+  apply: open-pr
+  inputs: {strategy: reuse, draft: "false", labels: "{{trigger}}"}
+  on-start: {label: ["{{trigger}}/adopting"]}
+  on-failure: {comment: "Adopting this PR failed; label it again to retry."}
+  on-end: {unlabel: ["{{trigger}}/adopt", "{{trigger}}/adopting"]}   # used up, whatever happened
+```
+
+Taking the command label off on `on-end` makes every run one try: a failure
+waits for someone to apply the label again. Taking it off on `on-success`
+only retries a failure at the next scan instead - then bound it with a
+`give-up` policy.
 
 ### Who runs it
 
