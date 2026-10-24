@@ -492,6 +492,11 @@ func runRecipeIn(ctx context.Context, opts recipeRunOpts, recipeArg, itemURL, ru
 	case issue != nil:
 		inputs["trusted_logins"] = strings.Join(trustedLogins(cfg, login), ",")
 	}
+	// Whose comments are the pool's (the keyed-comment step's author kind
+	// pool): the factory config's roles' bots. Set here too, past --input.
+	if pool := poolLogins(cfg); len(pool) > 0 {
+		inputs["pool_logins"] = strings.Join(pool, ",")
+	}
 	if apply.prLabels {
 		if issue == nil || rec.TaskOutput == nil || rec.TaskOutput.Kind != "Change" {
 			return fmt.Errorf("--pr-labels is for a recipe whose Change opens a PR for an issue")

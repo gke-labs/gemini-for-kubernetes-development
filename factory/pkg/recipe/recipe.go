@@ -372,6 +372,7 @@ var NamedSteps = map[string]string{
 	"ci-logs":                 "fetchPRCILogs",
 	"pr-comments":             "fetchPRComments",
 	"issue-comments":          "fetchIssueComments",
+	"keyed-comment":           "fetchKeyedComment",
 	CloneStep:                 "cloneRepo",
 }
 

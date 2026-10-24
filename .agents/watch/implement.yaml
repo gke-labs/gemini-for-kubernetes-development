@@ -4,8 +4,8 @@
 # fix-with-plan recipe follows the issue's plan comment (key plan, written
 # by .agents/watch/plan.yaml's runs) and nothing else of the issue, and
 # open-pr opens the PR, ready, with the trigger label (the issue's others
-# follow, inherit-labels). An issue with no plan comment by the overseer's
-# bots fails.
+# follow, inherit-labels). An issue with no plan comment by a pool bot or a
+# maintainer fails.
 #
 # The issue's plain fix stays off it (.agents/watch/fix.yaml leaves an
 # issue in the plan flow alone): implement is how a planned issue becomes
@@ -26,7 +26,6 @@ run:
   recipe: fix-with-plan
   apply: open-pr
   inputs:
-    plan_authors: "{{pool}}"
     draft: "false"
     # The trigger alone: the issue's labels at this moment include the
     # command label, and inherit-labels copies the issue's others onto the

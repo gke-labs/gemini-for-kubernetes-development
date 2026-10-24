@@ -1,10 +1,10 @@
-# factory recipe fix-with-plan --url <issue> --input plan_authors=<bots> [--apply]:
+# factory recipe fix-with-plan --url <issue> [--apply]:
 # implement an issue's approved plan, in the issue's sandbox. The plan is
 # the issue's plan comment (the one comment of key plan that
 # .agents/recipes/plan.yaml writes and every plan run updates), and only a
-# comment by one of plan_authors (the overseer's bots, {{pool}} in the
-# rule) counts: anyone's comment carrying the marker is not the plan. No
-# plan comment fails the task.
+# comment by a pool bot or a maintainer counts (the keyed-comment step,
+# authors: the watch rules' author kinds): anyone else's carrying the
+# marker is not the plan. No plan comment fails the task.
 #
 # The agent gets the plan, not the issue's description or comments: the
 # plan is what a maintainer approved (overseer/implement,
@@ -19,8 +19,6 @@ as: coder
 task-type: fix
 
 inputs:
-  plan_authors:
-    description: The logins whose plan comment counts, comma-separated (the rule's {{pool}})
   labels:
     description: Labels for the PR, comma-separated; open-pr adds them
   draft:
@@ -58,24 +56,15 @@ start:
         git checkout -B "issue-${INPUT_ISSUE_NUMBER}-$(date +%s)"
         git symbolic-ref --short HEAD > "$TASK_DIR/branch"
         git rev-parse HEAD > "$TASK_DIR/base"
-    # The plan: the issue's comment of key plan by one of plan_authors,
-    # without its heading, markers and session link, to
-    # $TASK_DIR/plan.md, and its version to $TASK_DIR/plan-version.
-    - run: |
-        authors=",$(printf '%s' "${INPUT_PLAN_AUTHORS}" | tr 'A-Z' 'a-z' | tr -d ' '),"
-        gh api --paginate "repos/${INPUT_REPO_OWNER}/${INPUT_REPO_NAME}/issues/${INPUT_ISSUE_NUMBER}/comments?per_page=100" \
-          --jq '.[] | select(.body | test("<!-- factory:comment key=plan v=[0-9]+ -->")) | "\(.user.login) \(.body | @base64)"' \
-          > "$TASK_DIR/plan-comments"
-        : > "$TASK_DIR/plan.b64"
-        while read -r login b64; do
-          case "$authors" in *",$(printf '%s' "$login" | tr 'A-Z' 'a-z'),"*) printf '%s' "$b64" > "$TASK_DIR/plan.b64" ;; esac
-        done < "$TASK_DIR/plan-comments"
-        test -s "$TASK_DIR/plan.b64" || { echo "#${INPUT_ISSUE_NUMBER} has no plan comment by the overseer's bots to implement: plan it first (overseer/plan)" >&2; exit 1; }
-        base64 -d < "$TASK_DIR/plan.b64" > "$TASK_DIR/plan-comment.md"
-        sed -n 's/.*<!-- factory:comment key=plan v=\([0-9]*\) -->.*/\1/p' "$TASK_DIR/plan-comment.md" | tail -n 1 | tr -d '\n' > "$TASK_DIR/plan-version"
-        sed -e '1{/^\*\*Implementation plan\*\*/d;}' -e '/^<!-- factory:/d' -e '/^<sub>🤖 \[Agent session\]/d' \
-          "$TASK_DIR/plan-comment.md" > "$TASK_DIR/plan.md"
-        test -s "$TASK_DIR/plan.md" || { echo "#${INPUT_ISSUE_NUMBER}'s plan comment is empty" >&2; exit 1; }
+    # The plan: the issue's comment of key plan, by a pool bot or a
+    # maintainer (the watch rules' author kinds) - anyone else's carrying
+    # the marker is not the plan - to $TASK_DIR/plan.md, its version to
+    # plan.md.version. None fails the task: plan it first (overseer/plan).
+    - uses: keyed-comment
+      with:
+        key: plan
+        authors: pool, owner, member, collaborator
+        to: plan.md
 
     - ask: |
         Implement the approved plan for this GitHub issue, and commit it.
@@ -85,7 +74,7 @@ start:
         <issue_title>{{ .Inputs.issue_title }}</issue_title>
 
         A maintainer reviewed and approved this implementation plan (version
-        {{ file "plan-version" }}): it is your specification. Follow it. Do
+        {{ file "plan.md.version" }}): it is your specification. Follow it. Do
         not read the issue's description or comments - the plan is what was
         agreed, refined against them. Where the code shows a step to be
         wrong, deviate, and say where and why in your summary.
@@ -155,7 +144,7 @@ start:
             A brief description of what the change does and why, for the
             reviewer.
 
-            Implements plan v{{ file "plan-version" }} (the issue's plan comment).
+            Implements plan v{{ file "plan.md.version" }} (the issue's plan comment).
 
             Fixes #{{ .Inputs.issue_number }}
 

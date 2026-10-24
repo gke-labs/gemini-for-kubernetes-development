@@ -773,6 +773,92 @@ function fetchIssueComments {
     renderTrustedComments "${raw}" "" "The comments on the issue, from the repository's maintainers and you" > "${dir}/comments.md"
 }
 
+# fetchKeyedComment (recipe step keyed-comment) writes the item's comment
+# of key $WITH_KEY - the one a recipe's task-output.comment.key keeps,
+# marked <!-- factory:comment key=<key> v=<n> --> - to $TASK_DIR/$WITH_TO,
+# without its heading line, markers and session link, and its version to
+# $TASK_DIR/$WITH_TO.version. Only a comment whose author is of a kind in
+# $WITH_AUTHORS counts (comma-separated; the watch rules' author kinds,
+# rules.AuthorKind: pool - one of $INPUT_POOL_LOGINS - else by GitHub's
+# association owner, member - or one of $INPUT_TRUSTED_LOGINS -,
+# collaborator, else external): anyone else's carrying the marker is not
+# the item's. The newest such comment counts. None fails the step, unless
+# $WITH_OPTIONAL is true: then the file is left empty.
+function fetchKeyedComment {
+    echo "Running fetchKeyedComment..."
+    local dir="${TASK_DIR:?TASK_DIR is not set}" repo num="${INPUT_ISSUE_NUMBER:-${INPUT_PR_NUMBER:-}}" raw
+    local key="${WITH_KEY:-}" to="${WITH_TO:-}" authors="${WITH_AUTHORS:-}"
+    repo="$(stepRepo)" || return 1
+    if ! [[ "${num}" =~ ^[0-9]+$ ]]; then
+        echo "no issue or PR number (INPUT_ISSUE_NUMBER, INPUT_PR_NUMBER)" >&2
+        return 1
+    fi
+    if ! [[ "${key}" =~ ^[a-z][a-z0-9-]*$ ]] || [[ -z "${to}" || "${to}" == */* ]] || [[ -z "${authors}" ]]; then
+        echo "keyed-comment needs with: key (lowercase), to (a file name) and authors (author kinds)" >&2
+        return 1
+    fi
+    raw="${dir}/keyed-comments-${key}.jsonl"
+    gh api "repos/${repo}/issues/${num}/comments" --paginate --jq '.[]' > "${raw}" || return 1
+    python3 - "${raw}" "${key}" "${authors}" "${INPUT_POOL_LOGINS:-}" "${INPUT_TRUSTED_LOGINS:-}" "${dir}/${to}" "${WITH_OPTIONAL:-}" <<'PY'
+import json, re, sys
+
+raw, key, authors, pool, trusted, out, optional = sys.argv[1:8]
+kinds = {k.strip() for k in authors.split(",") if k.strip()}
+unknown = kinds - {"pool", "owner", "member", "collaborator", "external"}
+if unknown:
+    sys.exit("keyed-comment: authors %s: not author kinds (pool, owner, member, collaborator, external)" % ", ".join(sorted(unknown)))
+pool = {l.strip().lower() for l in pool.split(",") if l.strip()}
+trusted = {l.strip().lower() for l in trusted.split(",") if l.strip()}
+marker = re.compile(r"<!-- factory:comment key=%s v=(\d+) -->" % re.escape(key))
+
+def kind(c):
+    login = str((c.get("user") or {}).get("login", "")).lower()
+    assoc = str(c.get("author_association", "")).upper()
+    if login in pool:
+        return "pool"
+    if assoc == "OWNER":
+        return "owner"
+    if assoc == "MEMBER" or login in trusted:
+        return "member"
+    if assoc == "COLLABORATOR":
+        return "collaborator"
+    return "external"
+
+found, version, left_out = None, "", 0
+with open(raw) as f:
+    for line in f:
+        if not line.strip():
+            continue
+        c = json.loads(line)
+        m = marker.findall(c.get("body") or "")
+        if not m:
+            continue
+        if kind(c) not in kinds:
+            left_out += 1
+            continue
+        if found is None or (c.get("created_at") or "") >= (found.get("created_at") or ""):
+            found, version = c, m[-1]
+if left_out:
+    print("keyed-comment: %d comment(s) of key %s by authors not of %s left out" % (left_out, key, ", ".join(sorted(kinds))))
+if found is None:
+    open(out, "w").close()
+    open(out + ".version", "w").close()
+    if optional.lower() == "true":
+        print("keyed-comment: no comment of key %s" % key)
+        sys.exit(0)
+    sys.exit("keyed-comment: no comment of key %s by %s" % (key, ", ".join(sorted(kinds))))
+lines = (found.get("body") or "").split("\n")
+if lines and lines[0].startswith("**"):
+    lines = lines[1:]  # its heading: "**<title>** · v<n> · updated <time>"
+keep = [l for l in lines if not l.startswith("<!-- factory:") and not l.startswith("<sub>🤖 [Agent session]")]
+with open(out, "w") as f:
+    f.write("\n".join(keep).strip() + "\n")
+with open(out + ".version", "w") as f:
+    f.write(version)
+print("keyed-comment: %s v%s by @%s" % (key, version, (found.get("user") or {}).get("login", "")))
+PY
+}
+
 # renderTrustedComments prints, as markdown, the reviews, review comments
 # and comments in $1 (reviews.jsonl, review-comments.jsonl, comments.jsonl:
 # GitHub's objects, one per line; a missing file is none) by trusted
