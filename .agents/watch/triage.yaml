@@ -1,7 +1,5 @@
-# This repository's own rule (not one of factory's): triage an issue
-# someone outside the project opened (author: external - not the pool, the
-# owner, an organization member, a collaborator, or a login the overseer
-# trusts), when a maintainer labels it overseer/triage. The triage recipe
+# This repository's own rule (not one of factory's): triage an issue -
+# anyone's - when a maintainer labels it overseer/triage. The triage recipe
 # suggests labels, a priority and duplicates with an assessment, and the
 # comment apply posts them on the issue: a maintainer applies the labels.
 # The label is in the overseer's own namespace, so the watch lists issues
@@ -16,11 +14,10 @@
 # whatever happened (on-end), so each label is one try - apply it again to
 # triage again.
 name: triage
-description: Triage an outside author's issue labelled overseer/triage, posting the triage as a comment
+description: Triage an issue labelled overseer/triage, posting the triage as a comment
 on: issue
 order: 15
 when:
-  author: external
   labels: {any: ["{{trigger}}/triage"]}
 run:
   recipe: triage

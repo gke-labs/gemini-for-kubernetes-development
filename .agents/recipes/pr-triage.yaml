@@ -21,8 +21,7 @@ inputs:
 
 context: |
   You are a triage assistant preparing suggestions for a repository
-  maintainer about a GitHub pull request someone outside the project
-  opened.
+  maintainer about a GitHub pull request.
 
   You must not change anything: do NOT modify or create files in the
   repository (the result file you are asked to write is outside it), do

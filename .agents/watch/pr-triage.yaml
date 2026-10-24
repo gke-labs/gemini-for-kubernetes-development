@@ -1,8 +1,6 @@
 # This repository's own rule (not one of factory's): triage a pull request
-# someone outside the project opened (author: external - not the pool, the
-# owner, an organization member, a collaborator, or a login the overseer
-# trusts), when a maintainer labels it overseer/triage - the issue triage
-# rule's label, on a PR. The pr-triage recipe says what the PR is about,
+# - anyone's - when a maintainer labels it overseer/triage, the issue
+# triage rule's label, on a PR. The pr-triage recipe says what the PR is about,
 # with suggested labels, a priority and duplicates, and the comment apply
 # posts it on the PR: a maintainer applies the labels. A triage that
 # succeeds leaves {{trigger}}/triaged on the PR (on-success, the watcher's
@@ -12,11 +10,10 @@
 # whatever happened (on-end), so each label is one try - apply it again to
 # triage again.
 name: pr-triage
-description: Triage an outside author's PR labelled overseer/triage, posting the triage as a comment
+description: Triage a PR labelled overseer/triage, posting the triage as a comment
 on: pr
 order: 9
 when:
-  author: external
   labels: {any: ["{{trigger}}/triage"]}
 run:
   recipe: pr-triage
