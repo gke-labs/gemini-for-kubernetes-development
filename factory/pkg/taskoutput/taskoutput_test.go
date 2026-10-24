@@ -119,7 +119,7 @@ func TestApplyTriage(t *testing.T) {
 	if len(f.labels) != 1 || strings.Join(f.labels[0], ",") != "bug,area/x" {
 		t.Errorf("labels = %v", f.labels)
 	}
-	if len(f.comments) != 1 || !strings.Contains(f.comments[0], "It breaks.") || !strings.Contains(f.comments[0], "Possible duplicates: #7") || !strings.Contains(f.comments[0], "task=recipe-triage-1") {
+	if len(f.comments) != 1 || !strings.Contains(f.comments[0], "It breaks.") || !strings.Contains(f.comments[0], "Possible duplicates: #7") || !strings.Contains(f.comments[0], "Suggested labels: `bug`, `area/x`") || !strings.Contains(f.comments[0], "task=recipe-triage-1") {
 		t.Errorf("comments = %q", f.comments)
 	}
 
