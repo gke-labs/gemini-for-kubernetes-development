@@ -75,6 +75,12 @@ func (s Set) AdmitsAuthor(it Item, env Env) bool {
 	})
 }
 
+// Narrowed is whether a listing other than by the rule's own labels
+// reaches what it admits: the pool's, the watcher's own, the trigger
+// label's. A rule that is not is reached by a label of its own (a command
+// label like overseer/triage).
+func (r *Rule) Narrowed(env Env) bool { return r.When.narrowed(env) }
+
 // narrowed is whether a listing other than by label reaches what w admits:
 // the pool's (author or assignee pool), the watcher's own (opened-by), or
 // the trigger label's.

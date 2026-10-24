@@ -108,6 +108,9 @@ type Listings interface {
 	Refresh(ctx context.Context) error
 	// Labelled is every open item carrying the trigger label.
 	Labelled() []*githubv39.Issue
+	// RuleLabelled is every open item carrying one of the labels the
+	// rules are listed by (Config.ListingLabels, on issues).
+	RuleLabelled() []*githubv39.Issue
 	// AssignedFirst is the first n open items assigned to user, newest
 	// updated first.
 	AssignedFirst(user string, n int) []*githubv39.Issue
@@ -146,6 +149,11 @@ type Config struct {
 	// the others, as on a pull request: where a give-up's count starts.
 	AllowlistedBots []string
 	TrustedLogins   []string
+	// ListingLabels are the labels a sweep lists open issues by, besides
+	// the trigger label: those of the rules on issues the pool, trigger
+	// and watcher listings do not reach (rules.Set.ListingLabels), in one
+	// query (an OR of them).
+	ListingLabels []string
 	// ScanLimit caps the page size of the fast queries. Defaults to defaultScanLimit.
 	ScanLimit int
 	// MinNumber skips issues numbered below it, which is how a deployment
@@ -610,8 +618,13 @@ func (s *Scanner) queueIssueRuleTask(ctx context.Context, issue *githubv39.Issue
 		return
 	}
 
+	// An issue the watcher was pointed at by assignment (or by opening it)
+	// gets the trigger label, so it is tracked like a labelled one. One
+	// reached by a rule's own label (a command such as overseer/triage) was
+	// not pointed at: the trigger label would point every other rule at it
+	// (fix).
 	wasAutoLabeled := false
-	if !conventions.HasTriggerLabel(issue.Labels, s.cfg.TriggerLabel) {
+	if r := s.rules.Set().Named(rule); (r == nil || r.Narrowed(s.rulesEnv())) && !conventions.HasTriggerLabel(issue.Labels, s.cfg.TriggerLabel) {
 		wasAutoLabeled = true
 		s.applyTriggerLabel(ctx, num)
 	}

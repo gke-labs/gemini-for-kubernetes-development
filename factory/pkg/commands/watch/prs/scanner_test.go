@@ -1650,7 +1650,7 @@ func (f *prFixture) route(w http.ResponseWriter, r *http.Request) {
 				break
 			}
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"repository": map[string]any{"pullRequests": map[string]any{
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"repository": map[string]any{"items": map[string]any{
 			"pageInfo": map[string]any{"hasNextPage": false}, "nodes": nodes}}}})
 
 	case fmt.Sprintf("%s/issues/%d/timeline", base, f.num):

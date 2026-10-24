@@ -231,26 +231,29 @@ func (w *Watcher) newSharedScan() *scan.Store {
 		BotUsers:     w.allBotUsers,
 		GitHubLogin:  w.githubLogin,
 		Labels:       w.prListingLabels,
+		IssueLabels:  w.issueListingLabels,
 		StatePath:    w.scanStatePath(),
 	}, w.repoClient)
 }
 
-// ruleListingLabels are the labels the PR listings add for the rules on
-// pull requests that the pool and trigger listings do not reach - their
-// overseer-namespaced labels (rules.Set.ListingLabels) - logged, with a
-// warning for a rule no listing reaches at all.
-func (w *Watcher) ruleListingLabels() []string {
+// ruleListingLabels are the labels the listings of kind (rules.OnPR,
+// rules.OnIssue) add for the rules on it that the pool, trigger and
+// watcher listings do not reach - their overseer-namespaced labels
+// (rules.Set.ListingLabels) - logged, with a warning for a rule no listing
+// reaches at all.
+func (w *Watcher) ruleListingLabels(kind string) []string {
 	if w.rulesControl == nil {
 		return nil
 	}
 	set := w.rulesControl.Set()
 	env := rules.Env{Trigger: w.triggerLabel, Prefixes: conventions.Prefixes(w.triggerLabel)}
-	for _, name := range set.Unlisted(rules.OnPR, env) {
-		klog.Warningf("Watch rules: the rule %s names nothing a listing narrows on (author: pool, assignee: pool, the trigger label, or a label of the overseer's own, %s/...): it sees only pull requests listed for other rules", name, strings.Join(env.Prefixes, "/..., "))
+	items := map[string]string{rules.OnPR: "pull requests", rules.OnIssue: "issues"}[kind]
+	for _, name := range set.Unlisted(kind, env) {
+		klog.Warningf("Watch rules: the rule %s names nothing a listing narrows on (author: pool, assignee: pool, the trigger label, or a label of the overseer's own, %s/...): it sees only %s listed for other rules", name, strings.Join(env.Prefixes, "/..., "), items)
 	}
-	labels := set.ListingLabels(rules.OnPR, env)
+	labels := set.ListingLabels(kind, env)
 	if len(labels) > 0 {
-		klog.Infof("Watch rules: pull requests are also listed by %s", strings.Join(labels, ", "))
+		klog.Infof("Watch rules: %s are also listed by %s", items, strings.Join(labels, ", "))
 	}
 	return labels
 }
@@ -308,6 +311,7 @@ func (w *Watcher) issueScannerConfig() issues.Config {
 		BotUsers:        w.allBotUsers,
 		AllowlistedBots: w.allowlistedBots(),
 		TrustedLogins:   w.cfg.TrustedLogins(),
+		ListingLabels:   w.issueListingLabels,
 		ScanLimit:       w.ScanLimit,
 		MinNumber:       w.minIssueNumber(),
 		PrimeOpenPRs:    !w.prsEnabled(),

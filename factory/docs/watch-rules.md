@@ -105,12 +105,12 @@ The watch tracks these open items:
 | labelled | open issues and PRs with the trigger label (`overseer`, or the overseer's own) |
 | assigned | open issues and PRs assigned to a bot of the pool |
 | opened by the watcher | open issues the watcher's own login opened (a workflow's, a chore's, a fan-out's children) |
-| labelled for a rule | open PRs with a label a PR rule requires that is in the overseer's own namespace (`overseer/...`, `<trigger>/...`), for the rules nothing above reaches |
+| labelled for a rule | open issues and PRs with a label a rule on them requires that is in the overseer's own namespace (`overseer/...`, `<trigger>/...`), for the rules nothing above reaches |
 
 A rule sees every tracked item of its `on` kind, and `when` narrows that:
 `labels`, `assignee`, `author`, `opened-by`, in `any-of` if need be.
 
-The last row is how a rule reaches a PR someone outside the pool opened:
+The last row is how a rule reaches an issue or a PR someone outside the pool opened:
 a rule that does not say `author: pool` or `assignee: pool`, nor requires
 the trigger label, is listed by the namespaced labels in its `labels.all`
 and `labels.any` (placeholders filled, `*/x` in each prefix), all of them in
@@ -133,6 +133,12 @@ policy: {dedupe: head}
 
 A PR whose author no rule admits (with factory's rules alone, anyone
 outside the pool) is left there: nothing more of it is read.
+
+An issue a rule's task is queued for gets the trigger label, so that an
+issue the watcher was pointed at by assignment is tracked like a labelled
+one - unless the rule is reached by a label of its own, like
+`.agents/watch/triage.yaml`'s `overseer/triage`: the trigger label would
+point every other rule (fix) at the issue too.
 
 ---
 

@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -135,5 +136,83 @@ func TestQueueTasks_RepositoryRuleWaitsForTheSandbox(t *testing.T) {
 		if queued != (name == "free") {
 			t.Errorf("%s: queued %v", name, queued)
 		}
+	}
+}
+
+// A command rule - reached by a label of its own, for outside authors - is
+// queued on an outside author's issue without the trigger label going on
+// it: that would point fix at the issue too. A member's issue is not the
+// rule's.
+func TestQueueTasks_CommandLabelRule(t *testing.T) {
+	base, err := rules.Builtin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo, err := rules.LoadFiles(map[string][]byte{"triage-external.yaml": []byte(
+		"name: triage-external\non: issue\norder: 1\nwhen: {author: external, labels: {any: [\"{{trigger}}/triage\"]}}\nrun: {recipe: triage, apply: comment, on-end: {unlabel: [\"{{trigger}}/triage\"]}}\n")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	set, err := rules.Overlay(base, repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := set.ListingLabels(rules.OnIssue, rules.Env{Trigger: "factory", Prefixes: []string{"overseer", "factory"}}); !slices.Equal(got, []string{"factory/triage"}) {
+		t.Errorf("issues listed by %v, want [factory/triage]", got)
+	}
+	control, err := rules.NewControl(nil, set)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		association string
+		queued      bool
+	}{{"CONTRIBUTOR", true}, {"MEMBER", false}} {
+		t.Run(tc.association, func(t *testing.T) {
+			var labelled []string
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if strings.HasSuffix(r.URL.Path, "/timeline") {
+					_ = json.NewEncoder(w).Encode([]*githubv39.Timeline{})
+					return
+				}
+				if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/labels") {
+					var names []string
+					_ = json.NewDecoder(r.Body).Decode(&names)
+					labelled = append(labelled, names...)
+					_, _ = w.Write([]byte("[]"))
+					return
+				}
+				_, _ = w.Write([]byte("{}"))
+			}))
+			t.Cleanup(server.Close)
+			gh := githubv39.NewClient(nil)
+			gh.BaseURL, _ = url.Parse(server.URL + "/")
+			s, queue, _ := newScanner(t, Config{TargetAssignee: "bot1", BotUsers: []string{"bot1"}, TriggerLabel: "factory"}, Deps{
+				GitHub:   github.ForRepo(gh, "test-owner", "test-repo"),
+				Recorder: rules.NewRecorder(filepath.Join(t.TempDir(), "d.jsonl"), 0, nil),
+				Rules:    control,
+			})
+			updated := time.Now().Add(-time.Hour)
+			s.queueTasks(context.Background(), []*githubv39.Issue{{
+				Number: githubv39.Int(7), UpdatedAt: &updated,
+				Labels:            []*githubv39.Label{{Name: githubv39.String("factory/triage")}},
+				User:              &githubv39.User{Login: githubv39.String("erin")},
+				AuthorAssociation: githubv39.String(tc.association),
+			}}, map[int]bool{})
+			task, queued := queue.enqueued["task-issue-7-rule-triage-external.yaml"]
+			if queued != tc.queued {
+				t.Fatalf("queued %v, want %v: %v", queued, tc.queued, queue.enqueued)
+			}
+			if queued && (task.Recipe != "triage" || task.Apply != "comment" || task.OnEnd == nil) {
+				t.Errorf("task = %+v", task)
+			}
+			if _, fixed := queue.enqueued["task-issue-7-rule-fix.yaml"]; fixed {
+				t.Error("fix queued")
+			}
+			if len(labelled) > 0 {
+				t.Errorf("labelled %v: the trigger label went on", labelled)
+			}
+		})
 	}
 }
