@@ -1,0 +1,30 @@
+# This repository's own rule (not one of factory's): plan an issue when a
+# maintainer labels it overseer/plan. The plan recipe writes an
+# implementation plan (summary, approach, steps, risks, test plan) and the
+# comment apply posts it on the issue as "Implementation plan", with a
+# hidden marker. The label is in the overseer's own namespace, so the watch
+# lists issues by it; the issue does not get the trigger label (that would
+# point fix at it too).
+#
+# Refining: comment on the plan, then apply overseer/plan again. The next
+# run revises the newest plan comment against the comments posted since,
+# and posts the next version as a new comment: the newest is the plan.
+#
+# A plan that succeeds leaves {{trigger}}/planned on the issue (on-success,
+# the watcher's write). The label is a command: the watcher takes it off
+# when the task ends, whatever happened (on-end), so each label is one run.
+name: plan
+description: Plan an issue labelled overseer/plan, posting the plan as a comment
+on: issue
+order: 14
+when:
+  labels: {any: ["{{trigger}}/plan"]}
+run:
+  recipe: plan
+  apply: comment
+  on-success:
+    label: ["{{trigger}}/planned"]   # done: the watcher's own write
+  on-failure:
+    comment: "Planning failed; apply the plan label again to retry."
+  on-end:
+    unlabel: ["{{trigger}}/plan"]

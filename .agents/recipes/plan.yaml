@@ -5,8 +5,10 @@
 # with it as fix's plan input (from: Plan). It is also left at
 # /workspaces/plan-issue-<n>.md, for the next plan run to revise.
 #
-# Run again, it revises the plan it finds there, against --feedback if
-# given. The agent writes the plan to a file of its task, so after a
+# Run again, it revises the newest plan comment on the issue (else the
+# plan it finds there), against the comments since and --feedback if
+# given: overseer/plan applied again (.agents/watch/plan.yaml) is the next
+# version. The agent writes the plan to a file of its task, so after a
 # conversation in its session (Continue session) it rewrites the plan
 # when asked, and the task's result follows (taskoutput.Refresh).
 name: plan
@@ -41,8 +43,16 @@ start:
     - run: sleep 5 # lib.sh's HACK: avoid git lock issues
     - uses: checkout-default-branch
     - uses: configure-engine
-    # The plan a previous run left, revised rather than started over.
-    - run: cp "/workspaces/plan-issue-${INPUT_ISSUE_NUMBER}.md" "$TASK_DIR/prior-plan.md" 2>/dev/null || touch "$TASK_DIR/prior-plan.md"
+    # The plan to revise rather than start over: the newest plan comment on
+    # the issue (the comment apply's, found by its marker), else the one a
+    # previous run left in the sandbox.
+    - run: |
+        gh api --paginate "repos/${INPUT_REPO_OWNER}/${INPUT_REPO_NAME}/issues/${INPUT_ISSUE_NUMBER}/comments?per_page=100" \
+          --jq '.[] | select(.body | contains("<!-- factory:task-output kind=Plan ")) | .body | @base64' \
+          | tail -n 1 | base64 -d \
+          | sed -e '1{/^\*\*Implementation plan\*\*$/d;}' -e '/^<!-- factory:task-output /d' -e '/^<sub>🤖 \[Agent session\]/d' \
+          > "$TASK_DIR/prior-plan.md" || true
+        test -s "$TASK_DIR/prior-plan.md" || cp "/workspaces/plan-issue-${INPUT_ISSUE_NUMBER}.md" "$TASK_DIR/prior-plan.md" 2>/dev/null || touch "$TASK_DIR/prior-plan.md"
 
     - ask: |
         Investigate this issue. Do not write the plan yet.
@@ -61,9 +71,11 @@ start:
         3. Where the issue references other issues or PRs, read those too:
            `gh issue view <n>` / `gh pr view <n>`.
         {{ with file "prior-plan.md" }}
-        A previous version of your plan exists. Revise it: keep what the
-        feedback does not dispute, change what it does, and do not silently
-        drop plan sections.
+        A previous version of your plan exists (the newest "**Implementation
+        plan**" comment on the issue). The issue's comments posted after it
+        are feedback on it. Revise it: keep what the feedback does not
+        dispute, change what it does, and do not silently drop plan
+        sections.
         <previous_plan>
         {{ . }}
         </previous_plan>
