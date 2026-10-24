@@ -12,7 +12,8 @@ import (
 )
 
 // scanLabelled lists every open issue carrying the trigger label, following
-// pagination. It is the authoritative view of the work the repository has asked
+// pagination, and those carrying a label the rules are listed by
+// (Config.ListingLabels). It is the authoritative view of the work the repository has asked
 // for, and the expensive half of scanning, which is why it runs on the sweep
 // interval rather than on every cycle.
 //
@@ -24,7 +25,7 @@ func (s *Scanner) scanLabelled(ctx context.Context) ([]*githubv39.Issue, error) 
 		// failed refresh it is the last good one, returned with the error so
 		// the caller does not publish it as the complete open set.
 		err := s.listings.Refresh(ctx)
-		return issuesOnly(s.listings.Labelled()), err
+		return issuesOnly(appendNew(s.listings.Labelled(), s.listings.RuleLabelled())), err
 	}
 	var labelled []*githubv39.Issue
 	opts := &githubv39.IssueListByRepoOptions{
@@ -48,6 +49,14 @@ func (s *Scanner) scanLabelled(ctx context.Context) ([]*githubv39.Issue, error) 
 			break
 		}
 		opts.Page = resp.NextPage
+	}
+	// The labels the rules are listed by, in one query (an OR of them).
+	if len(s.cfg.ListingLabels) > 0 {
+		got, err := s.gh.OpenIssuesLabelled(ctx, s.cfg.ListingLabels)
+		if err != nil {
+			return labelled, fmt.Errorf("listing issues labelled %v: %w", s.cfg.ListingLabels, err)
+		}
+		labelled = issuesOnly(appendNew(labelled, got))
 	}
 	return labelled, nil
 }
@@ -133,6 +142,22 @@ func uniqueIssues(allItems []*githubv39.Issue) []*githubv39.Issue {
 		}
 	}
 	return issues
+}
+
+// appendNew is items, then those of more not among them (by number), in
+// order.
+func appendNew(items, more []*githubv39.Issue) []*githubv39.Issue {
+	seen := map[int]bool{}
+	for _, item := range items {
+		seen[item.GetNumber()] = true
+	}
+	for _, item := range more {
+		if !seen[item.GetNumber()] {
+			seen[item.GetNumber()] = true
+			items = append(items, item)
+		}
+	}
+	return items
 }
 
 // issuesOnly drops the pull requests from a listing.

@@ -329,3 +329,27 @@ func TestRuleLabelsTrackPullRequests(t *testing.T) {
 		t.Error("a snapshot of the same labels was not read")
 	}
 }
+
+// IssueLabels track an issue carrying one of them, as Labels do a pull
+// request: listed in full by one GraphQL query of issues; a pull request
+// with the label is not tracked for it.
+func TestRuleLabelsTrackIssues(t *testing.T) {
+	cfg := Config{IssueLabels: []string{"overseer/triage"}, StatePath: filepath.Join(t.TempDir(), "scan_state.json")}
+	w := newWorld(t, cfg)
+	w.seed()
+	w.repo.Put(scantest.Item{Number: 7, PR: true, Labels: []string{"overseer/triage"}, Author: "alice", Updated: t0.Add(-time.Hour)}) // a pull request
+	w.repo.Put(scantest.Item{Number: 8, Labels: []string{"overseer/triage"}, Author: "erin", Association: "CONTRIBUTOR", Updated: t0.Add(-time.Hour)})
+	if err := w.store.Refresh(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	got := w.store.RuleLabelled()
+	if !slices.Equal(numbers(got), []int{8}) {
+		t.Fatalf("rule labelled = %v, want [8]", numbers(got))
+	}
+	if got[0].GetAuthorAssociation() != "CONTRIBUTOR" {
+		t.Errorf("the snapshot dropped the author association: %q", got[0].GetAuthorAssociation())
+	}
+	if n, labels := w.repo.GraphQLCalls(); n != 1 || !slices.Equal(labels[0], cfg.IssueLabels) {
+		t.Errorf("graphql listings %d %v, want one of %v", n, labels, cfg.IssueLabels)
+	}
+}

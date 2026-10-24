@@ -8,12 +8,13 @@ import (
 	githubv39 "github.com/google/go-github/v39/github"
 )
 
-// openPRsLabelledQuery lists open pull requests carrying any of $labels -
-// GraphQL's label filter is an OR, where the REST issue listing's is an
-// AND - a page at a time, with what a listing returns of each.
-const openPRsLabelledQuery = `query($owner: String!, $repo: String!, $labels: [String!], $after: String) {
+// openLabelledQuery lists the open pull requests (its connection
+// pullRequests) or issues (issues) carrying any of $labels - GraphQL's label filter is an
+// OR, where the REST issue listing's is an AND - a page at a time, with
+// what a listing returns of each.
+const openLabelledQuery = `query($owner: String!, $repo: String!, $labels: [String!], $after: String) {
   repository(owner: $owner, name: $repo) {
-    pullRequests(states: OPEN, labels: $labels, first: 100, after: $after) {
+    items: %[1]s(states: OPEN, labels: $labels, first: 100, after: $after) {
       pageInfo { hasNextPage endCursor }
       nodes {
         number title createdAt updatedAt url
@@ -29,6 +30,19 @@ const openPRsLabelledQuery = `query($owner: String!, $repo: String!, $labels: [S
 // one paginated GraphQL query, as the REST issue listing returns them (an
 // issue with its pull request link). No labels lists nothing.
 func (c *Client) OpenPRsLabelled(ctx context.Context, labels []string) ([]*githubv39.Issue, error) {
+	return c.openLabelled(ctx, "pullRequests", labels)
+}
+
+// OpenIssuesLabelled is every open issue carrying any of labels, in one
+// paginated GraphQL query, as the REST issue listing returns them. No
+// labels lists nothing.
+func (c *Client) OpenIssuesLabelled(ctx context.Context, labels []string) ([]*githubv39.Issue, error) {
+	return c.openLabelled(ctx, "issues", labels)
+}
+
+// openLabelled is OpenPRsLabelled (connection pullRequests) or
+// OpenIssuesLabelled (issues).
+func (c *Client) openLabelled(ctx context.Context, connection string, labels []string) ([]*githubv39.Issue, error) {
 	if !c.Ready() {
 		return nil, errNoClient
 	}
@@ -40,7 +54,7 @@ func (c *Client) OpenPRsLabelled(ctx context.Context, labels []string) ([]*githu
 	for {
 		var data struct {
 			Repository struct {
-				PullRequests struct {
+				Items struct {
 					PageInfo struct {
 						HasNextPage bool   `json:"hasNextPage"`
 						EndCursor   string `json:"endCursor"`
@@ -62,14 +76,14 @@ func (c *Client) OpenPRsLabelled(ctx context.Context, labels []string) ([]*githu
 							Login string `json:"login"`
 						}] `json:"assignees"`
 					} `json:"nodes"`
-				} `json:"pullRequests"`
+				} `json:"items"`
 			} `json:"repository"`
 		}
-		if err := c.graphQL(ctx, openPRsLabelledQuery, vars, &data); err != nil {
-			return nil, fmt.Errorf("listing open pull requests labelled %v: %w", labels, err)
+		if err := c.graphQL(ctx, fmt.Sprintf(openLabelledQuery, connection), vars, &data); err != nil {
+			return nil, fmt.Errorf("listing open %s labelled %v: %w", connection, labels, err)
 		}
-		prs := data.Repository.PullRequests
-		for _, n := range prs.Nodes {
+		page := data.Repository.Items
+		for _, n := range page.Nodes {
 			issue := &githubv39.Issue{
 				Number:            githubv39.Int(n.Number),
 				Title:             githubv39.String(n.Title),
@@ -79,7 +93,9 @@ func (c *Client) OpenPRsLabelled(ctx context.Context, labels []string) ([]*githu
 				AuthorAssociation: githubv39.String(n.AuthorAssociation),
 				CreatedAt:         timePtr(n.CreatedAt),
 				UpdatedAt:         timePtr(n.UpdatedAt),
-				PullRequestLinks:  &githubv39.PullRequestLinks{HTMLURL: githubv39.String(n.URL)},
+			}
+			if connection == "pullRequests" {
+				issue.PullRequestLinks = &githubv39.PullRequestLinks{HTMLURL: githubv39.String(n.URL)}
 			}
 			for _, l := range n.Labels.Nodes {
 				issue.Labels = append(issue.Labels, &githubv39.Label{Name: githubv39.String(l.Name)})
@@ -89,9 +105,9 @@ func (c *Client) OpenPRsLabelled(ctx context.Context, labels []string) ([]*githu
 			}
 			out = append(out, issue)
 		}
-		if !prs.PageInfo.HasNextPage {
+		if !page.PageInfo.HasNextPage {
 			return out, nil
 		}
-		vars["after"] = prs.PageInfo.EndCursor
+		vars["after"] = page.PageInfo.EndCursor
 	}
 }

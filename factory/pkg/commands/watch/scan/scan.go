@@ -64,11 +64,13 @@ type Lister interface {
 
 var _ Lister = (*github.Client)(nil)
 
-// labelledLister lists the open pull requests carrying any of a set of
-// labels in one query (github.Client.OpenPRsLabelled): how a full refresh
-// lists Config.Labels.
+// labelledLister lists the open pull requests, or issues, carrying any of
+// a set of labels in one query (github.Client.OpenPRsLabelled,
+// OpenIssuesLabelled): how a full refresh lists Config.Labels and
+// Config.IssueLabels.
 type labelledLister interface {
 	OpenPRsLabelled(ctx context.Context, labels []string) ([]*githubv39.Issue, error)
+	OpenIssuesLabelled(ctx context.Context, labels []string) ([]*githubv39.Issue, error)
 }
 
 var _ labelledLister = (*github.Client)(nil)
@@ -88,8 +90,9 @@ type Config struct {
 	// the overseer-namespaced labels its rules require that no other
 	// listing reaches (rules.Set.ListingLabels). A full refresh lists them
 	// in one query; between full refreshes the incremental listing sees a
-	// pull request labelled since.
-	Labels []string
+	// pull request labelled since. IssueLabels are the same for issues.
+	Labels      []string
+	IssueLabels []string
 	// FullEvery, Margin and ReuseFor default to DefaultFullEvery,
 	// DefaultMargin and DefaultReuseFor.
 	FullEvery time.Duration
@@ -221,15 +224,23 @@ func (s *Store) full(ctx context.Context, start time.Time) error {
 			}
 		}
 	}
-	if ll, ok := s.gh.(labelledLister); ok && len(s.cfg.Labels) > 0 {
-		got, err := ll.OpenPRsLabelled(ctx, s.cfg.Labels)
-		calls++
-		if err != nil {
-			return fmt.Errorf("full listing of %v: %w", s.cfg.Labels, err)
-		}
-		for _, item := range got {
-			if s.tracked(item) {
-				items[item.GetNumber()] = reduce(item)
+	if ll, ok := s.gh.(labelledLister); ok {
+		for _, l := range []struct {
+			labels []string
+			list   func(context.Context, []string) ([]*githubv39.Issue, error)
+		}{{s.cfg.Labels, ll.OpenPRsLabelled}, {s.cfg.IssueLabels, ll.OpenIssuesLabelled}} {
+			if len(l.labels) == 0 {
+				continue
+			}
+			got, err := l.list(ctx, l.labels)
+			calls++
+			if err != nil {
+				return fmt.Errorf("full listing of %v: %w", l.labels, err)
+			}
+			for _, item := range got {
+				if s.tracked(item) {
+					items[item.GetNumber()] = reduce(item)
+				}
 			}
 		}
 	}
@@ -304,7 +315,7 @@ func (s *Store) tracked(item *githubv39.Issue) bool {
 	if s.cfg.TriggerLabel != "" && hasLabel(item, s.cfg.TriggerLabel) {
 		return true
 	}
-	if item.IsPullRequest() && s.ruleLabelled(item) {
+	if s.ruleLabelled(item) {
 		return true
 	}
 	if s.cfg.GitHubLogin != "" && strings.EqualFold(item.GetUser().GetLogin(), s.cfg.GitHubLogin) {
@@ -325,14 +336,19 @@ func (s *Store) Labelled() []*githubv39.Issue {
 }
 
 // RuleLabelled is every tracked pull request carrying one of
-// Config.Labels.
+// Config.Labels, and issue carrying one of Config.IssueLabels.
 func (s *Store) RuleLabelled() []*githubv39.Issue {
-	return s.view(func(item *githubv39.Issue) bool { return item.IsPullRequest() && s.ruleLabelled(item) }, 0)
+	return s.view(s.ruleLabelled, 0)
 }
 
-// ruleLabelled is whether item carries one of Config.Labels.
+// ruleLabelled is whether item carries one of Config.Labels (a pull
+// request) or Config.IssueLabels (an issue).
 func (s *Store) ruleLabelled(item *githubv39.Issue) bool {
-	return slices.ContainsFunc(s.cfg.Labels, func(l string) bool { return hasLabel(item, l) })
+	labels := s.cfg.IssueLabels
+	if item.IsPullRequest() {
+		labels = s.cfg.Labels
+	}
+	return slices.ContainsFunc(labels, func(l string) bool { return hasLabel(item, l) })
 }
 
 // Assigned is every tracked item assigned to user, as the full assignee
@@ -390,6 +406,7 @@ type persisted struct {
 	BotUsers     []string           `json:"botUsers"`
 	GitHubLogin  string             `json:"githubLogin"`
 	Labels       []string           `json:"labels,omitempty"`
+	IssueLabels  []string           `json:"issueLabels,omitempty"`
 	Cursor       time.Time          `json:"cursor"`
 	LastFull     time.Time          `json:"lastFull"`
 	Items        []*githubv39.Issue `json:"items"`
@@ -416,7 +433,7 @@ func (s *Store) load() {
 		return
 	}
 	if p.Version != stateVersion || p.Repo != s.cfg.Repo || p.TriggerLabel != s.cfg.TriggerLabel ||
-		p.GitHubLogin != s.cfg.GitHubLogin || !slices.Equal(p.BotUsers, s.sortedBots()) || !slices.Equal(p.Labels, s.cfg.Labels) {
+		p.GitHubLogin != s.cfg.GitHubLogin || !slices.Equal(p.BotUsers, s.sortedBots()) || !slices.Equal(p.Labels, s.cfg.Labels) || !slices.Equal(p.IssueLabels, s.cfg.IssueLabels) {
 		klog.Infof("Shared scan: %s is a snapshot of something else; listing in full", s.cfg.StatePath)
 		return
 	}
@@ -440,7 +457,7 @@ func (s *Store) persist() {
 	}
 	p := persisted{
 		Version: stateVersion, Repo: s.cfg.Repo, TriggerLabel: s.cfg.TriggerLabel,
-		BotUsers: s.sortedBots(), GitHubLogin: s.cfg.GitHubLogin, Labels: s.cfg.Labels,
+		BotUsers: s.sortedBots(), GitHubLogin: s.cfg.GitHubLogin, Labels: s.cfg.Labels, IssueLabels: s.cfg.IssueLabels,
 		Cursor: s.cursor, LastFull: s.lastFull,
 	}
 	for _, item := range s.items {

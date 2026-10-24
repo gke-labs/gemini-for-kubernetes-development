@@ -214,10 +214,11 @@ func (r *Repo) GraphQLCalls() (int, [][]string) {
 	return r.graphQLCalls, slices.Clone(r.graphQLLabels)
 }
 
-// labelled answers the open pull requests carrying any of the query's
-// labels, in one page.
+// labelled answers the open pull requests - or, asked for issues, the
+// issues - carrying any of the query's labels, in one page.
 func (r *Repo) labelled(w http.ResponseWriter, req *http.Request) {
 	var body struct {
+		Query     string `json:"query"`
 		Variables struct {
 			Labels []string `json:"labels"`
 		} `json:"variables"`
@@ -230,9 +231,10 @@ func (r *Repo) labelled(w http.ResponseWriter, req *http.Request) {
 		Name  string `json:"name,omitempty"`
 		Login string `json:"login,omitempty"`
 	}
+	prs := !strings.Contains(body.Query, "items: issues(")
 	var nodes []map[string]any
 	for _, it := range r.items {
-		if !it.PR || it.State != "open" || !slices.ContainsFunc(body.Variables.Labels, func(l string) bool { return hasFold(it.Labels, l) }) {
+		if it.PR != prs || it.State != "open" || !slices.ContainsFunc(body.Variables.Labels, func(l string) bool { return hasFold(it.Labels, l) }) {
 			continue
 		}
 		var labels, assignees []name
@@ -244,14 +246,14 @@ func (r *Repo) labelled(w http.ResponseWriter, req *http.Request) {
 		}
 		nodes = append(nodes, map[string]any{
 			"number": it.Number, "title": it.Title, "createdAt": it.Created, "updatedAt": it.Updated,
-			"url":    fmt.Sprintf("https://github.com/%s/%s/pull/%d", r.Owner, r.Name, it.Number),
+			"url":    fmt.Sprintf("https://github.com/%s/%s/%s/%d", r.Owner, r.Name, map[bool]string{true: "pull", false: "issues"}[prs], it.Number),
 			"author": map[string]string{"__typename": "User", "login": it.Author}, "authorAssociation": it.association(),
 			"labels": map[string]any{"nodes": labels}, "assignees": map[string]any{"nodes": assignees},
 		})
 	}
 	r.mu.Unlock()
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"repository": map[string]any{"pullRequests": map[string]any{
+	_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"repository": map[string]any{"items": map[string]any{
 		"pageInfo": map[string]any{"hasNextPage": false, "endCursor": ""}, "nodes": nodes,
 	}}}})
 }
