@@ -25,6 +25,23 @@ func triageDoc(t *testing.T, task string) *Document {
 	return doc
 }
 
+// A triage of a pull request is commented and labelled on the PR, through
+// the issue endpoints (a PR is an issue to them).
+func TestApplyTriageOnAPullRequest(t *testing.T) {
+	f := &fakeGitHub{}
+	doc, err := Wrap("Triage", agentReply, Target{URL: "https://github.com/o/r/pull/12"}, Source{Task: "recipe-pr-triage-1", Recipe: "pr-triage"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	if err := Apply(context.Background(), f.client(t), doc, false, &out); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.comments) != 1 || !strings.Contains(f.comments[0], "It breaks.") || len(f.labels) != 1 {
+		t.Errorf("comments %q, labels %v", f.comments, f.labels)
+	}
+}
+
 func TestWrapMarshalParse(t *testing.T) {
 	data, err := Marshal(triageDoc(t, "recipe-triage-1"), triageDoc(t, "recipe-triage-2"))
 	if err != nil {
@@ -150,14 +167,6 @@ func TestApplyDryRunWritesNothing(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "Would add labels [bug area/x]") || !strings.Contains(out.String(), "Would comment on") {
 		t.Errorf("dry run said:\n%s", out.String())
-	}
-}
-
-func TestApplyTriageNeedsAnIssue(t *testing.T) {
-	doc := triageDoc(t, "x")
-	doc.Target.URL = "https://github.com/o/r/pull/12"
-	if err := Apply(context.Background(), (&fakeGitHub{}).client(t), doc, false, &bytes.Buffer{}); err == nil {
-		t.Error("a Triage was applied to a PR")
 	}
 }
 

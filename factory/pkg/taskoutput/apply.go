@@ -59,6 +59,13 @@ func issueTarget(doc *Document) (owner, repo string, num int, err error) {
 	return owner, repo, num, nil
 }
 
+// itemTarget is the issue or pull request doc's result is commented and
+// labelled on (issue comments and labels are a PR's too).
+func itemTarget(doc *Document) (owner, repo string, num int, err error) {
+	owner, repo, num, _, err = parseItemURL(doc.Target.URL)
+	return owner, repo, num, err
+}
+
 func doing(dryRun bool, present, conditional string) string {
 	if dryRun {
 		return "Would " + conditional
@@ -66,13 +73,13 @@ func doing(dryRun bool, present, conditional string) string {
 	return present
 }
 
-// applyLabels adds a Triage's labels to its issue.
+// applyLabels adds a Triage's labels to its issue or PR.
 func applyLabels(ctx context.Context, gh *githubv39.Client, doc *Document, dryRun bool, out io.Writer) error {
 	t, err := doc.TriageSpec()
 	if err != nil {
 		return err
 	}
-	owner, repo, num, err := issueTarget(doc)
+	owner, repo, num, err := itemTarget(doc)
 	if err != nil {
 		return err
 	}
@@ -89,8 +96,9 @@ func applyLabels(ctx context.Context, gh *githubv39.Client, doc *Document, dryRu
 	return nil
 }
 
-// applyComment comments the result on its issue, once: a Triage's
-// assessment, a Plan's plan, a Summary.
+// applyComment comments the result on its issue (a Triage's or a
+// Summary's, or PR), once: a Triage's assessment, a Plan's plan, a
+// Summary.
 func applyComment(ctx context.Context, gh *githubv39.Client, doc *Document, dryRun bool, out io.Writer) error {
 	var comment, what string
 	switch doc.Kind {
@@ -118,7 +126,13 @@ func applyComment(ctx context.Context, gh *githubv39.Client, doc *Document, dryR
 	default:
 		return fmt.Errorf("cannot comment a %s", doc.Kind)
 	}
-	owner, repo, num, err := issueTarget(doc)
+	// A plan is an issue's (fix follows it); a triage or a summary may be
+	// a pull request's too.
+	target := itemTarget
+	if doc.Kind == "Plan" {
+		target = issueTarget
+	}
+	owner, repo, num, err := target(doc)
 	if err != nil {
 		return err
 	}
