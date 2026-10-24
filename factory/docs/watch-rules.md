@@ -125,7 +125,7 @@ name: adopt
 on: pr
 order: 8
 when:
-  author: not-pool                       # someone else's PR
+  author: [owner, member, collaborator, external]   # anyone but the pool
   labels: {any: ["{{trigger}}/adopt"]}   # listed by overseer/adopt
 run: {recipe: adopt, apply: open-pr, inputs: {strategy: reuse}}
 policy: {dedupe: head}
@@ -146,9 +146,25 @@ Every predicate set must hold. A predicate left out is not checked.
 |---|---|---|
 | `labels` | `{any: [...], all: [...], none: [...]}` | the item has any of `any`, all of `all` and none of `none`. `{{trigger}}` is the trigger label; `*/name` is `name` under any of the overseer's prefixes (`overseer/review`, `kcc/review`). Case-insensitive. |
 | `assignee` | `pool`, `not-pool`, `none` | a bot of the pool is assigned; none is; nobody is |
-| `author` | `pool`, `not-pool` | a bot of the pool opened it; someone else did. Factory's PR rules say `pool`: they push to the PR's branch |
+| `author` | one or a list of `pool`, `owner`, `member`, `collaborator`, `external` | the kind of author that opened it (below). Factory's PR rules say `pool`: they push to the PR's branch |
 | `last-run` | `failed` | the rule's last run on the item failed; on a PR, on its current head |
 | `any-of` | a list of predicate sets | at least one set holds (see [`any-of`](#any-of)) |
+
+Each author is one kind, the first that applies:
+
+| kind | who |
+|---|---|
+| `pool` | a bot of the overseer's pool |
+| `owner` | GitHub's `author_association` is `OWNER` |
+| `member` | `MEMBER` (a member of the repository's organization), or a login the overseer trusts: its `allowlistedUsers`, `allowlistedBots` and reviewers |
+| `collaborator` | `COLLABORATOR` (invited to the repository) |
+| `external` | anyone else: `CONTRIBUTOR`, `FIRST_TIME_CONTRIBUTOR`, `NONE`... |
+
+GitHub reports an organization member whose membership is private as a
+contributor to a token that cannot see it: list such a login in
+`allowlistedUsers` and it is a member. `author: [owner, member,
+collaborator, external]` is anyone but the pool; `author: external` an
+outside contributor alone.
 
 `when` is about the item: what it is and what has happened to it. How
 often the overseer acts on it, and when it stops trying, is `policy`'s
@@ -267,7 +283,7 @@ name: adopt
 on: pr
 order: 8
 when:
-  author: not-pool
+  author: [owner, member, collaborator, external]
   labels: {any: ["{{trigger}}/adopt"]}
 run:
   recipe: adopt

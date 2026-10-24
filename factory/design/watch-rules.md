@@ -306,7 +306,7 @@ the engine does not offer. From today's rules:
 
 | on | predicates |
 |---|---|
-| any item | `labels: {any, all, none}`; `author: pool`; `assignee: pool\|not-pool\|none`; `last-run: failed` (the rule's last run on the item, on its head when deduped by head) |
+| any item | `labels: {any, all, none}`; `author: pool\|owner\|member\|collaborator\|external` (one or a list; GitHub's association, the overseer's trusted logins members); `assignee: pool\|not-pool\|none`; `last-run: failed` (the rule's last run on the item, on its head when deduped by head) |
 | issue | `linked-pr: none\|open`; `workflow: none\|any\|missing`; `opened-by: watcher`; `fanout` (a fan-out's parent; a child is an ordinary issue, created only when it is to be worked on) |
 | PR | `checks: failing\|pending\|green`; `mergeable`; `feedback: new-trusted\|none`; `closes: {labels}` (the labels of the issues it closes, between them); `reviewed-at-head`; `approved`; `draft`; `inactive-for: <duration>` |
 | sandbox | `item: closed`; `age: <duration>`; `idle: <duration>`; `requires-human` |
@@ -984,6 +984,7 @@ together once staging's shadow had agreed on every rule:
 | | `author: not-pool`; the author check from the rules (`Set.AdmitsAuthor`); PRs also listed by the rules' namespaced labels, one GraphQL OR query (`Set.ListingLabels`) | #2100 |
 | | lifecycle hooks: `run.on-start`, `on-success`, `on-failure`, `on-end`, the watcher's writes at points of a task's life (`rules.Hooks`, stamped on the task, executed in `NotifyTaskStarted`/`Finished`); a label taken off when done makes a rule a command | #2106 |
 | | the prebaked rules' `claim` and `start-comment` become `on-start` (`assign: "{{bot}}"`, `unassign: "{{watcher}}"`, `comment`); both fields gone | #2107 |
+| | `author` a list of kinds - `pool`, `owner`, `member`, `collaborator`, `external` (`rules.AuthorKind`: GitHub's `author_association`, the overseer's trusted logins members); `not-pool` gone | (this PR) |
 
 **Phase 5, the repository's rules** (partly built): the watch reads
 `.agents/watch/*.yaml` once when it starts, under `spec.repoRecipe` (one

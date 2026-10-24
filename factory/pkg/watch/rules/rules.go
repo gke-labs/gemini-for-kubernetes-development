@@ -157,7 +157,7 @@ type When struct {
 	// Any item.
 	Labels   *Labels `yaml:"labels,omitempty" json:"labels,omitempty"`
 	Assignee string  `yaml:"assignee,omitempty" json:"assignee,omitempty"` // pool | not-pool | none | owner
-	Author   string  `yaml:"author,omitempty" json:"author,omitempty"`     // pool | not-pool
+	Author   Authors `yaml:"author,omitempty" json:"author,omitempty"`     // pool | owner | member | collaborator | external: one or a list (AuthorKind)
 	// LastRun is the outcome of the rule's last run on the item, and on a
 	// PR on its current head: failed.
 	LastRun string `yaml:"last-run,omitempty" json:"last-run,omitempty"`
@@ -406,7 +406,7 @@ func (w When) set() []string {
 	add("any-of", len(w.AnyOf) > 0)
 	add("labels", w.Labels != nil)
 	add("assignee", w.Assignee != "")
-	add("author", w.Author != "")
+	add("author", len(w.Author) > 0)
 	add("last-run", w.LastRun != "")
 	add("linked-pr", w.LinkedPR != "")
 	add("connected-pr", w.ConnectedPR != "")
@@ -428,7 +428,7 @@ func (w When) set() []string {
 // enums are the values a string predicate or field may take.
 var enums = map[string][]string{
 	"assignee":     {"pool", "not-pool", "none"},
-	"author":       {"pool", "not-pool"},
+	"author":       {AuthorPool, AuthorOwner, AuthorMember, AuthorCollaborator, AuthorExternal},
 	"linked-pr":    {"none", "open"},
 	"connected-pr": {"none", "open"},
 	"workflow":     {"none", "any", "missing"},
@@ -470,12 +470,20 @@ func (w When) validate(on string, nested bool) error {
 		}
 	}
 	for field, value := range map[string]string{
-		"assignee": w.Assignee, "author": w.Author, "linked-pr": w.LinkedPR, "connected-pr": w.ConnectedPR,
+		"assignee": w.Assignee, "linked-pr": w.LinkedPR, "connected-pr": w.ConnectedPR,
 		"workflow": w.Workflow, "opened-by": w.OpenedBy,
 		"checks": w.Checks, "feedback": w.Feedback, "last-run": w.LastRun,
 	} {
 		if err := checkEnum(field, value); err != nil {
 			return fmt.Errorf(".%v", err)
+		}
+	}
+	for i, a := range w.Author {
+		if err := checkEnum("author", a); err != nil {
+			return fmt.Errorf(".%v", err)
+		}
+		if slices.Contains(w.Author[:i], a) {
+			return fmt.Errorf(".author: %s is given twice", a)
 		}
 	}
 	if c := w.Closes; c != nil && c.Labels == nil {

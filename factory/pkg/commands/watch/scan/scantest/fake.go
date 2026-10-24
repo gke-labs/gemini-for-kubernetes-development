@@ -30,10 +30,12 @@ type Item struct {
 	Labels    []string
 	Assignees []string
 	Author    string
-	Title     string
-	Body      string
-	Created   time.Time
-	Updated   time.Time
+	// Association is the author's author_association; empty is NONE.
+	Association string
+	Title       string
+	Body        string
+	Created     time.Time
+	Updated     time.Time
 }
 
 // Repo is the fake repository, served by Server.
@@ -243,7 +245,7 @@ func (r *Repo) labelled(w http.ResponseWriter, req *http.Request) {
 		nodes = append(nodes, map[string]any{
 			"number": it.Number, "title": it.Title, "createdAt": it.Created, "updatedAt": it.Updated,
 			"url":    fmt.Sprintf("https://github.com/%s/%s/pull/%d", r.Owner, r.Name, it.Number),
-			"author": map[string]string{"__typename": "User", "login": it.Author},
+			"author": map[string]string{"__typename": "User", "login": it.Author}, "authorAssociation": it.association(),
 			"labels": map[string]any{"nodes": labels}, "assignees": map[string]any{"nodes": assignees},
 		})
 	}
@@ -252,6 +254,13 @@ func (r *Repo) labelled(w http.ResponseWriter, req *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"repository": map[string]any{"pullRequests": map[string]any{
 		"pageInfo": map[string]any{"hasNextPage": false, "endCursor": ""}, "nodes": nodes,
 	}}}})
+}
+
+func (it *Item) association() string {
+	if it.Association == "" {
+		return "NONE"
+	}
+	return it.Association
 }
 
 func (it *Item) issue(owner, repo string) *githubv39.Issue {
@@ -265,6 +274,8 @@ func (it *Item) issue(owner, repo string) *githubv39.Issue {
 		CreatedAt: &created,
 		UpdatedAt: &updated,
 		User:      &githubv39.User{Login: githubv39.String(it.Author)},
+
+		AuthorAssociation: githubv39.String(it.association()),
 	}
 	if it.PR {
 		iss.PullRequestLinks = &githubv39.PullRequestLinks{URL: githubv39.String(fmt.Sprintf("https://api.github.com/repos/%s/%s/pulls/%d", owner, repo, it.Number))}

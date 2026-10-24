@@ -39,6 +39,7 @@ type scenarioEnv struct {
 	Trigger    string    `json:"trigger"`
 	Watcher    string    `json:"watcher"`
 	Pool       []string  `json:"pool"`
+	Members    []string  `json:"members"`
 	PRLabels   []string  `json:"prLabels"`
 	Inactivity string    `json:"inactivity"`
 	Now        time.Time `json:"now"`
@@ -286,6 +287,6 @@ func (s scenario) env(defaults scenarioEnv) (rules.Env, error) {
 	}
 	return rules.Env{
 		Trigger: e.Trigger, Prefixes: conventions.Prefixes(e.Trigger), Watcher: e.Watcher,
-		Pool: e.Pool, PRLabels: e.PRLabels, PRInactivityTimeout: inactivity, Now: e.Now,
+		Pool: e.Pool, Members: e.Members, PRLabels: e.PRLabels, PRInactivityTimeout: inactivity, Now: e.Now,
 	}, nil
 }

@@ -68,29 +68,18 @@ func (s Set) Unlisted(kind string, env Env) []string {
 // author: pool - before reading anything more of it.
 func (s Set) AdmitsAuthor(it Item, env Env) bool {
 	return slices.ContainsFunc(s, func(r *Rule) bool {
-		if r.On != it.Kind || !r.IsEnabled() || !r.When.admitsAuthor(it.Author, env) {
+		if r.On != it.Kind || !r.IsEnabled() || !r.When.admitsAuthor(it, env) {
 			return false
 		}
-		return len(r.When.AnyOf) == 0 || slices.ContainsFunc(r.When.AnyOf, func(alt When) bool { return alt.admitsAuthor(it.Author, env) })
+		return len(r.When.AnyOf) == 0 || slices.ContainsFunc(r.When.AnyOf, func(alt When) bool { return alt.admitsAuthor(it, env) })
 	})
-}
-
-// admitsAuthor is w's author predicate alone.
-func (w When) admitsAuthor(author string, env Env) bool {
-	switch w.Author {
-	case "pool":
-		return anyIn([]string{author}, env.Pool)
-	case "not-pool":
-		return !anyIn([]string{author}, env.Pool)
-	}
-	return true
 }
 
 // narrowed is whether a listing other than by label reaches what w admits:
 // the pool's (author or assignee pool), the watcher's own (opened-by), or
 // the trigger label's.
 func (w When) narrowed(env Env) bool {
-	if w.Author == "pool" || w.Assignee == "pool" || w.OpenedBy == "watcher" {
+	if w.Author.Is(AuthorPool) || w.Assignee == "pool" || w.OpenedBy == "watcher" {
 		return true
 	}
 	if l := w.Labels; l != nil && env.Trigger != "" {

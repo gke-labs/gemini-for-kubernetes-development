@@ -539,9 +539,10 @@ func (s *Scanner) evaluate(ctx context.Context, prIssue *githubv39.Issue) {
 	// Only a rule that admits the author can decide on the pull request:
 	// factory's all say author: pool (they push to the PR's branch, which
 	// an outside author's fork does not let them), a rule on someone else's
-	// pull request author: not-pool. None: nothing more read.
+	// pull request names the kinds of author it is for. None: nothing more
+	// read.
 	author := pr.GetUser().GetLogin()
-	if !s.rules.Set().AdmitsAuthor(rules.Item{Kind: rules.OnPR, Author: author}, s.rulesEnv()) {
+	if !s.rules.Set().AdmitsAuthor(rules.Item{Kind: rules.OnPR, Author: author, AuthorAssociation: pr.GetAuthorAssociation()}, s.rulesEnv()) {
 		klog.Infof("Skipping PR #%d because it was created by %s, whom no rule admits (factory's need an author in the bot pool)", num, author)
 		return
 	}

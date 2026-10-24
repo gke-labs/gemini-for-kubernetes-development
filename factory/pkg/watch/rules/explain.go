@@ -188,7 +188,9 @@ func factOf(predicate string, it Item, env Env, runs []PastRun) string {
 			return "nobody assigned"
 		}
 		return "assigned " + strings.Join(it.Assignees, ", ")
-	case "author", "opened-by":
+	case "author":
+		return "author " + orNone(it.Author) + " (" + AuthorKind(it, env) + ")"
+	case "opened-by":
 		return "author " + orNone(it.Author)
 	case "last-run":
 		last, ok := lastRun(runs)

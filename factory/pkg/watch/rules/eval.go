@@ -19,9 +19,12 @@ type Item struct {
 
 	Labels    []string
 	Assignees []string
-	// Author opened the item.
-	Author    string
-	UpdatedAt time.Time
+	// Author opened the item; AuthorAssociation is GitHub's word for the
+	// author's standing in the repository (OWNER, MEMBER, COLLABORATOR,
+	// CONTRIBUTOR, NONE...): AuthorKind reads both.
+	Author            string
+	AuthorAssociation string `json:",omitempty"`
+	UpdatedAt         time.Time
 	// Closed is the item closed (a PR merged or closed): a gate.
 	Closed bool
 
@@ -116,6 +119,10 @@ type Env struct {
 	// Watcher is the watcher's own login; Pool the bots it runs as.
 	Watcher string
 	Pool    []string
+	// Members are the logins the overseer trusts (its allowlisted users
+	// and bots, its reviewers): authors of kind member, whatever GitHub
+	// says of them.
+	Members []string `json:",omitempty"`
 	// PRLabels are the labels the configuration adds to a PR a fix opens,
 	// besides the trigger and the issue's ({{pr-labels}}).
 	PRLabels []string
@@ -213,7 +220,7 @@ func (w When) holds(r *Rule, it Item, env Env, runs []PastRun) bool {
 			return false
 		}
 	}
-	if !w.admitsAuthor(it.Author, env) {
+	if !w.admitsAuthor(it, env) {
 		return false
 	}
 	if w.LastRun == "failed" {

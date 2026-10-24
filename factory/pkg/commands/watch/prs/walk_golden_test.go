@@ -256,8 +256,8 @@ func TestEvaluate_ClosedSinceTheListing(t *testing.T) {
 	}
 }
 
-// A rule on someone else's pull request: author: not-pool and a label of
-// the overseer's own. The sweep lists the pull request by that label (one
+// A rule on someone else's pull request: every kind of author but the
+// pool's, and a label of the overseer's own. The sweep lists the pull request by that label (one
 // GraphQL query), the scan reads on past the author, and the rule's task
 // is queued with its recipe, apply and inputs. Without the rule, the same
 // pull request is left at the author, as before.
@@ -267,7 +267,7 @@ func TestEvaluate_RuleOnSomeoneElsesPR(t *testing.T) {
 		t.Fatal(err)
 	}
 	repo, err := rules.LoadFiles(map[string][]byte{
-		"adopt.yaml": []byte("name: adopt\non: pr\norder: 8\nwhen: {author: not-pool, labels: {any: [\"{{trigger}}/adopt\"]}}\nrun: {recipe: adopt, apply: open-pr, inputs: {strategy: reuse}}\npolicy: {dedupe: head}\n"),
+		"adopt.yaml": []byte("name: adopt\non: pr\norder: 8\nwhen: {author: [owner, member, collaborator, external], labels: {any: [\"{{trigger}}/adopt\"]}}\nrun: {recipe: adopt, apply: open-pr, inputs: {strategy: reuse}}\npolicy: {dedupe: head}\n"),
 	})
 	if err != nil {
 		t.Fatal(err)

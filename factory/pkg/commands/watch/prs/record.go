@@ -28,6 +28,7 @@ func (s *Scanner) rulesEnv() rules.Env {
 		Prefixes:            conventions.Prefixes(s.cfg.TriggerLabel),
 		Watcher:             s.cfg.GitHubLogin,
 		Pool:                s.cfg.BotUsers,
+		Members:             s.cfg.TrustedLogins,
 		PRInactivityTimeout: s.cfg.InactivityTimeout,
 		MinNumber:           s.cfg.MinNumber,
 		Now:                 time.Now().UTC(),
@@ -46,13 +47,14 @@ func (s *Scanner) startRecording(prIssue *githubv39.Issue) *rules.Recording {
 // prItemOf is the facts the listing gives of a pull request.
 func prItemOf(prIssue *githubv39.Issue) rules.Item {
 	return rules.Item{
-		Kind:      rules.OnPR,
-		Number:    prIssue.GetNumber(),
-		Labels:    labelNames(prIssue.Labels),
-		Assignees: logins(prIssue.Assignees),
-		Author:    prIssue.GetUser().GetLogin(),
-		UpdatedAt: prIssue.GetUpdatedAt(),
-		Closed:    prIssue.GetState() == "closed",
+		Kind:              rules.OnPR,
+		Number:            prIssue.GetNumber(),
+		Labels:            labelNames(prIssue.Labels),
+		Assignees:         logins(prIssue.Assignees),
+		Author:            prIssue.GetUser().GetLogin(),
+		AuthorAssociation: prIssue.GetAuthorAssociation(),
+		UpdatedAt:         prIssue.GetUpdatedAt(),
+		Closed:            prIssue.GetState() == "closed",
 	}
 }
 
@@ -61,6 +63,9 @@ func prItemOf(prIssue *githubv39.Issue) rules.Item {
 // is closed: the gate, not a stale listing, decides.
 func fillPR(it *rules.Item, pr *githubv39.PullRequest) {
 	it.Author, it.Head, it.Draft, it.Mergeable = pr.GetUser().GetLogin(), pr.GetHead().GetSHA(), pr.GetDraft(), pr.Mergeable
+	if a := pr.GetAuthorAssociation(); a != "" {
+		it.AuthorAssociation = a
+	}
 	it.Closed = it.Closed || pr.GetState() == "closed"
 }
 
