@@ -1,0 +1,42 @@
+# This repository's own rule (not one of factory's): implement an issue's
+# approved plan when a maintainer labels it overseer/implement - the
+# approval: labelling takes triage access, so only maintainers can. The
+# fix-with-plan recipe follows the issue's plan comment (key plan, written
+# by .agents/watch/plan.yaml's runs) and nothing else of the issue, and
+# open-pr opens the PR, ready, with the trigger label (the issue's others
+# follow, inherit-labels). An issue with no plan comment by the overseer's
+# bots fails.
+#
+# The issue's plain fix stays off it (.agents/watch/fix.yaml leaves an
+# issue in the plan flow alone): implement is how a planned issue becomes
+# code. The plan as it is when the label is applied is the one
+# implemented; the PR says which version.
+#
+# The label is a command: the watcher takes it off when the task ends,
+# whatever happened (on-end) - apply it again to implement again (after a
+# failure, or a revised plan).
+name: implement
+description: Implement the approved plan of an issue labelled overseer/implement and open the PR
+on: issue
+order: 16
+when:
+  labels: {any: ["{{trigger}}/implement"]}
+  linked-pr: none
+run:
+  recipe: fix-with-plan
+  apply: open-pr
+  inputs:
+    plan_authors: "{{pool}}"
+    draft: "false"
+    # The trigger alone: the issue's labels at this moment include the
+    # command label, and inherit-labels copies the issue's others onto the
+    # PR on its first evaluation, once the command label is off.
+    labels: "{{trigger}}"
+  on-start:
+    assign: "{{bot}}"         # claim: the bot the task runs as, in the watcher's place
+    unassign: "{{watcher}}"
+    comment: "AI Factory started implementing this issue's plan in a sandbox."
+  on-failure:
+    comment: "Implementing the plan failed; apply the implement label again to retry."
+  on-end:
+    unlabel: ["{{trigger}}/implement"]

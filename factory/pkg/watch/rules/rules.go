@@ -528,7 +528,7 @@ var (
 		OnPR: {"{{closing-issue-assignees}}"},
 	}
 	inputPlaceholders = map[string][]string{
-		"*":     {"{{trigger}}"},
+		"*":     {"{{trigger}}", "{{pool}}"},
 		OnIssue: {"{{pr-labels}}"},
 		OnPR:    {ReviewInstructions},
 	}

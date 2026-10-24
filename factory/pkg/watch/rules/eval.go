@@ -491,6 +491,9 @@ func fillInput(v string, it Item, env Env) string {
 		labels = append(labels, it.Labels...)
 		v = strings.ReplaceAll(v, "{{pr-labels}}", strings.Join(uniqueFold(labels), ","))
 	}
+	// {{pool}}: the overseer's bots, comma-separated - for a recipe to
+	// tell what they wrote from anyone's.
+	v = strings.ReplaceAll(v, "{{pool}}", strings.Join(env.Pool, ","))
 	return fill(v, env)
 }
 
