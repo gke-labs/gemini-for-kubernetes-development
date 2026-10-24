@@ -4,8 +4,9 @@
 # (adopt-pr-<n>) and no agent runs. reimplement has the agent redo the
 # change on the default branch as it is now, from the PR's title,
 # description and diff (adopt-reimplement-pr-<n>). Either way the
-# result's open-pr opens it as your PR, which comments on the original
-# with a link (and closes it, with --close true).
+# result's open-pr opens it as your PR - a draft unless --draft false,
+# with --labels added - which comments on the original with a link (and
+# closes it, with --close true).
 #
 # It runs in the PR's fix sandbox; open-pr aliases that to the new PR, so
 # the adopted PR's care runs there, on its branch. `factory pr adopt
@@ -22,6 +23,11 @@ inputs:
   close:
     description: Close the original PR once adopted, true or false
     default: "false"
+  labels:
+    description: Labels for the adopted PR, comma-separated; open-pr adds them
+  draft:
+    description: Whether open-pr opens the adopted PR as a draft, true or false
+    default: "true"
   instructions:
     type: instructions
     description: Additional instructions the agent must follow (reimplement)
