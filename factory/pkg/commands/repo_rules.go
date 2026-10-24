@@ -12,6 +12,7 @@ import (
 	githubv39 "github.com/google/go-github/v39/github"
 	"k8s.io/klog/v2"
 
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/recipe"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/watch/rules"
@@ -158,13 +159,13 @@ func composeRepoWatchRules(base rules.Set, files map[string][]byte, repoRecipes 
 	return set, append(skipped, more...), len(repoRules), nil
 }
 
-// repoRecipeAs is who owner/repo's own recipes (.agents/recipes) run as, by
-// name, as the repository recipe mode lets them in: augment, the recipes of
+// repoRecipes is what the watch reads of owner/repo's own recipes
+// (.agents/recipes) - who each runs as, its comment key - by name, as the repository recipe mode lets them in: augment, the recipes of
 // names of their own (parseRepoRecipe: author or coder); replace, any
 // (parseReplacingRecipe), a built-in's name included. Off or unset, none.
 // A file that is not such a recipe is left out, with a warning.
-func repoRecipeAs(owner, repo string) func(ctx context.Context) (map[string]string, error) {
-	return func(ctx context.Context) (map[string]string, error) {
+func repoRecipes(owner, repo string) func(ctx context.Context) (map[string]watch.RecipeFacts, error) {
+	return func(ctx context.Context) (map[string]watch.RecipeFacts, error) {
 		mode := repoRecipeMode()
 		if mode == "" || mode == "off" {
 			return nil, nil
@@ -177,17 +178,18 @@ func repoRecipeAs(owner, repo string) func(ctx context.Context) (map[string]stri
 		if err != nil {
 			return nil, err
 		}
-		return recipeAsOf(files, mode, rev), nil
+		return recipeFactsOf(files, mode, rev), nil
 	}
 }
 
-// recipeAsOf is the as of each recipe file the mode lets in, by name.
-func recipeAsOf(files map[string][]byte, mode, rev string) map[string]string {
+// recipeFactsOf is what the watch reads of each recipe file the mode lets
+// in, by name.
+func recipeFactsOf(files map[string][]byte, mode, rev string) map[string]watch.RecipeFacts {
 	parse := parseRepoRecipe
 	if mode == "replace" {
 		parse = parseReplacingRecipe
 	}
-	as := map[string]string{}
+	facts := map[string]watch.RecipeFacts{}
 	for file, data := range files {
 		name, ok := strings.CutSuffix(file, ".yaml")
 		if !ok {
@@ -198,7 +200,7 @@ func recipeAsOf(files map[string][]byte, mode, rev string) map[string]string {
 			klog.Warningf("The repository's recipe %s/%s at %s: %v; left out", repoRecipesDir, file, rev, err)
 			continue
 		}
-		as[name] = rec.As
+		facts[name] = watch.FactsOf(rec)
 	}
-	return as
+	return facts
 }

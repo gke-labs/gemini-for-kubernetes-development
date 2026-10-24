@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"io"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	githubv39 "github.com/google/go-github/v39/github"
 )
@@ -136,6 +138,9 @@ func applyComment(ctx context.Context, gh *githubv39.Client, doc *Document, dryR
 	if err != nil {
 		return err
 	}
+	if doc.Comment != nil && doc.Comment.Key != "" {
+		return applyKeyedComment(ctx, gh, doc, owner, repo, num, comment, what, dryRun, out)
+	}
 	if doc.Source.Task != "" {
 		posted, err := hasComment(ctx, gh, owner, repo, num, marker(doc))
 		if err != nil {
@@ -228,4 +233,97 @@ func parseItemURL(raw string) (owner, repo string, num int, isPR bool, err error
 
 func indent(s string) string {
 	return "  " + strings.ReplaceAll(s, "\n", "\n  ")
+}
+
+// keyMarkerRE is a keyed comment's marker: its key and version.
+var keyMarkerRE = regexp.MustCompile(`<!-- factory:comment key=([a-z][a-z0-9-]*) v=(\d+) -->`)
+
+func keyMarker(key string, version int) string {
+	return fmt.Sprintf("\n\n<!-- factory:comment key=%s v=%d -->", key, version)
+}
+
+// KeyedComment is the newest comment on the item carrying key's marker,
+// by login ("" for anyone's), and its version; nil when there is none.
+func KeyedComment(comments []*githubv39.IssueComment, login, key string) (*githubv39.IssueComment, int) {
+	var found *githubv39.IssueComment
+	version := 0
+	for _, c := range comments {
+		if login != "" && !strings.EqualFold(c.GetUser().GetLogin(), login) {
+			continue
+		}
+		for _, m := range keyMarkerRE.FindAllStringSubmatch(c.GetBody(), -1) {
+			if m[1] != key {
+				continue
+			}
+			if v, _ := strconv.Atoi(m[2]); found == nil || !c.GetCreatedAt().Before(found.GetCreatedAt()) {
+				found, version = c, v
+			}
+		}
+	}
+	return found, version
+}
+
+// applyKeyedComment writes comment as the item's one comment of doc's
+// key: posted the first time, edited by every later task's result, its
+// version counted up in the marker and on its heading line. The same
+// task's result applied again writes nothing.
+func applyKeyedComment(ctx context.Context, gh *githubv39.Client, doc *Document, owner, repo string, num int, comment, what string, dryRun bool, out io.Writer) error {
+	key := doc.Comment.Key
+	me, _, err := gh.Users.Get(ctx, "")
+	if err != nil {
+		return fmt.Errorf("reading who writes the %s comment: %w", what, err)
+	}
+	var comments []*githubv39.IssueComment
+	opts := &githubv39.IssueListCommentsOptions{ListOptions: githubv39.ListOptions{PerPage: 100}}
+	for {
+		page, resp, err := gh.Issues.ListComments(ctx, owner, repo, num, opts)
+		if err != nil {
+			return fmt.Errorf("listing comments on #%d: %w", num, err)
+		}
+		comments = append(comments, page...)
+		if resp == nil || resp.NextPage == 0 {
+			break
+		}
+		opts.Page = resp.NextPage
+	}
+	// The comment to edit is the writer's own: a bot may edit only its
+	// own (the watch runs the next task as the comment's author where it
+	// can). Another's - its author left the pool - is followed by a new
+	// one, numbered on.
+	if newest, _ := KeyedComment(comments, "", key); newest != nil && doc.Source.Task != "" && strings.Contains(newest.GetBody(), strings.TrimSpace(marker(doc))) {
+		fmt.Fprintf(out, "The %s of task %s is already on %s; not commenting again\n", what, doc.Source.Task, doc.Target.URL)
+		return nil
+	}
+	existing, version := KeyedComment(comments, me.GetLogin(), key)
+	if existing == nil {
+		_, version = KeyedComment(comments, "", key)
+	}
+	version++
+	heading, rest, _ := strings.Cut(comment, "\n")
+	body := heading + fmt.Sprintf(" · v%d · updated %s", version, time.Now().UTC().Format("2006-01-02 15:04 UTC"))
+	if rest != "" {
+		body += "\n" + rest
+	}
+	body = withSessionHint(ctx, body) + keyMarker(key, version) + marker(doc)
+	if existing == nil {
+		fmt.Fprintf(out, "%s the %s (v%d) on %s:\n%s\n", doing(dryRun, "Commenting", "comment"), what, version, doc.Target.URL, indent(comment))
+		if dryRun {
+			return nil
+		}
+		if _, _, err := gh.Issues.CreateComment(ctx, owner, repo, num, &githubv39.IssueComment{Body: &body}); err != nil {
+			return fmt.Errorf("posting the %s comment: %w", what, err)
+		}
+		return nil
+	}
+	fmt.Fprintf(out, "%s the %s comment on %s to v%d:\n%s\n", doing(dryRun, "Updating", "update"), what, doc.Target.URL, version, indent(comment))
+	if dryRun {
+		return nil
+	}
+	if _, _, err := gh.Issues.EditComment(ctx, owner, repo, existing.GetID(), &githubv39.IssueComment{Body: &body}); err != nil {
+		fmt.Fprintf(out, "Updating the %s comment failed (%v); posting v%d as a new one\n", what, err, version)
+		if _, _, err := gh.Issues.CreateComment(ctx, owner, repo, num, &githubv39.IssueComment{Body: &body}); err != nil {
+			return fmt.Errorf("posting the %s comment: %w", what, err)
+		}
+	}
+	return nil
 }

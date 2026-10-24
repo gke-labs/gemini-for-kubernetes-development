@@ -3,12 +3,16 @@ package watch
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
+
+	githubv39 "github.com/google/go-github/v39/github"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/api"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/k8s"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/recipe"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/taskoutput"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/klog/v2"
 )
@@ -87,7 +91,18 @@ func (w *Watcher) selectUserForTask(ctx context.Context, taskType api.TaskType, 
 				}
 			}
 
-			// B. Fallback to GitHub issue assignee check
+			// B. The author of the issue's comment of the recipe's comment
+			// key (its plan, say), when one of the pool: the bot that can
+			// edit it. Read only for a recipe with a key, and only when no
+			// sandbox pinned the bot.
+			if key := w.recipeFacts(recipeName).CommentKey; key != "" {
+				if author := w.keyedCommentAuthor(ctx, prNum, key); author != "" && slices.ContainsFunc(roleCfg.Users, func(u string) bool { return strings.EqualFold(u, author) }) {
+					klog.Infof("Pinned user '%s' for issue #%d: it wrote the issue's %s comment", author, prNum, key)
+					return author, nil
+				}
+			}
+
+			// C. Fallback to GitHub issue assignee check
 			issue, _, err := w.ghClient.Issues.Get(ctx, w.Repo.Owner, w.Repo.Repo, prNum)
 			if err == nil {
 				for _, a := range issue.Assignees {
@@ -193,11 +208,53 @@ func (w *Watcher) recipeAs(name string) string {
 	if name == "" {
 		return ""
 	}
-	if as, ok := w.repoRecipeAs[name]; ok {
-		return as
+	return w.recipeFacts(name).As
+}
+
+// keyedCommentAuthor is who wrote the newest comment on #num of key
+// (taskoutput.KeyedComment), or "".
+func (w *Watcher) keyedCommentAuthor(ctx context.Context, num int, key string) string {
+	if w.ghClient == nil {
+		return ""
+	}
+	var comments []*githubv39.IssueComment
+	opts := &githubv39.IssueListCommentsOptions{ListOptions: githubv39.ListOptions{PerPage: 100}}
+	for {
+		page, resp, err := w.ghClient.Issues.ListComments(ctx, w.Repo.Owner, w.Repo.Repo, num, opts)
+		if err != nil {
+			klog.Warningf("Reading #%d's comments for its %s comment's author: %v", num, key, err)
+			return ""
+		}
+		comments = append(comments, page...)
+		if resp == nil || resp.NextPage == 0 {
+			break
+		}
+		opts.Page = resp.NextPage
+	}
+	c, _ := taskoutput.KeyedComment(comments, "", key)
+	return c.GetUser().GetLogin()
+}
+
+// recipeFacts are the repository's recipe of that name's when the watch
+// read one, else factory's; none for no recipe.
+func (w *Watcher) recipeFacts(name string) RecipeFacts {
+	if name == "" {
+		return RecipeFacts{}
+	}
+	if f, ok := w.repoRecipes[name]; ok {
+		return f
 	}
 	if _, rec, err := recipe.Builtin(name); err == nil {
-		return rec.As
+		return FactsOf(rec)
 	}
-	return ""
+	return RecipeFacts{}
+}
+
+// FactsOf is what the watch reads of rec.
+func FactsOf(rec *recipe.Recipe) RecipeFacts {
+	f := RecipeFacts{As: rec.As}
+	if to := rec.TaskOutput; to != nil && to.Comment != nil {
+		f.CommentKey = to.Comment.Key
+	}
+	return f
 }
