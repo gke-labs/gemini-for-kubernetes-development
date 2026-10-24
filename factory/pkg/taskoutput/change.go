@@ -16,6 +16,10 @@ import (
 
 	githubv39 "github.com/google/go-github/v39/github"
 	"gopkg.in/yaml.v3"
+
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/conventions"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/feedback"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
 )
 
 // Change is a Change document's spec: commits a fix pushed to a branch of
@@ -62,6 +66,32 @@ type Change struct {
 	// changed since, rather than overwrite someone's edit with text written
 	// against the old ones.
 	Was string `yaml:"was,omitempty"`
+	// Feedback is what the task was handed to address (address-comments'
+	// comments.json): factory's, never the agent's. post-replies marks each
+	// resolved once the replies are posted.
+	Feedback []FeedbackRef `yaml:"feedback,omitempty"`
+}
+
+// FeedbackRef names one piece of PR feedback: a conversation comment, a
+// review body (reached by node ID) or an inline review comment.
+type FeedbackRef struct {
+	Kind   string `yaml:"kind" json:"kind"`
+	ID     int64  `yaml:"id" json:"id"`
+	NodeID string `yaml:"nodeId,omitempty" json:"nodeId,omitempty"`
+}
+
+// FeedbackFile is the task-directory file address-comments' feedback is
+// handed in: a JSON list of feedback.Item.
+const FeedbackFile = "comments.json"
+
+// SetFeedback puts on a Change the feedback its task was handed.
+func (d *Document) SetFeedback(refs []FeedbackRef) error {
+	c, err := d.changeSpec()
+	if err != nil {
+		return err
+	}
+	c.Feedback = refs
+	return d.setSpec(c)
 }
 
 // prTextHash is a PR's title and body, as compared across a task: trimmed,
@@ -235,8 +265,9 @@ func parseChange(raw string) (any, error) {
 	if c == nil {
 		return nil, fmt.Errorf("no change: block")
 	}
-	// The push step's, not the agent's.
+	// The push step's and factory's, not the agent's.
 	c.Fork, c.Branch, c.Base = "", "", ""
+	c.Feedback = nil
 	c.Title = strings.TrimSpace(c.Title)
 	c.Body = strings.TrimSpace(c.Body)
 	c.Report = strings.TrimSpace(c.Report)
@@ -562,15 +593,17 @@ func transient(err error) bool {
 // linking it (GitHub has no threads there), and the report as a PR
 // comment. Each carries a marker of the task and the comment it answers,
 // so a retried apply posts nothing twice. It then reruns the checks the
-// Change asks to (applyReruns). A Change with none of these — a start's —
-// posts nothing.
+// Change asks to (applyReruns). Then it marks the feedback the
+// task was handed resolved (the watch's 👍, conventions.ReactionResolved),
+// so neither `factory pr watch` nor the next Address comments picks it up
+// again. A Change with none of these — a start's — posts nothing.
 func applyPostReplies(ctx context.Context, gh *githubv39.Client, doc *Document, dryRun bool, out io.Writer) error {
 	c, err := doc.ChangeSpec()
 	if err != nil {
 		return err
 	}
-	if len(c.Replies) == 0 && c.Report == "" && len(c.Rerun) == 0 && len(c.Rewrites) == 0 {
-		fmt.Fprintln(out, "The Change has no replies, report, reruns or rewrites; nothing to post")
+	if len(c.Replies) == 0 && c.Report == "" && len(c.Rerun) == 0 && len(c.Rewrites) == 0 && len(c.Feedback) == 0 {
+		fmt.Fprintln(out, "The Change has no replies, report, reruns, rewrites or feedback; nothing to post")
 		return nil
 	}
 	owner, repo, num, err := prTarget(doc)
@@ -590,7 +623,21 @@ func applyPostReplies(ctx context.Context, gh *githubv39.Client, doc *Document, 
 	if err := postReport(ctx, gh, doc, owner, repo, num, c.Report, dryRun, out); err != nil {
 		return err
 	}
-	return applyReruns(ctx, gh, doc, owner, repo, num, c.Rerun, dryRun, out)
+	if err := applyReruns(ctx, gh, doc, owner, repo, num, c.Rerun, dryRun, out); err != nil {
+		return err
+	}
+	if len(c.Feedback) == 0 {
+		return nil
+	}
+	fmt.Fprintf(out, "%s %d piece(s) of feedback on %s addressed (%s)\n", doing(dryRun, "Marking", "mark"), len(c.Feedback), doc.Target.URL, conventions.ReactionResolved)
+	if dryRun {
+		return nil
+	}
+	items := make([]feedback.Item, len(c.Feedback))
+	for i, f := range c.Feedback {
+		items[i] = feedback.Item{Kind: feedback.Kind(f.Kind), ID: f.ID, NodeID: f.NodeID}
+	}
+	return feedback.React(ctx, github.ForRepo(gh, owner, repo), items, conventions.ReactionResolved)
 }
 
 func postReport(ctx context.Context, gh *githubv39.Client, doc *Document, owner, repo string, num int, report string, dryRun bool, out io.Writer) error {
