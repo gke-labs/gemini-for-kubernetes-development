@@ -45,15 +45,16 @@ start:
     - uses: checkout-default-branch
     - uses: configure-engine
     # The plan to revise rather than start over: the issue's plan comment
-    # (the one comment of key plan, task-output below), else the one a
-    # previous run left in the sandbox.
-    - run: |
-        gh api --paginate "repos/${INPUT_REPO_OWNER}/${INPUT_REPO_NAME}/issues/${INPUT_ISSUE_NUMBER}/comments?per_page=100" \
-          --jq '.[] | select(.body | test("<!-- factory:comment key=plan v=[0-9]+ -->")) | .body | @base64' \
-          | tail -n 1 | base64 -d \
-          | sed -e '1{/^\*\*Implementation plan\*\*/d;}' -e '/^<!-- factory:/d' -e '/^<sub>🤖 \[Agent session\]/d' \
-          > "$TASK_DIR/prior-plan.md" || true
-        test -s "$TASK_DIR/prior-plan.md" || cp "/workspaces/plan-issue-${INPUT_ISSUE_NUMBER}.md" "$TASK_DIR/prior-plan.md" 2>/dev/null || touch "$TASK_DIR/prior-plan.md"
+    # (the one comment of key plan, task-output below), by a pool bot or a
+    # maintainer - anyone else's carrying the marker is not the plan - else
+    # the one a previous run left in the sandbox.
+    - uses: keyed-comment
+      with:
+        key: plan
+        authors: pool, owner, member, collaborator
+        to: prior-plan.md
+        optional: "true"
+    - run: test -s "$TASK_DIR/prior-plan.md" || cp "/workspaces/plan-issue-${INPUT_ISSUE_NUMBER}.md" "$TASK_DIR/prior-plan.md" 2>/dev/null || true
 
     - ask: |
         Investigate this issue. Do not write the plan yet.

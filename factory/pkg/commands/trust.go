@@ -2,6 +2,8 @@ package commands
 
 import (
 	"fmt"
+	"slices"
+	"strings"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/config"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
@@ -19,6 +21,24 @@ func trustedLogins(cfg *config.FactoryConfig, extra ...string) []string {
 			out = append(out, l)
 		}
 	}
+	return out
+}
+
+// poolLogins are the bots of the factory config's roles: the overseer's
+// pool (rules' author kind pool).
+func poolLogins(cfg *config.FactoryConfig) []string {
+	if cfg == nil {
+		return nil
+	}
+	var out []string
+	for _, role := range cfg.Roles {
+		for _, u := range role.Users {
+			if u != "" && !slices.ContainsFunc(out, func(o string) bool { return strings.EqualFold(o, u) }) {
+				out = append(out, u)
+			}
+		}
+	}
+	slices.Sort(out)
 	return out
 }
 

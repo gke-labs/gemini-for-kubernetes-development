@@ -1,0 +1,199 @@
+# factory recipe fix-with-plan --url <issue> [--apply]:
+# implement an issue's approved plan, in the issue's sandbox. The plan is
+# the issue's plan comment (the one comment of key plan that
+# .agents/recipes/plan.yaml writes and every plan run updates), and only a
+# comment by a pool bot or a maintainer counts (the keyed-comment step,
+# authors: the watch rules' author kinds): anyone else's carrying the
+# marker is not the plan. No plan comment fails the task.
+#
+# The agent gets the plan, not the issue's description or comments: the
+# plan is what a maintainer approved (overseer/implement,
+# .agents/watch/implement.yaml), refined against the issue's comments
+# before. Otherwise it is fix: the agent commits and never pushes, the
+# push step pushes the branch to the member's fork, and the Change's
+# open-pr opens the PR, which says which plan version it implements.
+name: fix-with-plan
+timeout: 3h
+on: [issue]
+as: coder
+task-type: fix
+
+inputs:
+  labels:
+    description: Labels for the PR, comma-separated; open-pr adds them
+  draft:
+    description: Whether open-pr opens the PR as a draft, true or false
+    default: "true"
+  instructions:
+    type: instructions
+    description: Additional instructions the agent must follow
+
+context: |
+  You are an automated coding agent. You fix GitHub issues; your commits
+  become a pull request that a human maintainer reviews.
+
+  You commit, and that is all you write. Do NOT run `git push`, do NOT
+  open, edit or comment on pull requests or issues, and do NOT add labels:
+  when you are done, factory pushes your commits to the member's fork and
+  opens the pull request from what you write.
+
+  The repository is checked out in the current directory, on the branch
+  you work on, made from the latest default branch. The git remote "origin" is the member's
+  fork, "upstream" the repository. `gh` is authenticated, to read issues
+  and pull requests. Do not run `git config --global`: in this environment
+  it overwrites /dev/null and breaks git for the rest of the run.
+
+start:
+  steps:
+    - uses: setup-git
+    - uses: setup-fork
+    - run: sleep 5 # lib.sh's HACK: avoid git lock issues
+    - uses: configure-engine
+    - uses: checkout-default-branch
+    # The branch the push step pushes, and the upstream commit it starts
+    # from.
+    - run: |
+        git checkout -B "issue-${INPUT_ISSUE_NUMBER}-$(date +%s)"
+        git symbolic-ref --short HEAD > "$TASK_DIR/branch"
+        git rev-parse HEAD > "$TASK_DIR/base"
+    # The plan: the issue's comment of key plan, by a pool bot or a
+    # maintainer (the watch rules' author kinds) - anyone else's carrying
+    # the marker is not the plan - to $TASK_DIR/plan.md, its version to
+    # plan.md.version. None fails the task: plan it first (overseer/plan).
+    - uses: keyed-comment
+      with:
+        key: plan
+        authors: pool, owner, member, collaborator
+        to: plan.md
+
+    - ask: |
+        Implement the approved plan for this GitHub issue, and commit it.
+
+        <issue_url>{{ .Inputs.issue_url }}</issue_url>
+        <issue_number>{{ .Inputs.issue_number }}</issue_number>
+        <issue_title>{{ .Inputs.issue_title }}</issue_title>
+
+        A maintainer reviewed and approved this implementation plan (version
+        {{ file "plan.md.version" }}): it is your specification. Follow it. Do
+        not read the issue's description or comments - the plan is what was
+        agreed, refined against them. Where the code shows a step to be
+        wrong, deviate, and say where and why in your summary.
+        <approved_plan>
+        {{ file "plan.md" }}
+        </approved_plan>
+        {{- with .Inputs.instructions }}
+        Additional instructions you MUST follow:
+        <instructions>
+        {{ . }}
+        </instructions>
+        {{ end }}
+        1. Where the plan references other issues or PRs, read those
+           (`gh issue view <n>`, `gh pr view <n>`) for the details it
+           points at.
+        2. Make the change, and test it.
+        3. Commit it.
+
+        Good PR hygiene:
+        * Only implement the plan. Do not make unrelated changes or
+          cleanups. A good PR implements one idea.
+        * Keep the commit history clean: structure your commits well,
+          separating changes to different modules or generated code into
+          separate commits. No excessive, tiny or transient commits: use
+          `git commit --amend` or `git commit --fixup` for minor fixes to
+          earlier work, and prefer rebasing to merging.
+        * If you end up with many commits (more than 10) or hundreds of
+          files touched, stop and ask yourself whether the history is
+          clean; squash or rebase if it is not.
+        * Do not commit large binary files or build artifacts. Clean up
+          what builds and tests leave behind (`make clean` if there is one)
+          before committing.
+        * In each commit body, add a line like "Issue: {{ .Inputs.issue_number }}", but not as
+          the first line.
+        {{- if eq .Inputs.disclose "true" }}
+        * Commit messages may say that an agent wrote the change.
+        {{- else }}
+        * Do not say anywhere — commit messages or files — that an agent or
+          AI wrote this, and do not add Co-authored-by or similar trailers.
+        {{- end }}
+        * The year is 2026. Copyright headers on new files use 2026.
+        * Remember: commit, never push.
+
+        If you get stuck, commit what you have and say so: the pull request
+        will be marked work in progress, and people on GitHub may have
+        suggestions.
+
+        If the right answer is to change nothing (the issue is already
+        fixed on the default branch, is not a bug, duplicates another, or
+        needs a decision only a maintainer can make), do not commit
+        anything to have something to show: make no commit, and say why.
+        Never commit a change whose purpose is to close or reject the
+        issue.
+
+        When you are done, summarise the design decisions you made: the
+        rationale behind your changes, and the alternatives you
+        considered. This summary is for the human reviewer.
+
+    - ask: |
+        Now write the pull request's title and description to the file
+        {{ output "change.yaml" }}, as YAML in EXACTLY this structure, with
+        nothing else in the file:
+
+        change:
+          title: "A brief title, like a commit subject, in double quotes"
+          body: |
+            A brief description of what the change does and why, for the
+            reviewer.
+
+            Implements plan v{{ file "plan.md.version" }} (the issue's plan comment).
+
+            Fixes #{{ .Inputs.issue_number }}
+
+        If you made no commit because nothing should change, write instead,
+        in EXACTLY this structure:
+
+        change:
+          comment: |
+            Why nothing should change, for the issue's maintainers: what
+            you checked, what you found (the commit or PR that already
+            fixed it, the duplicate, the decision a maintainer must make),
+            and what would need to be true for a change to be right.
+
+        It is posted on the issue, and no pull request is opened.
+
+        Rules:
+        - The body MUST contain a line of exactly the form
+          `Fixes #{{ .Inputs.issue_number }}`, on its own line, with nothing between `Fixes`
+          and the number. Always `Fixes`: "resolves Issue #{{ .Inputs.issue_number }}" or a bare
+          "#{{ .Inputs.issue_number }}" does not close the issue when the PR merges.
+        - If you could not finish, start the title with "[WIP]" and say in
+          the body what is left.
+        {{- if eq .Inputs.disclose "true" }}
+        - The body states that this pull request was generated by an AI
+          coding agent.
+        {{- else }}
+        - Do not say anywhere that an agent or AI wrote this.
+        {{- end }}
+
+        Write the whole file with your file tool (if it refuses the path, with
+        the shell), replacing anything in it, then say in a line that it is
+        written.
+      expects: change.yaml
+
+    - uses: push
+
+outputs:
+  - change.yaml
+
+task-output:
+  kind: Change
+  # Applied by a board's runner when the run ends.
+  on-finish: open-pr
+  from: change.yaml
+  preview: spec.body
+  actions:
+    - verb: edit
+      field: spec
+      format: yaml
+    - verb: open-pr
+      label: Open draft PR
+    - verb: reject
