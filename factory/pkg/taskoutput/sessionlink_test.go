@@ -26,6 +26,18 @@ func TestSessionLink(t *testing.T) {
 		}
 	})
 
+	t.Run("an issue comment (triage, plan, summary) ends with it, before the marker", func(t *testing.T) {
+		doc := triageDoc(t, "recipe-triage-1")
+		f := &fakeGitHub{}
+		var out bytes.Buffer
+		if err := ApplyAction(ctx, f.client(t), doc, "comment", false, &out); err != nil {
+			t.Fatal(err)
+		}
+		if len(f.comments) != 1 || !strings.HasSuffix(f.comments[0], "\n\n"+hint+marker(doc)) {
+			t.Errorf("comments = %q", f.comments)
+		}
+	})
+
 	t.Run("replies and the report end with it, once", func(t *testing.T) {
 		const answers = "change:\n  replies:\n    - inReplyTo: 100\n      body: Moved it.\n    - inReplyTo: 200\n      body: Done, it does now.\n  report: All addressed.\n"
 		doc := prChange(t, answers)

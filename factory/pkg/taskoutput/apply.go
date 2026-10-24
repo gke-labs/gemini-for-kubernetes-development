@@ -136,7 +136,7 @@ func applyComment(ctx context.Context, gh *githubv39.Client, doc *Document, dryR
 	if dryRun {
 		return nil
 	}
-	body := comment + marker(doc)
+	body := withSessionHint(ctx, comment) + marker(doc)
 	if _, _, err := gh.Issues.CreateComment(ctx, owner, repo, num, &githubv39.IssueComment{Body: &body}); err != nil {
 		return fmt.Errorf("posting the %s comment: %w", what, err)
 	}
@@ -151,6 +151,12 @@ func PlanComment(p *Plan) string {
 // TriageComment is the comment a triage is published as.
 func TriageComment(t *Triage) string {
 	body := fmt.Sprintf("**Triage assessment**\n\n%s", t.Assessment)
+	if t.Priority != "" {
+		body += fmt.Sprintf("\n\nPriority: %s", t.Priority)
+	}
+	if len(t.Labels) > 0 {
+		body += "\n\nSuggested labels: `" + strings.Join(t.Labels, "`, `") + "`"
+	}
 	if len(t.Duplicates) > 0 {
 		var refs []string
 		for _, d := range t.Duplicates {
