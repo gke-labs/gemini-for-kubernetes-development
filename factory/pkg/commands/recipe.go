@@ -394,8 +394,8 @@ func runRecipeIn(ctx context.Context, opts recipeRunOpts, recipeArg, itemURL, ru
 		return fmt.Errorf("recipe %s is in no session (session:); every run of it opens a new conversation", rec.Name)
 	}
 
-	// The process's own client: an overseer's, which labels its fixes'
-	// PRs where the bot that opens them may not (--pr-labels).
+	// The process's own client: an overseer's, which labels the PRs its
+	// Changes open where the bot that opens them may not (labelsAsSelf).
 	ownClient := ghClient
 	kubeClient, err := clients.NewKubernetesClient()
 	if err != nil {
@@ -497,9 +497,9 @@ func runRecipeIn(ctx context.Context, opts recipeRunOpts, recipeArg, itemURL, ru
 			return fmt.Errorf("--pr-labels is for a recipe whose Change opens a PR for an issue")
 		}
 		inputs["labels"] = mergeLabels(inputs["labels"], resolvePRLabels(cfg, issue, true))
-		if apply.asUser {
-			ctx = taskoutput.WithLabeler(ctx, ownClient)
-		}
+	}
+	if labelsAsSelf(apply, rec) {
+		ctx = taskoutput.WithLabeler(ctx, ownClient)
 	}
 	if rec.TaskOutput != nil && rec.TaskOutput.Kind == "Change" && pr != nil {
 		// A Change on a PR continues it: the PR's head stands in for the
@@ -1152,6 +1152,15 @@ func resumeNamedRun(ctx context.Context, sb taskapi.Sandbox, gh *githubv39.Clien
 }
 
 // applyMode is what --apply, --dry-run and --action ask of a recipe run.
+// labelsAsSelf is whether the PR a Change's open-pr opens is labelled as
+// this process rather than as the account the task runs as: when that is
+// another (--user, an overseer's pool bot), which may open its PR from its
+// fork but not label the repository's - fix's --pr-labels and any Change
+// with a labels input (adopt's) alike.
+func labelsAsSelf(apply applyMode, rec *recipe.Recipe) bool {
+	return apply.asUser && rec != nil && rec.TaskOutput != nil && rec.TaskOutput.Kind == "Change"
+}
+
 type applyMode struct {
 	on, dryRun bool
 	// verb is the one action to apply; empty, each write offered.
