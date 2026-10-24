@@ -1,10 +1,15 @@
 # This repository's own rule (not one of factory's): adopt a pull request
-# someone outside the pool opened, once a maintainer labels it
+# someone outside the pool opened, when a maintainer labels it
 # overseer/adopt. The adopt recipe with strategy reuse takes the PR's
 # commits as they are onto a branch of a pool coder's fork (no agent runs)
-# and open-pr opens it as the pool's PR, commenting on the original with a
-# link. The label is in the overseer's own namespace, so the watch lists
-# PRs by it (factory #2100); author: not-pool keeps the pool's own PRs out.
+# and open-pr opens it as the pool's PR, ready for review and labelled with
+# the trigger, commenting on the original with a link. The label is in the
+# overseer's own namespace, so the watch lists PRs by it; author: not-pool
+# keeps the pool's own PRs out.
+#
+# The label is a command: the watcher takes it off when the task ends,
+# whatever happened (on-end), so each label is one try - apply it again to
+# adopt again (after a failure, or once the adopted PR was closed).
 name: adopt
 description: Adopt a PR someone outside the pool opened, labelled overseer/adopt (strategy reuse)
 on: pr
@@ -21,6 +26,7 @@ run:
     # adopted PR (comments, ci, ready) like any of the pool's
     draft: "false"
     labels: "{{trigger}}"
-policy:
-  # once per head of the original PR: a new push to it adopts again
-  dedupe: head
+  on-failure:
+    comment: "Adopting this PR failed; apply the adopt label again to retry."
+  on-end:
+    unlabel: ["{{trigger}}/adopt"]
