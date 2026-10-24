@@ -37,6 +37,29 @@ func Task(task *api.QueueTask, d rules.Decision, r *rules.Rule) {
 		task.Phase = api.TaskPhase(d.Phase)
 	}
 	Declare(task, r)
+	Hooks(task, d.Hooks)
+}
+
+// Hooks stamps the writes the watcher makes at points of the task's life
+// (the rule's run.on-* hooks, filled in for the item): when it is decided,
+// and again when it starts, on the facts read then.
+func Hooks(task *api.QueueTask, h rules.HookWrites) {
+	task.OnStart, task.OnSuccess, task.OnFailure, task.OnEnd = taskWrites(h.OnStart), taskWrites(h.OnSuccess), taskWrites(h.OnFailure), taskWrites(h.OnEnd)
+}
+
+// HookWrites is a task's stamped writes as rules.Writes, for ApplyWrites.
+func HookWrites(tw *api.TaskWrites) rules.Writes {
+	if tw == nil {
+		return rules.Writes{}
+	}
+	return rules.Writes{Label: tw.Label, Unlabel: tw.Unlabel, Assign: tw.Assign, Unassign: tw.Unassign, Comment: tw.Comment, Stop: tw.Stop}
+}
+
+func taskWrites(w rules.Writes) *api.TaskWrites {
+	if len(w.Label)+len(w.Unlabel)+len(w.Assign)+len(w.Unassign) == 0 && w.Comment == "" && !w.Stop {
+		return nil
+	}
+	return &api.TaskWrites{Label: w.Label, Unlabel: w.Unlabel, Assign: w.Assign, Unassign: w.Unassign, Comment: w.Comment, Stop: w.Stop}
 }
 
 // Declare puts what the rule's task does on GitHub as it starts and ends

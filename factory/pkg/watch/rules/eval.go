@@ -144,6 +144,9 @@ type Decision struct {
 	// Writes are the GitHub writes, placeholders filled in and only what
 	// changes something.
 	Writes Writes
+	// Hooks are a recipe run's lifecycle hooks (Run.OnStart, OnSuccess,
+	// OnFailure, OnEnd), filled in for the item as Writes are.
+	Hooks HookWrites
 }
 
 // What a decision does.
@@ -525,7 +528,7 @@ func resolveWrites(run Run, it Item, env Env) Writes {
 		}
 	}
 	for _, a := range assignees(run.Unassign, it, env) {
-		if anyIn(it.Assignees, []string{a}) && !anyIn(w.Unassign, []string{a}) {
+		if (a == Bot || anyIn(it.Assignees, []string{a})) && !anyIn(w.Unassign, []string{a}) {
 			w.Unassign = append(w.Unassign, a)
 		}
 	}
@@ -539,6 +542,33 @@ func resolveWrites(run Run, it Item, env Env) Writes {
 	return w
 }
 
+// Bot is the bot a task runs as, in an on-start hook's assign or
+// unassign: known when the task starts, filled in by the watcher then.
+const Bot = "{{bot}}"
+
+// HookWrites are a recipe run's lifecycle hooks filled in for an item.
+type HookWrites struct {
+	OnStart, OnSuccess, OnFailure, OnEnd Writes
+}
+
+// Hooks are rule's hooks filled in for the item: what a decision on it
+// carries, and what the watcher fills in again when the task starts, on
+// the facts read then. {{bot}} stays for the watcher to fill in.
+func Hooks(r *Rule, it Item, env Env) HookWrites {
+	var h HookWrites
+	if r == nil {
+		return h
+	}
+	fill := func(hook *Hook) Writes {
+		if hook == nil {
+			return Writes{}
+		}
+		return resolveWrites(hook.run(), it, env)
+	}
+	h.OnStart, h.OnSuccess, h.OnFailure, h.OnEnd = fill(r.Run.OnStart), fill(r.Run.OnSuccess), fill(r.Run.OnFailure), fill(r.Run.OnEnd)
+	return h
+}
+
 // assignees fills in an assign or unassign.
 func assignees(v string, it Item, env Env) []string {
 	switch v {
@@ -546,6 +576,9 @@ func assignees(v string, it Item, env Env) []string {
 		return nil
 	case "{{watcher}}":
 		return []string{env.Watcher}
+	case Bot:
+		// Filled in by the watcher when the task starts.
+		return []string{Bot}
 	case "{{pool}}":
 		var out []string
 		for _, a := range it.Assignees {

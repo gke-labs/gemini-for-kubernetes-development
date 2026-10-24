@@ -206,6 +206,19 @@ type Run struct {
 	Claim        bool   `yaml:"claim,omitempty" json:"claim,omitempty"`
 	Acknowledge  string `yaml:"acknowledge,omitempty" json:"acknowledge,omitempty"`
 	StartComment string `yaml:"start-comment,omitempty" json:"start-comment,omitempty"`
+	// The lifecycle hooks: the watcher's writes at points of the recipe's
+	// task's life. OnStart when it starts (after claim; {{bot}} is the bot
+	// it runs as); OnSuccess when it completed (its apply included);
+	// OnFailure when it failed (a step, its result or its apply) - the only
+	// hook that may stop the item; OnEnd either way, after OnSuccess or
+	// OnFailure. A task dropped before it starts runs none; one a restart
+	// interrupts ends when it really does. A rule whose trigger is a label
+	// it takes off when done is a command: applying the label again runs it
+	// again.
+	OnStart   *Hook `yaml:"on-start,omitempty" json:"on-start,omitempty"`
+	OnSuccess *Hook `yaml:"on-success,omitempty" json:"on-success,omitempty"`
+	OnFailure *Hook `yaml:"on-failure,omitempty" json:"on-failure,omitempty"`
+	OnEnd     *Hook `yaml:"on-end,omitempty" json:"on-end,omitempty"`
 
 	// GitHub writes, done by the watcher.
 	Label    []string `yaml:"label,omitempty" json:"label,omitempty"`
@@ -218,6 +231,31 @@ type Run struct {
 	// Drop drops the item's queued tasks, from the queue and again at
 	// dispatch.
 	Drop bool `yaml:"drop,omitempty" json:"drop,omitempty"`
+}
+
+// Hook is GitHub writes the watcher makes at a point of a recipe task's
+// life (Run.OnStart, OnSuccess, OnFailure, OnEnd): a rule's writes but
+// drop; stop only on failure.
+type Hook struct {
+	Label    []string `yaml:"label,omitempty" json:"label,omitempty"`
+	Unlabel  []string `yaml:"unlabel,omitempty" json:"unlabel,omitempty"`
+	Comment  string   `yaml:"comment,omitempty" json:"comment,omitempty"`
+	Assign   string   `yaml:"assign,omitempty" json:"assign,omitempty"`
+	Unassign string   `yaml:"unassign,omitempty" json:"unassign,omitempty"`
+	Stop     *Stop    `yaml:"stop,omitempty" json:"stop,omitempty"`
+}
+
+// run is the hook as a Run's writes, for resolveWrites.
+func (h *Hook) run() Run {
+	if h == nil {
+		return Run{}
+	}
+	return Run{Label: h.Label, Unlabel: h.Unlabel, Comment: h.Comment, Assign: h.Assign, Unassign: h.Unassign, Stop: h.Stop}
+}
+
+// hooks are the run's hooks by name, as a rule file writes them.
+func (r Run) hooks() map[string]*Hook {
+	return map[string]*Hook{"on-start": r.OnStart, "on-success": r.OnSuccess, "on-failure": r.OnFailure, "on-end": r.OnEnd}
 }
 
 // Stop is the give-up action: the stop label and a comment.
@@ -550,6 +588,22 @@ func (r *Rule) checkPlaceholders() error {
 	if err := check("run.assign", assigneePlaceholders, r.Run.Assign, r.Run.Unassign); err != nil {
 		return err
 	}
+	for name, h := range r.Run.hooks() {
+		if h == nil {
+			continue
+		}
+		if err := check("run."+name+".label", labelPlaceholders, append(slices.Clone(h.Label), h.Unlabel...)...); err != nil {
+			return err
+		}
+		assign := assigneePlaceholders
+		if name == "on-start" {
+			// The bot the task runs as is known when it starts.
+			assign = map[string][]string{"*": append(slices.Clone(assigneePlaceholders["*"]), Bot), OnPR: assigneePlaceholders[OnPR]}
+		}
+		if err := check("run."+name+".assign", assign, h.Assign, h.Unassign); err != nil {
+			return err
+		}
+	}
 	inputs := make([]string, 0, len(r.Run.Inputs))
 	for _, v := range r.Run.Inputs {
 		inputs = append(inputs, v)
@@ -590,8 +644,11 @@ func (r *Rule) Validate() error {
 		return fail("run.%v", err)
 	}
 	switch {
-	case r.Run.Recipe == "" && (r.Run.Claim || r.Run.Acknowledge != "" || r.Run.StartComment != ""):
-		return fail("run.claim, acknowledge and start-comment are a recipe's task's")
+	case r.Run.Recipe == "" && (r.Run.Claim || r.Run.Acknowledge != "" || r.Run.StartComment != "" ||
+		r.Run.OnStart != nil || r.Run.OnSuccess != nil || r.Run.OnFailure != nil || r.Run.OnEnd != nil):
+		return fail("run.claim, acknowledge, start-comment and the on-* hooks are a recipe's task's")
+	case r.Run.OnStart != nil && r.Run.OnStart.Stop != nil, r.Run.OnSuccess != nil && r.Run.OnSuccess.Stop != nil, r.Run.OnEnd != nil && r.Run.OnEnd.Stop != nil:
+		return fail("run: only on-failure may stop the item")
 	case r.Run.Claim && r.On != OnIssue:
 		return fail("run.claim is for a rule on issues")
 	case r.Run.Acknowledge != "" && r.On != OnPR:

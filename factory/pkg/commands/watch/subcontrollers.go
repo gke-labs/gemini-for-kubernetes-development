@@ -12,6 +12,7 @@ import (
 	githubv39 "github.com/google/go-github/v39/github"
 	"k8s.io/klog/v2"
 
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/act"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/api"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/chores"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/concurrency"
@@ -517,6 +518,55 @@ func (w *Watcher) inPool(as, user string) bool {
 	return false
 }
 
+// endWrites makes the writes the task's rule declares for its end: on
+// success when it completed, on failure when it failed, then on end
+// either way.
+func (c *watcherTaskCoordinator) endWrites(ctx context.Context, task *api.QueueTask, taskErr error) {
+	outcome, hook := "on-success", task.OnSuccess
+	if taskErr != nil {
+		outcome, hook = "on-failure", task.OnFailure
+	}
+	c.hookWrites(ctx, task, outcome, hook)
+	c.hookWrites(ctx, task, "on-end", task.OnEnd)
+}
+
+// hookWrites makes a lifecycle hook's writes on the task's item - as the
+// watcher, which may label and assign where the task's bot may only
+// comment - {{bot}} being the bot the task runs as. A stop withdraws the
+// item's pending tasks, as a rule's does.
+func (c *watcherTaskCoordinator) hookWrites(ctx context.Context, task *api.QueueTask, name string, tw *api.TaskWrites) {
+	w := c.w
+	if tw == nil || task.Number <= 0 || w.repoClient == nil {
+		return
+	}
+	writes := act.HookWrites(tw)
+	bot := func(logins []string) []string {
+		var out []string
+		for _, l := range logins {
+			if l == rules.Bot {
+				l = task.Assignee
+			}
+			if l != "" {
+				out = append(out, l)
+			}
+		}
+		return out
+	}
+	writes.Assign, writes.Unassign = bot(writes.Assign), bot(writes.Unassign)
+	mode := w.IssueMode
+	if api.IsPRTask(task.Type) {
+		mode = w.PRMode
+	}
+	dry := w.loopDryRun(mode)
+	done := act.ApplyWrites(ctx, w.repoClient, task.Number, writes, w.triggerLabel, dry)
+	klog.Infof("#%d: %s's task %s: %+v (%+v)", task.Number, task.Rule, name, writes, done)
+	if writes.Stop && !dry && w.queueMgr != nil {
+		if err := w.queueMgr.RemovePendingTasksForNumber(task.Number); err != nil {
+			klog.Warningf("Withdrawing the pending tasks of #%d after %s's stop: %v", task.Number, name, err)
+		}
+	}
+}
+
 // NotifyTaskStarted does on GitHub what the task's rule declares for its
 // start (act.Declare): claims the issue for its bot, acknowledges the
 // feedback it answers, posts its start comment.
@@ -537,6 +587,9 @@ func (c *watcherTaskCoordinator) NotifyTaskStarted(ctx context.Context, task *ap
 			}
 		}
 	}
+
+	// The rule's on-start hook: after the claim, so {{bot}} is assigned.
+	c.hookWrites(ctx, task, "on-start", task.OnStart)
 
 	// A comments task acknowledges the feedback it answers now that it
 	// starts, not when it was queued: one dropped before it starts leaves
@@ -568,6 +621,7 @@ func (c *watcherTaskCoordinator) NotifyTaskStarted(ctx context.Context, task *ap
 // task whose rule acknowledges feedback.
 func (c *watcherTaskCoordinator) NotifyTaskFinished(ctx context.Context, task *api.QueueTask, taskErr error) {
 	w := c.w
+	c.endWrites(ctx, task, taskErr)
 	if task.Acknowledge != rules.AcknowledgeFeedback || w.cfg == nil {
 		return
 	}
