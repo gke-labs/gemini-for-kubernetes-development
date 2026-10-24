@@ -77,6 +77,19 @@ func TestEndWrites(t *testing.T) {
 	}
 	mu.Unlock()
 
+	// Run as the watcher itself (no pool bot): claimed, not unassigned.
+	mu.Lock()
+	calls = nil
+	mu.Unlock()
+	self := &api.QueueTask{Type: api.TypeIssueRule, Number: 7, Rule: "fix", Assignee: "watcher-bot",
+		OnStart: &api.TaskWrites{Assign: []string{"{{bot}}"}, Unassign: []string{"watcher-bot"}}}
+	coordinator.hookWrites(context.Background(), self, "on-start", self.OnStart)
+	mu.Lock()
+	if !slices.Equal(calls, []string{"POST /repos/test-owner/test-repo/issues/7/assignees"}) {
+		t.Errorf("claim as the watcher: calls %v", calls)
+	}
+	mu.Unlock()
+
 	// A task declaring nothing makes no call.
 	mu.Lock()
 	calls = nil

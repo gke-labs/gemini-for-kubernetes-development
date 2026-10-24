@@ -29,7 +29,9 @@ when:
   workflow: any
 run:
   recipe: workflow
-  claim: true
+  on-start:
+    assign: "{{bot}}"         # claim: the bot the task runs as, in the watcher's place
+    unassign: "{{watcher}}"
 policy:
   cooldown: {success: "{{workflow-cooldown}}", failure: 20m}
   phase: 4

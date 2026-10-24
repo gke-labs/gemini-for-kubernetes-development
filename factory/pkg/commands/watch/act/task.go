@@ -70,5 +70,5 @@ func Declare(task *api.QueueTask, r *rules.Rule) {
 	if r == nil {
 		return
 	}
-	task.Claim, task.Acknowledge, task.StartComment = r.Run.Claim, r.Run.Acknowledge, r.Run.StartComment
+	task.Acknowledge = r.Run.Acknowledge
 }

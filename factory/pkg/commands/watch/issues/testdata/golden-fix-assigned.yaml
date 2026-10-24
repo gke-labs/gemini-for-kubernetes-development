@@ -11,8 +11,10 @@ task:
     triggerNotes: 'Issue #9 created by someone at 2026-10-20T10:00:00Z; trigger label ''factory'' auto-applied by watcher'
     assignee: bot1
     status: Pending
-    claim: true
-    startComment: "\U0001F916 AI Factory started fixing this issue in a sandbox."
+    onStart:
+        assign:
+            - '{{bot}}'
+        comment: AI Factory started fixing this issue in a sandbox.
     rule: fix
     recipe: fix
     apply: open-pr

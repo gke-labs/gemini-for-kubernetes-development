@@ -133,12 +133,9 @@ type QueueTask struct {
 	CommitSHA    string   `yaml:"commitSHA,omitempty"`
 	RetryCount   int      `yaml:"retryCount,omitempty"`
 	Instructions []string `yaml:"instructions,omitempty"`
-	// Claim, Acknowledge and StartComment are what the task does on GitHub
-	// as it starts and ends, the rule's (rules.Run): assign the issue to
-	// its bot, acknowledge the feedback it answers, post a comment.
-	Claim        bool   `yaml:"claim,omitempty"`
-	Acknowledge  string `yaml:"acknowledge,omitempty"`
-	StartComment string `yaml:"startComment,omitempty"`
+	// Acknowledge is whether the watcher acknowledges the feedback the task
+	// answers as it starts and ends (the rule's run.acknowledge).
+	Acknowledge string `yaml:"acknowledge,omitempty"`
 	// OnStart, OnSuccess, OnFailure and OnEnd are what the watcher writes
 	// on GitHub at points of the task's life: when it starts, when it
 	// completed, when it failed, and when it ended either way (the rule's

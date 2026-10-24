@@ -16,7 +16,7 @@
 #
 # An issue without the trigger label gets it when its task is queued
 # (applyTriggerLabel), and the coder the dispatcher picks is assigned when
-# the task starts (the claim, which unassigns the watcher). Adoption wrote
+# the task starts (the claim, on-start below, unassigning the watcher). Adoption wrote
 # the same two things earlier - the label, and the watcher as a parking
 # assignee - so an issue the watcher opened is tracked like a labelled
 # one and is this rule's, rather than a rule of its own.
@@ -44,8 +44,10 @@ run:
   inputs:
     draft: "false"
     labels: "{{pr-labels}}"
-  claim: true
-  start-comment: "🤖 AI Factory started fixing this issue in a sandbox."
+  on-start:
+    assign: "{{bot}}"         # claim: the bot the task runs as, in the watcher's place
+    unassign: "{{watcher}}"
+    comment: "AI Factory started fixing this issue in a sandbox."
 policy:
   dedupe: update
   cooldown: {success: 10m, failure: 20m}

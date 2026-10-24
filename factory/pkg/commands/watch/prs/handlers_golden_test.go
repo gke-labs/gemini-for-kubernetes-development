@@ -89,7 +89,8 @@ func TestHandlersQueueTheSameTasks(t *testing.T) {
 				}
 			}
 			r := set.Named(rule)
-			s.engineCare = []rules.Decision{{Rule: rule, Kind: rules.OnPR, Number: 10, Outcome: rules.OutcomeRun, Recipe: r.Run.Recipe, Apply: r.Run.Apply, Inputs: r.Run.Inputs, Phase: r.Policy.Phase}}
+			s.engineCare = []rules.Decision{{Rule: rule, Kind: rules.OnPR, Number: 10, Outcome: rules.OutcomeRun, Recipe: r.Run.Recipe, Apply: r.Run.Apply, Inputs: r.Run.Inputs, Phase: r.Policy.Phase,
+				Hooks: rules.Hooks(r, rules.Item{Kind: rules.OnPR, Number: 10}, s.rulesEnv())}}
 			s.rec = s.startRecording(prIssue)
 			pc := &prContext{pr: pr, prIssue: prIssue, headSHA: "0123456789abcdef", shortSHA: "0123456", lastCommitTime: commit,
 				taskAssignee: "bot1", prURL: "https://github.com/test-owner/test-repo/pull/10",

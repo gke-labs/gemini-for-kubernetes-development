@@ -197,18 +197,13 @@ type Run struct {
 	Apply  string            `yaml:"apply,omitempty" json:"apply,omitempty"`
 	Inputs map[string]string `yaml:"inputs,omitempty" json:"inputs,omitempty"`
 
-	// What the recipe's task does on GitHub as it starts and ends, made by
-	// the watcher. Claim (issues) assigns the issue to the task's bot when
-	// it starts, in the watcher's place. Acknowledge feedback (PRs) marks
-	// the feedback the task answers as seen when it starts, and resolved
-	// or failed when it ends. StartComment is posted on the item when it
-	// starts.
-	Claim        bool   `yaml:"claim,omitempty" json:"claim,omitempty"`
-	Acknowledge  string `yaml:"acknowledge,omitempty" json:"acknowledge,omitempty"`
-	StartComment string `yaml:"start-comment,omitempty" json:"start-comment,omitempty"`
+	// Acknowledge feedback (PRs) marks the feedback the recipe's task
+	// answers as seen when it starts, and resolved or failed when it ends,
+	// made by the watcher.
+	Acknowledge string `yaml:"acknowledge,omitempty" json:"acknowledge,omitempty"`
 	// The lifecycle hooks: the watcher's writes at points of the recipe's
-	// task's life. OnStart when it starts (after claim; {{bot}} is the bot
-	// it runs as); OnSuccess when it completed (its apply included);
+	// task's life. OnStart when it starts ({{bot}} is the bot it runs as:
+	// assign it and unassign {{watcher}} to claim the item); OnSuccess when it completed (its apply included);
 	// OnFailure when it failed (a step, its result or its apply) - the only
 	// hook that may stop the item; OnEnd either way, after OnSuccess or
 	// OnFailure. A task dropped before it starts runs none; one a restart
@@ -644,13 +639,11 @@ func (r *Rule) Validate() error {
 		return fail("run.%v", err)
 	}
 	switch {
-	case r.Run.Recipe == "" && (r.Run.Claim || r.Run.Acknowledge != "" || r.Run.StartComment != "" ||
+	case r.Run.Recipe == "" && (r.Run.Acknowledge != "" ||
 		r.Run.OnStart != nil || r.Run.OnSuccess != nil || r.Run.OnFailure != nil || r.Run.OnEnd != nil):
-		return fail("run.claim, acknowledge, start-comment and the on-* hooks are a recipe's task's")
+		return fail("run.acknowledge and the on-* hooks are a recipe's task's")
 	case r.Run.OnStart != nil && r.Run.OnStart.Stop != nil, r.Run.OnSuccess != nil && r.Run.OnSuccess.Stop != nil, r.Run.OnEnd != nil && r.Run.OnEnd.Stop != nil:
 		return fail("run: only on-failure may stop the item")
-	case r.Run.Claim && r.On != OnIssue:
-		return fail("run.claim is for a rule on issues")
 	case r.Run.Acknowledge != "" && r.On != OnPR:
 		return fail("run.acknowledge is for a rule on pull requests")
 	}
