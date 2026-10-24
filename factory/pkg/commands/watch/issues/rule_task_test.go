@@ -141,8 +141,9 @@ func TestQueueTasks_RepositoryRuleWaitsForTheSandbox(t *testing.T) {
 
 // A command rule - reached by a label of its own, for outside authors - is
 // queued on an outside author's issue without the trigger label going on
-// it: that would point fix at the issue too. A member's issue is not the
-// rule's.
+// it: that would point fix at the issue too. An open PR closing the issue
+// does not hold it back (linked-pr is fix's predicate, not a gate). A
+// member's issue is not the rule's.
 func TestQueueTasks_CommandLabelRule(t *testing.T) {
 	base, err := rules.Builtin()
 	if err != nil {
@@ -199,7 +200,7 @@ func TestQueueTasks_CommandLabelRule(t *testing.T) {
 				Labels:            []*githubv39.Label{{Name: githubv39.String("factory/triage")}},
 				User:              &githubv39.User{Login: githubv39.String("erin")},
 				AuthorAssociation: githubv39.String(tc.association),
-			}}, map[int]bool{})
+			}}, map[int]bool{7: true}) // an open PR closes it: fix's gate, not the rule's
 			task, queued := queue.enqueued["task-issue-7-rule-triage-external.yaml"]
 			if queued != tc.queued {
 				t.Fatalf("queued %v, want %v: %v", queued, tc.queued, queue.enqueued)

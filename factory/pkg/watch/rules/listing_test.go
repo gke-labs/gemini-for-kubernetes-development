@@ -168,3 +168,26 @@ func TestAuthorValidation(t *testing.T) {
 		}
 	}
 }
+
+// An open PR closing an issue holds back every prebaked rule on issues
+// that would act on it - fix, workflow, workflow-missing - by their own
+// linked-pr: none, the scanner's gate before.
+func TestLinkedPRHoldsPrebakedIssueRules(t *testing.T) {
+	set, err := Builtin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, it := range []Item{
+		{Kind: OnIssue, Number: 7, Labels: []string{"overseer"}},
+		{Kind: OnIssue, Number: 8, Labels: []string{"overseer"}, Workflow: "kcc-x", WorkflowMissing: true},
+		{Kind: OnIssue, Number: 9, Labels: []string{"overseer"}, Workflow: "kcc-x"},
+	} {
+		if got := names(set.Decide(it, testEnv)); len(got) == 0 {
+			t.Fatalf("#%d: nothing decided without a linked PR", it.Number)
+		}
+		it.LinkedPR = "open"
+		if got := names(set.Decide(it, testEnv)); len(got) > 0 {
+			t.Errorf("#%d with an open linked PR: decided %v", it.Number, got)
+		}
+	}
+}
