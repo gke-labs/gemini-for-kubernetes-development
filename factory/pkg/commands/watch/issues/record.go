@@ -27,6 +27,7 @@ func (s *Scanner) rulesEnv() rules.Env {
 		Prefixes:  conventions.Prefixes(s.cfg.TriggerLabel),
 		Watcher:   s.cfg.GitHubLogin,
 		Pool:      s.cfg.BotUsers,
+		Members:   s.cfg.TrustedLogins,
 		MinNumber: s.cfg.MinNumber,
 		Now:       time.Now().UTC(),
 	}
@@ -44,14 +45,15 @@ func (s *Scanner) startRecording(issue *githubv39.Issue) *rules.Recording {
 // issueItemOf is the facts the listing gives of an issue.
 func (s *Scanner) issueItemOf(issue *githubv39.Issue) rules.Item {
 	return rules.Item{
-		Kind:         rules.OnIssue,
-		Number:       issue.GetNumber(),
-		Labels:       labelNames(issue.Labels),
-		Assignees:    logins(issue.Assignees),
-		Author:       issue.GetUser().GetLogin(),
-		UpdatedAt:    issue.GetUpdatedAt(),
-		Closed:       issue.GetState() == "closed",
-		FanoutParent: conventions.HasFanoutLabel(issue.Labels, s.cfg.TriggerLabel),
+		Kind:              rules.OnIssue,
+		Number:            issue.GetNumber(),
+		Labels:            labelNames(issue.Labels),
+		Assignees:         logins(issue.Assignees),
+		Author:            issue.GetUser().GetLogin(),
+		AuthorAssociation: issue.GetAuthorAssociation(),
+		UpdatedAt:         issue.GetUpdatedAt(),
+		Closed:            issue.GetState() == "closed",
+		FanoutParent:      conventions.HasFanoutLabel(issue.Labels, s.cfg.TriggerLabel),
 	}
 }
 

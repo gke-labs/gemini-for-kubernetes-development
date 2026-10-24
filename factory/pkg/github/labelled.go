@@ -17,7 +17,7 @@ const openPRsLabelledQuery = `query($owner: String!, $repo: String!, $labels: [S
       pageInfo { hasNextPage endCursor }
       nodes {
         number title createdAt updatedAt url
-        author { __typename login }
+        author { __typename login } authorAssociation
         labels(first: 100) { nodes { name } }
         assignees(first: 50) { nodes { login } }
       }
@@ -52,7 +52,10 @@ func (c *Client) OpenPRsLabelled(ctx context.Context, labels []string) ([]*githu
 						UpdatedAt time.Time `json:"updatedAt"`
 						URL       string    `json:"url"`
 						Author    *gqlActor `json:"author"`
-						Labels    gqlList[struct {
+						// AuthorAssociation is the REST author_association's
+						// value (OWNER, MEMBER, CONTRIBUTOR...).
+						AuthorAssociation string `json:"authorAssociation"`
+						Labels            gqlList[struct {
 							Name string `json:"name"`
 						}] `json:"labels"`
 						Assignees gqlList[struct {
@@ -68,14 +71,15 @@ func (c *Client) OpenPRsLabelled(ctx context.Context, labels []string) ([]*githu
 		prs := data.Repository.PullRequests
 		for _, n := range prs.Nodes {
 			issue := &githubv39.Issue{
-				Number:           githubv39.Int(n.Number),
-				Title:            githubv39.String(n.Title),
-				State:            githubv39.String("open"),
-				HTMLURL:          githubv39.String(n.URL),
-				User:             restUser(n.Author),
-				CreatedAt:        timePtr(n.CreatedAt),
-				UpdatedAt:        timePtr(n.UpdatedAt),
-				PullRequestLinks: &githubv39.PullRequestLinks{HTMLURL: githubv39.String(n.URL)},
+				Number:            githubv39.Int(n.Number),
+				Title:             githubv39.String(n.Title),
+				State:             githubv39.String("open"),
+				HTMLURL:           githubv39.String(n.URL),
+				User:              restUser(n.Author),
+				AuthorAssociation: githubv39.String(n.AuthorAssociation),
+				CreatedAt:         timePtr(n.CreatedAt),
+				UpdatedAt:         timePtr(n.UpdatedAt),
+				PullRequestLinks:  &githubv39.PullRequestLinks{HTMLURL: githubv39.String(n.URL)},
 			}
 			for _, l := range n.Labels.Nodes {
 				issue.Labels = append(issue.Labels, &githubv39.Label{Name: githubv39.String(l.Name)})

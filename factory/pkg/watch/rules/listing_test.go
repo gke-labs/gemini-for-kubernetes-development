@@ -2,6 +2,7 @@ package rules
 
 import (
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -22,13 +23,13 @@ func TestListingLabels(t *testing.T) {
 	}
 	repo, err := LoadFiles(map[string][]byte{
 		// One label: listed by it.
-		"adopt.yaml": []byte("name: adopt\non: pr\norder: 8\nwhen: {author: not-pool, labels: {any: [\"{{trigger}}/adopt\"]}}\nrun: {recipe: adopt, apply: open-pr}\n"),
+		"adopt.yaml": []byte("name: adopt\non: pr\norder: 8\nwhen: {author: [owner, member, collaborator, external], labels: {any: [\"{{trigger}}/adopt\"]}}\nrun: {recipe: adopt, apply: open-pr}\n"),
 		// The trigger label too: the trigger listing reaches it.
-		"both.yaml": []byte("name: both\non: pr\norder: 9\nwhen: {author: not-pool, labels: {all: [\"{{trigger}}\", \"{{trigger}}/look\"]}}\nrun: {recipe: review, apply: submit-review}\n"),
+		"both.yaml": []byte("name: both\non: pr\norder: 9\nwhen: {author: [owner, member, collaborator, external], labels: {all: [\"{{trigger}}\", \"{{trigger}}/look\"]}}\nrun: {recipe: review, apply: submit-review}\n"),
 		// */x, a gate and a hand-over label, an alternative's label.
 		"star.yaml": []byte("name: star\non: pr\norder: 45\nwhen: {labels: {all: [\"*/review\", \"*/stop\"], none: [\"*/ready-for-human\"]}, any-of: [{labels: {any: [overseer/extra]}}, {author: pool}]}\nrun: {recipe: review, apply: submit-review}\n"),
 		// Outside the namespace: nothing listed, so unlisted.
-		"bug.yaml": []byte("name: bug\non: pr\norder: 46\nwhen: {author: not-pool, labels: {any: [bug]}}\nrun: {recipe: review, apply: submit-review}\n"),
+		"bug.yaml": []byte("name: bug\non: pr\norder: 46\nwhen: {author: [owner, member, collaborator, external], labels: {any: [bug]}}\nrun: {recipe: review, apply: submit-review}\n"),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -50,9 +51,9 @@ func TestListingLabels(t *testing.T) {
 	}
 }
 
-// author: not-pool admits who author: pool does not, and a set admits an
-// author when one of its rules does.
-func TestAuthorNotPool(t *testing.T) {
+// Every kind of author but the pool's admits who author: pool does not,
+// and a set admits an author when one of its rules does.
+func TestAuthorAnyButPool(t *testing.T) {
 	base, err := Builtin()
 	if err != nil {
 		t.Fatal(err)
@@ -63,7 +64,7 @@ func TestAuthorNotPool(t *testing.T) {
 		t.Error("factory's rules admit the wrong authors")
 	}
 	repo, err := LoadFiles(map[string][]byte{
-		"adopt.yaml": []byte("name: adopt\non: pr\norder: 8\nwhen: {author: not-pool, labels: {any: [\"{{trigger}}/adopt\"]}}\nrun: {recipe: adopt, apply: open-pr}\n"),
+		"adopt.yaml": []byte("name: adopt\non: pr\norder: 8\nwhen: {author: [owner, member, collaborator, external], labels: {any: [\"{{trigger}}/adopt\"]}}\nrun: {recipe: adopt, apply: open-pr}\n"),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -73,11 +74,11 @@ func TestAuthorNotPool(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !set.AdmitsAuthor(human, testEnv) {
-		t.Error("a not-pool rule does not admit an outside author")
+		t.Error("a rule for every author but the pool's does not admit an outside author")
 	}
 	only := Set{set.Named("adopt")}
 	if only.AdmitsAuthor(bot, testEnv) {
-		t.Error("author: not-pool admits a pool author")
+		t.Error("a rule for every author but the pool's admits a pool author")
 	}
 	mergeable := true
 	pr := Item{Kind: OnPR, Number: 5, Author: "alice", Labels: []string{"overseer/adopt"}, Head: "abc", Mergeable: &mergeable}
@@ -96,4 +97,74 @@ func names(ds []Decision) []string {
 		out = append(out, d.Rule)
 	}
 	return out
+}
+
+// Each author is one kind, the first that applies: the pool's, then by
+// GitHub's association, a login the overseer trusts a member whatever
+// GitHub says, anyone else external.
+func TestAuthorKind(t *testing.T) {
+	env := testEnv
+	env.Members = []string{"Carol"}
+	for _, tc := range []struct {
+		author, association, want string
+	}{
+		{"ada-coder-bot", "MEMBER", AuthorPool},
+		{"alice", "OWNER", AuthorOwner},
+		{"bob", "MEMBER", AuthorMember},
+		{"carol", "CONTRIBUTOR", AuthorMember},
+		{"carol", "OWNER", AuthorOwner},
+		{"dan", "COLLABORATOR", AuthorCollaborator},
+		{"erin", "CONTRIBUTOR", AuthorExternal},
+		{"frank", "FIRST_TIME_CONTRIBUTOR", AuthorExternal},
+		{"grace", "NONE", AuthorExternal},
+		{"heidi", "", AuthorExternal},
+	} {
+		if got := AuthorKind(Item{Author: tc.author, AuthorAssociation: tc.association}, env); got != tc.want {
+			t.Errorf("%s (%s): %s, want %s", tc.author, tc.association, got, tc.want)
+		}
+	}
+
+	set, err := LoadFiles(map[string][]byte{
+		"members.yaml": []byte("name: members\non: pr\norder: 8\nwhen: {author: [owner, member], labels: {any: [\"{{trigger}}/look\"]}}\nrun: {recipe: review, apply: submit-review}\n"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		author, association string
+		admits              bool
+	}{
+		{"bob", "MEMBER", true},
+		{"carol", "CONTRIBUTOR", true},
+		{"dan", "COLLABORATOR", false},
+		{"erin", "NONE", false},
+		{"ada-coder-bot", "MEMBER", false},
+	} {
+		if got := Set(set).AdmitsAuthor(Item{Kind: OnPR, Author: tc.author, AuthorAssociation: tc.association}, env); got != tc.admits {
+			t.Errorf("author: [owner, member] admits %s (%s): %t", tc.author, tc.association, got)
+		}
+	}
+}
+
+// author is one kind or a list of them, each once.
+func TestAuthorValidation(t *testing.T) {
+	for _, tc := range []struct {
+		when, err string
+	}{
+		{"{author: pool}", ""},
+		{"{author: [owner, external]}", ""},
+		{"{author: not-pool}", `author: "not-pool" is not one of`},
+		{"{author: [member, member]}", "member is given twice"},
+	} {
+		r, err := Parse([]byte("name: x\non: pr\norder: 8\nwhen: " + tc.when + "\nrun: {recipe: review, apply: submit-review}\n"))
+		if err == nil {
+			err = r.Validate()
+		}
+		switch {
+		case tc.err == "" && err != nil:
+			t.Errorf("%s: %v", tc.when, err)
+		case tc.err != "" && (err == nil || !strings.Contains(err.Error(), tc.err)):
+			t.Errorf("%s: error %v, want %q", tc.when, err, tc.err)
+		}
+	}
 }

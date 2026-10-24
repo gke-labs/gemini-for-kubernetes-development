@@ -331,7 +331,11 @@ func decisionText(d rules.Decision) string {
 
 // factsLine is the item's facts that the rules read, on one line.
 func factsLine(it rules.Item) string {
-	parts := []string{"author " + orDash(it.Author)}
+	author := "author " + orDash(it.Author)
+	if it.AuthorAssociation != "" {
+		author += " (" + strings.ToLower(it.AuthorAssociation) + ")"
+	}
+	parts := []string{author}
 	if len(it.Labels) > 0 {
 		parts = append(parts, "labels "+strings.Join(it.Labels, ", "))
 	}

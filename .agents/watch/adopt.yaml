@@ -4,8 +4,8 @@
 # commits as they are onto a branch of a pool coder's fork (no agent runs)
 # and open-pr opens it as the pool's PR, ready for review and labelled with
 # the trigger, commenting on the original with a link. The label is in the
-# overseer's own namespace, so the watch lists PRs by it; author: not-pool
-# keeps the pool's own PRs out.
+# overseer's own namespace, so the watch lists PRs by it; author, every
+# kind but pool, keeps the pool's own PRs out.
 #
 # The label is a command: the watcher takes it off when the task ends,
 # whatever happened (on-end), so each label is one try - apply it again to
@@ -15,7 +15,7 @@ description: Adopt a PR someone outside the pool opened, labelled overseer/adopt
 on: pr
 order: 8
 when:
-  author: not-pool
+  author: [owner, member, collaborator, external]
   labels: {any: ["{{trigger}}/adopt"]}
 run:
   recipe: adopt

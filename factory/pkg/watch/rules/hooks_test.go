@@ -13,7 +13,7 @@ func TestHooks(t *testing.T) {
 	r, err := Parse([]byte(`name: adopt
 on: pr
 order: 8
-when: {author: not-pool, labels: {any: ["{{trigger}}/adopt"]}}
+when: {author: [owner, member, collaborator, external], labels: {any: ["{{trigger}}/adopt"]}}
 run:
   recipe: adopt
   apply: open-pr

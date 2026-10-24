@@ -53,8 +53,8 @@ const (
 	DefaultReuseFor = 30 * time.Second
 
 	// stateVersion is the persisted snapshot's format. A different one is
-	// treated as no snapshot.
-	stateVersion = 1
+	// treated as no snapshot. 2: items keep their author_association.
+	stateVersion = 2
 )
 
 // Lister is the GitHub call a Store makes. *github.Client implements it.
@@ -488,15 +488,16 @@ func (s *Store) sortedBots() []string {
 // reduce keeps what the scanners read of an item.
 func reduce(item *githubv39.Issue) *githubv39.Issue {
 	r := &githubv39.Issue{
-		Number:           item.Number,
-		Title:            item.Title,
-		Body:             item.Body,
-		State:            item.State,
-		HTMLURL:          item.HTMLURL,
-		CreatedAt:        item.CreatedAt,
-		UpdatedAt:        item.UpdatedAt,
-		ClosedAt:         item.ClosedAt,
-		PullRequestLinks: item.PullRequestLinks,
+		Number:            item.Number,
+		Title:             item.Title,
+		Body:              item.Body,
+		State:             item.State,
+		HTMLURL:           item.HTMLURL,
+		CreatedAt:         item.CreatedAt,
+		UpdatedAt:         item.UpdatedAt,
+		ClosedAt:          item.ClosedAt,
+		PullRequestLinks:  item.PullRequestLinks,
+		AuthorAssociation: item.AuthorAssociation,
 	}
 	if u := item.User; u != nil {
 		r.User = &githubv39.User{Login: u.Login, Type: u.Type}

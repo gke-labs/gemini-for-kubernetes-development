@@ -94,7 +94,7 @@ func TestExplain(t *testing.T) {
 
 func TestWhenString(t *testing.T) {
 	f := false
-	w := When{Author: "pool", Fanout: &f, AnyOf: []When{{Feedback: "new-trusted"}, {LastRun: "failed"}}}
+	w := When{Author: Authors{"pool"}, Fanout: &f, AnyOf: []When{{Feedback: "new-trusted"}, {LastRun: "failed"}}}
 	if got, want := w.String(), "author: pool, fanout: false, any-of: [{feedback: new-trusted}, {last-run: failed}]"; got != want {
 		t.Errorf("String = %q\nwant       %q", got, want)
 	}
