@@ -590,6 +590,9 @@ func (r *Recipe) validate(sandbox bool) error {
 		if to.Preview != "" && !taskoutput.PreviewRE.MatchString(to.Preview) {
 			return fmt.Errorf("task-output: preview %q must name a spec field, such as spec.body", to.Preview)
 		}
+		if c := to.Comment; c != nil && c.Key != "" && !taskoutput.CommentKeyRE.MatchString(c.Key) {
+			return fmt.Errorf("task-output: comment key %q is not lowercase letters, digits and dashes, starting with a letter", c.Key)
+		}
 		for _, a := range to.Actions {
 			if a.Verb == "run" && !takesFrom(r, a.Run, to.Kind) {
 				return fmt.Errorf("task-output: action run %s: recipe %s has no input from a %s", a.Run, a.Run, to.Kind)

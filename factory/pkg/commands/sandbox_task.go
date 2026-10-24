@@ -386,6 +386,7 @@ func readTaskOutput(ctx context.Context, sb taskapi.Sandbox, e spool.Entry) ([]b
 	}
 	doc.Actions = decl.Actions
 	doc.Preview = decl.Preview
+	doc.Comment = decl.Comment
 	return taskoutput.Marshal(doc)
 }
 

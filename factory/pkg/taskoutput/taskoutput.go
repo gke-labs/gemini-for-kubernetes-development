@@ -55,6 +55,8 @@ type Decl struct {
 	Optional bool     `yaml:"optional,omitempty" json:"optional,omitempty"`
 	Actions  []Action `yaml:"actions,omitempty" json:"actions,omitempty"`
 	Preview  string   `yaml:"preview,omitempty" json:"preview,omitempty"`
+	// Comment says how the comment action writes the result.
+	Comment *CommentOptions `yaml:"comment,omitempty" json:"comment,omitempty"`
 	// OnFinish is the one action whoever runs the recipe for a board
 	// applies when the run ends (fix's open-pr, review's post-review): an
 	// apply action the result offers. Unset, the result waits for a
@@ -80,7 +82,20 @@ type Document struct {
 	// line or two, as its recipe declared it; unset, its edit action's
 	// field when that is markdown.
 	Preview string `yaml:"preview,omitempty" json:"preview,omitempty"`
+	// Comment is its recipe's Decl.Comment.
+	Comment *CommentOptions `yaml:"comment,omitempty" json:"comment,omitempty"`
 }
+
+// CommentOptions say how the comment action writes a result. With a Key,
+// the item has one comment of that key: the first apply posts it, every
+// later one - another task's result - edits it, numbering the versions
+// (KeyedComment).
+type CommentOptions struct {
+	Key string `yaml:"key,omitempty" json:"key,omitempty"`
+}
+
+// CommentKeyRE is what a comment key may be.
+var CommentKeyRE = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 
 // Target is the issue, PR or repository the result is about.
 type Target struct {
@@ -399,7 +414,7 @@ func Refresh(taskDir, from string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	doc.Actions, doc.Preview = frame.Actions, frame.Preview
+	doc.Actions, doc.Preview, doc.Comment = frame.Actions, frame.Preview, frame.Comment
 	out, err := Marshal(doc)
 	if err != nil {
 		return false, err

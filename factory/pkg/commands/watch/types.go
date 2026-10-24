@@ -112,13 +112,13 @@ type Watcher struct {
 	// they came from ("" for none) - pkg/commands' repoWatchRules. Nil,
 	// factory's rules alone. Read once, when the watch starts.
 	RepoRules func(ctx context.Context, base rules.Set) (rules.Set, string, error)
-	// RepoRecipeAs is who the repository's own recipes (.agents/recipes)
-	// run as, by name, as the repository recipe mode lets them in
-	// (pkg/commands' repoRecipeAs). Nil, factory's recipes alone. Read once,
-	// when the watch starts.
-	RepoRecipeAs func(ctx context.Context) (map[string]string, error)
+	// RepoRecipes is what the watch reads of the repository's own recipes
+	// (.agents/recipes), by name, as the repository recipe mode lets them
+	// in (pkg/commands' repoRecipes). Nil, factory's recipes alone. Read
+	// once, when the watch starts.
+	RepoRecipes func(ctx context.Context) (map[string]RecipeFacts, error)
 
-	repoRecipeAs map[string]string
+	repoRecipes  map[string]RecipeFacts
 	cfg          *config.FactoryConfig
 	triggerLabel string
 	// prListingLabels are the labels the PR listings add for the rules the
@@ -205,7 +205,7 @@ func (w *Watcher) initComponents() {
 	w.warmWorkspace = w.newWarmWorkspaceController()
 	w.reconciler = w.newReconciler()
 	w.chores = w.newChoreScheduler()
-	w.repoRecipeAs = w.loadRepoRecipeAs()
+	w.repoRecipes = w.loadRepoRecipes()
 	w.rulesControl = w.newRulesControl()
 	w.prListingLabels = w.ruleListingLabels(rules.OnPR)
 	w.issueListingLabels = w.ruleListingLabels(rules.OnIssue)
@@ -267,21 +267,29 @@ func (w *Watcher) newRulesControl() *rules.Control {
 	return c
 }
 
-// loadRepoRecipeAs reads who the repository's recipes run as
-// (RepoRecipeAs); none, with a warning, when that fails: their tasks then
-// run as their type's role.
-func (w *Watcher) loadRepoRecipeAs() map[string]string {
-	if w.RepoRecipeAs == nil {
+// RecipeFacts are what the watch reads of a recipe: who it runs as, and
+// the key of the one comment its result is written as (its
+// task-output.comment.key; "" for none).
+type RecipeFacts struct {
+	As         string
+	CommentKey string
+}
+
+// loadRepoRecipes reads the repository's recipes (RepoRecipes); none,
+// with a warning, when that fails: their tasks then run as their type's
+// role.
+func (w *Watcher) loadRepoRecipes() map[string]RecipeFacts {
+	if w.RepoRecipes == nil {
 		return nil
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
-	as, err := w.RepoRecipeAs(ctx)
+	facts, err := w.RepoRecipes(ctx)
 	if err != nil {
-		klog.Warningf("Reading who the repository's recipes run as: %v", err)
+		klog.Warningf("Reading the repository's recipes: %v", err)
 		return nil
 	}
-	return as
+	return facts
 }
 
 // newRulesSummary tallies what the rules decide (rules.Summary), served on

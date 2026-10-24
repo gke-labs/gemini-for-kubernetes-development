@@ -103,12 +103,12 @@ func TestRecipeAsOf(t *testing.T) {
 		"silent.yaml":         []byte("name: silent\non: [pr]\nstart: {steps: [{ask: a}]}\n"),
 		"review.yaml":         []byte("name: review\non: [pr]\nas: coder\nstart: {steps: [{ask: a}]}\n"),
 	}
-	got := recipeAsOf(files, "augment", "abc")
-	if len(got) != 2 || got["deploy-preview"] != "author" || got["lint"] != "coder" {
+	got := recipeFactsOf(files, "augment", "abc")
+	if len(got) != 2 || got["deploy-preview"].As != "author" || got["lint"].As != "coder" {
 		t.Errorf("augment = %v, want deploy-preview author and lint coder only", got)
 	}
-	got = recipeAsOf(files, "replace", "abc")
-	if got["approve"] != "reviewer" || got["review"] != "coder" || len(got) != 4 {
+	got = recipeFactsOf(files, "replace", "abc")
+	if got["approve"].As != "reviewer" || got["review"].As != "coder" || len(got) != 4 {
 		t.Errorf("replace = %v, want every recipe that says, reviewer and a built-in's name included", got)
 	}
 }

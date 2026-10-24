@@ -481,7 +481,7 @@ func TestWatcherTaskCoordinator_SelectUser_RunsAs(t *testing.T) {
 // watch read one, else factory's.
 func TestRecipeAs(t *testing.T) {
 	w := newTestWatcher(t, t.TempDir())
-	w.repoRecipeAs = map[string]string{"review": "coder", "deploy-preview": "author"}
+	w.repoRecipes = map[string]RecipeFacts{"review": {As: "coder"}, "deploy-preview": {As: "author"}}
 	for name, want := range map[string]string{"review": "coder", "deploy-preview": "author", "fix": "coder", "care-ci": "author", "workflow": "agent", "nope": "", "": ""} {
 		if got := w.recipeAs(name); got != want {
 			t.Errorf("recipeAs(%q) = %q, want %q", name, got, want)

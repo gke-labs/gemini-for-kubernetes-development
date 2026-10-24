@@ -1537,7 +1537,7 @@ func writeTaskOutput(taskDir, repoDir string, inputs map[string]string, engine s
 		Engine:  engine,
 	}
 	if task.Output.Kind != "Change" {
-		frame := &taskoutput.Document{APIVersion: taskoutput.APIVersion, Kind: task.Output.Kind, Target: target, Source: source, Actions: task.Output.Actions, Preview: task.Output.Preview}
+		frame := &taskoutput.Document{APIVersion: taskoutput.APIVersion, Kind: task.Output.Kind, Target: target, Source: source, Actions: task.Output.Actions, Preview: task.Output.Preview, Comment: task.Output.Comment}
 		if err := taskoutput.WriteFrame(taskDir, frame); err != nil {
 			return err
 		}
@@ -1569,6 +1569,7 @@ func writeTaskOutput(taskDir, repoDir string, inputs map[string]string, engine s
 	}
 	doc.Actions = task.Output.Actions
 	doc.Preview = task.Output.Preview
+	doc.Comment = task.Output.Comment
 	out, err := taskoutput.Marshal(doc)
 	if err != nil {
 		return err
