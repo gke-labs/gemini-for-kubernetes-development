@@ -1,0 +1,26 @@
+# This repository's own rule (not one of factory's): triage a pull request
+# - anyone's - when a maintainer labels it overseer/triage, the issue
+# triage rule's label, on a PR. The pr-triage recipe says what the PR is about,
+# with suggested labels, a priority and duplicates, and the comment apply
+# posts it on the PR: a maintainer applies the labels. A triage that
+# succeeds leaves {{trigger}}/triaged on the PR (on-success, the watcher's
+# write).
+#
+# The label is a command: the watcher takes it off when the task ends,
+# whatever happened (on-end), so each label is one try - apply it again to
+# triage again.
+name: pr-triage
+description: Triage a PR labelled overseer/triage, posting the triage as a comment
+on: pr
+order: 9
+when:
+  labels: {any: ["{{trigger}}/triage"]}
+run:
+  recipe: pr-triage
+  apply: comment
+  on-success:
+    label: ["{{trigger}}/triaged"]   # done: the watcher's own write
+  on-failure:
+    comment: "Triaging this PR failed; apply the triage label again to retry."
+  on-end:
+    unlabel: ["{{trigger}}/triage"]

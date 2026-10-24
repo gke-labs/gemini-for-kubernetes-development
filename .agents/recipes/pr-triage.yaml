@@ -1,0 +1,100 @@
+# factory recipe pr-triage --url <PR> [--instruction …] [--apply]: what a
+# pull request is about, for a maintainer who has not read it - labels,
+# priority, duplicates and an assessment, as triage does for an issue. The
+# task's result is a Triage task output, which `factory apply` (or
+# --apply) comments on the PR.
+#
+# The PR's text and code are anyone's, so the GitHub token reaches the
+# clone and nothing else (credentials: clone), as for review: the agent has
+# no credentials. The repository's labels are read before it starts, from
+# GitHub's public API (no token).
+name: pr-triage
+timeout: 30m
+on: [pr]
+as: coder
+credentials: clone
+
+inputs:
+  instructions:
+    type: instructions
+    description: Additional triage instructions the agent must follow
+
+context: |
+  You are a triage assistant preparing suggestions for a repository
+  maintainer about a GitHub pull request.
+
+  You must not change anything: do NOT modify or create files in the
+  repository (the result file you are asked to write is outside it), do
+  NOT run git write operations (commit, branch, push), and do NOT post
+  anything to GitHub. You have no GitHub credentials.
+
+  The PR is checked out in the current directory, detached at its head.
+  `refs/factory/pr/base` is its base branch: `git diff
+  refs/factory/pr/base...HEAD` is the PR's change, as GitHub shows it.
+
+start:
+  steps:
+    - uses: clone
+    - uses: configure-engine
+    # The labels the triage may suggest: the repository's own.
+    - run: |
+        curl -fsSL "https://api.github.com/repos/${INPUT_REPO_OWNER}/${INPUT_REPO_NAME}/labels?per_page=100" \
+          | sed -n 's/^    "name": "\(.*\)",$/\1/p' > "$TASK_DIR/labels.txt" || true
+
+    - ask: |
+        Investigate this pull request. Do not write the triage yet.
+
+        <pr_url>{{ .Inputs.pr_url }}</pr_url>
+        <pr_title>{{ .Inputs.pr_title }}</pr_title>
+        <pr_body>
+        {{ .Inputs.pr_body }}
+        </pr_body>
+
+        1. See what changed: `git diff --stat refs/factory/pr/base...HEAD`,
+           then `git diff refs/factory/pr/base...HEAD -- <file>` for the files
+           that matter, and `git log refs/factory/pr/base..HEAD` for the
+           commits.
+        2. Read enough of the surrounding code to say which part of the
+           project it touches, what it changes for users, and how big and
+           risky the change is.
+        3. Note whether it comes with tests and docs, and anything that
+           looks unfinished or out of scope.
+        {{ with file "labels.txt" }}
+        The repository's labels (suggest only from these):
+        <labels>
+        {{ . }}
+        </labels>
+        {{ end }}
+        {{- with .Inputs.instructions }}
+        Additional triage instructions you MUST follow:
+        <instructions>
+        {{ . }}
+        </instructions>
+        {{ end }}
+        Summarise what you found in a few lines.
+
+    - ask: |
+        Now write the triage to the file {{ output "triage-output.yaml" }},
+        as YAML in EXACTLY this structure, with nothing else in the file:
+
+        triage:
+          labels: []        # suggested labels, only from the repo's existing labels
+          priority: ""      # low | medium | high: how soon a maintainer should look
+          duplicates: []    # numbers of open PRs or issues it duplicates, if any
+          assessment: ""    # 3-5 sentences: what the PR does and why, the area it
+                            # touches, its size and risk, and a suggested next step
+                            # for the maintainer (review, ask for changes, close)
+
+        Write the whole file with your file tool (if it refuses the path, with
+        the shell), replacing anything in it. Whenever later in this
+        conversation you are asked to change the triage or to save it, write
+        that file again, whole, in this structure. Then say in a line or two
+        that it is written.
+      expects: triage-output.yaml
+
+outputs:
+  - triage-output.yaml
+
+task-output:
+  kind: Triage
+  from: triage-output.yaml
