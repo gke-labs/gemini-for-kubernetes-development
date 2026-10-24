@@ -20,6 +20,8 @@ when:
     - assignee: pool
     - opened-by: watcher
   fanout: false
+  # Not while an open PR closes it: that PR is the issue's work.
+  linked-pr: none
   workflow: missing
 run:
   stop:

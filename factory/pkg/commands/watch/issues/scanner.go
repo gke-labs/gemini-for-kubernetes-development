@@ -413,10 +413,11 @@ func (s *Scanner) queueTask(ctx context.Context, issue *githubv39.Issue, refIssu
 		klog.Infof("Skipping issue #%d because %s", num, why)
 		return
 	}
+	// An open PR closing the issue is a fact, not a gate: fix, workflow and
+	// workflow-missing say linked-pr: none; a rule that does not (a
+	// repository's triage) decides on it all the same.
 	if refIssues[num] {
 		s.rec.Fill(func(it *rules.Item) { it.LinkedPR = "open" })
-		klog.Infof("Skipping issue #%d because there is already a PR referencing it.", num)
-		return
 	}
 
 	// The facts the listing and the queue give, for every rule on issues:

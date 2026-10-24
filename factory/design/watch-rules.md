@@ -985,7 +985,8 @@ together once staging's shadow had agreed on every rule:
 | | lifecycle hooks: `run.on-start`, `on-success`, `on-failure`, `on-end`, the watcher's writes at points of a task's life (`rules.Hooks`, stamped on the task, executed in `NotifyTaskStarted`/`Finished`); a label taken off when done makes a rule a command | #2106 |
 | | the prebaked rules' `claim` and `start-comment` become `on-start` (`assign: "{{bot}}"`, `unassign: "{{watcher}}"`, `comment`); both fields gone | #2107 |
 | | `author` a list of kinds - `pool`, `owner`, `member`, `collaborator`, `external` (`rules.AuthorKind`: GitHub's `author_association`, the overseer's trusted logins members); `not-pool` gone | #2112 |
-| | issues listed by the rules' namespaced labels too (`OpenIssuesLabelled`, the shared scan's `IssueLabels`); an issue reached by a rule's own label gets no trigger label (`Rule.Narrowed`) | (this PR) |
+| | issues listed by the rules' namespaced labels too (`OpenIssuesLabelled`, the shared scan's `IssueLabels`); an issue reached by a rule's own label gets no trigger label (`Rule.Narrowed`) | #2113 |
+| | an open PR closing an issue is a fact, not a scanner gate: fix, workflow and workflow-missing say `linked-pr: none`; a repository's rule that does not (triage) decides | (this PR) |
 
 **Phase 5, the repository's rules** (partly built): the watch reads
 `.agents/watch/*.yaml` once when it starts, under `spec.repoRecipe` (one
