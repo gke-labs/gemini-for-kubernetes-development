@@ -57,7 +57,7 @@ func (s *Spec) validate(plan bool) error {
 		case st.ID == "":
 			return fmt.Errorf("%s: no id", where)
 		case st.ID == FinallyID:
-			return fmt.Errorf("%s: %q is the finally step's; give the step another id, or make it finally:", where, FinallyID)
+			return fmt.Errorf("%s: %q is the finally step's id; give the step another id, or make it the finally step", where, FinallyID)
 		case !stepIDRE.MatchString(st.ID):
 			return fmt.Errorf("%s: the id is not lowercase letters, digits and dashes, starting with a letter", where)
 		case seen[st.ID]:
