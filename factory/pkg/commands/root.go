@@ -131,6 +131,10 @@ effects or host dependencies.`,
 	cmd.AddCommand(NewRecipeCommand(ctx))
 	cmd.AddCommand(newPeekCommand(ctx))
 
+	graphCmd := NewGraphCommand(ctx)
+	graphCmd.GroupID = "workflows"
+	cmd.AddCommand(graphCmd)
+
 	applyCmd := NewApplyCommand(ctx)
 	applyCmd.GroupID = "workflows"
 	cmd.AddCommand(applyCmd)
