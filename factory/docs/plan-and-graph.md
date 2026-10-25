@@ -14,7 +14,7 @@ default for `factory watch` (`triggerLabel` in `.factory.cfg`).
                                                              └─ Breakdown ───> <t>/graph ──> sub-issues, each:
                                                                    then: fix  ──> fix ──> PR "Fixes #101"
                                                                    then: plan ──> <t>/plan on the sub-issue (a plan, maybe a graph of its own)
-                                                                   then: ask  ──> <t>/route, for a person
+                                                                   then: ask  ──> <t>/needs-human, for a person
 ```
 
 ## 1. Plan: `<t>/plan`
@@ -58,7 +58,8 @@ The plan as it is when the label goes on is the one implemented. Apply
 
 ## 3. The graph
 
-The graph controller (`factory watch --graphs`, or `WATCH_GRAPHS=true`)
+The graph controller (`factory watch --graphs`, or `WATCH_GRAPHS=true`;
+on an Overseer, `spec.graphs: true`)
 keeps every graph parent moving. A parent is an issue labelled `<t>/graph`;
 one with no start block whose plan has a Breakdown is started from its
 plan - the label is the approval, the watcher's on `implement` or a
@@ -87,7 +88,7 @@ The parent never opens a PR. `fix` and `workflow` leave it alone
 |---|---|---|
 | `fix` (default) | `<t>`, the graph's default labels, the step's labels, `<t>/review` with review instructions | the `fix` rule: a coder bot fixes the child from its body and opens a PR `Fixes #<child>`; PR care follows (review, CI, comments, ready-for-human) |
 | `plan` | `<t>/plan` | the `plan` rule plans the child; a maintainer applies `<t>/implement` - one PR, or a graph of its own (section 5) |
-| `ask` | `<t>/route` | waits for a person: nothing acts on `<t>/route` yet - relabel the child (`<t>` or `<t>/plan`) |
+| `ask` | `<t>/needs-human` | waits for a person: no bot works on it. Its body says, under the step's text, what the person can do - label it `<t>` (fix) or `<t>/plan`, do it and close it, or close it as not planned to skip the step. The step's `assignees` are assigned, so they are notified |
 
 ### Progress, pauses and checkpoints
 
@@ -140,6 +141,12 @@ steps:
     title: Document Foo
     after: [api]
     review: Check the examples run.   # review instructions; adds <t>/review
+  - id: storage
+    title: Pick the storage backend
+    then: ask           # a person decides; the child is labelled <t>/needs-human
+    assignees: [alice]  # assigned when the child is created (any step may have them)
+    body: |
+      Spanner or Bigtable? ...
     body: |
       ...
 finally:                # optional: created once every step is done
@@ -185,12 +192,10 @@ Create them in the repository before using the flow:
 | `<t>/planned` | the watcher | the issue has a plan; `fix` leaves it alone |
 | `<t>/implement` | a maintainer | the plan is approved: implement it |
 | `<t>/graph` | the watcher on `implement`, or a maintainer | the issue is a graph's parent |
-| `<t>/route` | the graph controller | a `then: ask` step waits for a person |
+| `<t>/needs-human` | the graph controller | a `then: ask` step waits for a person to decide |
 | `<t>/stop` | a maintainer; a `stop` checkpoint | pause the graph (or anything on the item) |
 
 ## Not yet
 
-- Nothing acts on `<t>/route`: a `then: ask` child waits for a person to
-  relabel it.
-- An Overseer cannot turn the graph controller on yet: its resource has no
-  field for it, and `WATCH_GRAPHS` is not passed to the watch.
+- Nothing but a person acts on `<t>/needs-human`: no rule proposes fix or
+  plan for a `then: ask` step yet.

@@ -20,6 +20,7 @@ type Issue struct {
 	Open                       bool
 	Reason                     string
 	Labels                     []string
+	Assignees                  []string
 	Comments                   []*githubv39.IssueComment
 	SubIssues                  []int
 	IsPR, Merged               bool
@@ -149,6 +150,12 @@ func (f *Fake) CreateIssue(_ context.Context, title, body string, labels []strin
 	f.Next++
 	f.Issues[f.Next] = &Issue{Title: title, Body: body, Author: f.Login, Open: true, Labels: slices.Clone(labels)}
 	return f.Next, nil
+}
+
+func (f *Fake) AddAssignees(_ context.Context, n int, assignees []string) error {
+	f.Writes++
+	f.Issues[n].Assignees = append(f.Issues[n].Assignees, assignees...)
+	return nil
 }
 
 func (f *Fake) EditIssue(_ context.Context, n int, title, body string) error {

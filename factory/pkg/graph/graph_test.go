@@ -146,6 +146,7 @@ func TestValidate(t *testing.T) {
 		{"after finally", "steps: [{id: a, title: A, body: b, after: [finally]}]", "after finally"},
 		{"cycle", "steps: [{id: a, title: A, body: b, after: [c]}, {id: b, title: B, body: b, after: [a]}, {id: c, title: C, body: b, after: [b]}]", "cycle: a -> c -> b -> a"},
 		{"bad then", "steps: [{id: a, title: A, body: b, then: merge}]", "then"},
+		{"bad assignee", "steps: [{id: a, title: A, body: b, then: ask, assignees: [alice, 'not a login']}]", "assignee \"not a login\" is not a GitHub login"},
 		{"bad checkpoint", "steps: [{id: a, title: A, body: b, checkpoint: pause}]", "checkpoint"},
 		{"checkpoint twice", "steps: [{id: a, title: A, body: b, checkpoint: [stop, stop]}]", "given twice"},
 		{"negative maxActive", "maxActive: -1\nsteps: [{id: a, title: A, body: b}]", "maxActive"},

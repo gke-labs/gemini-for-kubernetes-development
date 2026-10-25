@@ -26,7 +26,7 @@ Overseer is that somebody. It works from GitHub state (labels, assignees, commen
 - `priority/<level>` labels (`critical`, `urgent`, `important`, `high`, `medium`, `low`) set the task's place in the queue.
 
 ### Plans and issue graphs
-- `overseer/plan` on an issue: a coder bot writes an implementation plan as one comment, revised in place each time the label is applied again (v2, v3...). `overseer/implement` approves it: a one-PR plan becomes one PR; a plan with a Breakdown becomes a graph of sub-issues, each fixed (or planned again, as a graph of its own) as its steps become ready, the parent closed when all are done. See [plans and issue graphs](../factory/docs/plan-and-graph.md). The graph controller cannot be turned on from the Overseer resource yet.
+- `overseer/plan` on an issue: a coder bot writes an implementation plan as one comment, revised in place each time the label is applied again (v2, v3...). `overseer/implement` approves it: a one-PR plan becomes one PR; a plan with a Breakdown becomes a graph of sub-issues, each fixed (or planned again, as a graph of its own) as its steps become ready, the parent closed when all are done. See [plans and issue graphs](../factory/docs/plan-and-graph.md). The graph controller runs with `spec.graphs: true`.
 
 ### Pull request care
 For PRs written by its bot pool that carry the trigger label or are assigned to a bot, each sweep picks one action:

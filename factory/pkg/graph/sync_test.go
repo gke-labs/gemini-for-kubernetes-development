@@ -84,6 +84,25 @@ func TestSyncImplicitPlanStart(t *testing.T) {
 	}
 }
 
+// A then: ask step's child is created labelled needs-human, saying what
+// a person can do, and assigned to the step's assignees.
+func TestSyncAskStep(t *testing.T) {
+	f := graphtest.New()
+	f.Issues[100] = &graphtest.Issue{Title: "Epic", Body: "Build it.", Author: "alice", Assoc: "MEMBER", Open: true, Labels: []string{"overseer/graph"}}
+	f.Comment(100, "hopper-coder-bot", "NONE", "**Implementation plan** · v1\n\n```yaml graph\nsteps:\n"+
+		"  - {id: decide, title: Pick the storage, body: 'Spanner or Bigtable?', then: ask, assignees: [alice]}\n```\n\n<!-- factory:comment key=plan v=1 -->")
+	sync(t, f, Options{Issue: 100, Trigger: "overseer", BotLogin: "watcher", Pool: []string{"hopper-coder-bot", "watcher"}})
+	n := childOf(f, 100, "decide")
+	if n == 0 {
+		t.Fatal("no child for the ask step")
+	}
+	is := f.Issues[n]
+	if !slices.Equal(is.Labels, []string{"overseer/needs-human"}) || !slices.Equal(is.Assignees, []string{"alice"}) ||
+		!strings.Contains(is.Body, "Spanner or Bigtable?\n\n## Needs a person") || !slices.Contains(f.Issues[100].SubIssues, n) {
+		t.Errorf("child = %+v", is)
+	}
+}
+
 // A plan's graph from start to finish: children created as their steps
 // become ready, linked as sub-issues and labelled by their then; one
 // status comment, edited in place; the parent closed at the end.

@@ -26,6 +26,7 @@ type GitHub interface {
 	CreateIssue(ctx context.Context, title, body string, labels []string) (int, error)
 	EditIssue(ctx context.Context, number int, title, body string) error
 	AddLabels(ctx context.Context, number int, labels []string) error
+	AddAssignees(ctx context.Context, number int, assignees []string) error
 	AddSubIssue(ctx context.Context, parent, child int) error
 	AddComment(ctx context.Context, number int, body string) error
 	EditComment(ctx context.Context, commentID int64, body string) error
@@ -365,6 +366,13 @@ func applyOne(ctx context.Context, gh GitHub, opts Options, p *Pass, a Action) e
 				return err
 			}
 		}
+		if len(a.Assignees) > 0 {
+			// Not the pass's failure: the child stands, and a login GitHub
+			// will not assign is the plan's to fix.
+			if err := gh.AddAssignees(ctx, n, a.Assignees); err != nil {
+				opts.logf("assigning #%d (step %s) to %s: %v", n, a.Step, strings.Join(a.Assignees, ", "), err)
+			}
+		}
 		return gh.AddSubIssue(ctx, opts.Issue, n)
 	case ActLinkChild:
 		return gh.AddSubIssue(ctx, opts.Issue, a.Issue)
@@ -399,7 +407,11 @@ func describe(a Action, dryRun bool) string {
 	}
 	switch a.Kind {
 	case ActCreateChild:
-		return fmt.Sprintf("%screate step %s's child %q, labelled %s", would, a.Step, a.Title, strings.Join(a.Labels, ", "))
+		assigned := ""
+		if len(a.Assignees) > 0 {
+			assigned = ", assigned to " + strings.Join(a.Assignees, ", ")
+		}
+		return fmt.Sprintf("%screate step %s's child %q, labelled %s%s", would, a.Step, a.Title, strings.Join(a.Labels, ", "), assigned)
 	case ActLinkChild:
 		return fmt.Sprintf("%slink #%d (step %s) as a sub-issue", would, a.Issue, a.Step)
 	case ActCloseDuplicate:
