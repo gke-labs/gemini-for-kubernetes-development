@@ -731,7 +731,7 @@ func TestBuiltinPlanRenders(t *testing.T) {
 		"repo_owner": "o", "repo_name": "r", "url": "u",
 		"issue_url": "u", "issue_number": "7", "issue_title": "t", "issue_body": "b",
 	}
-	askAll := func(overrides map[string]string, prior string) string {
+	askAll := func(overrides map[string]string, prior string, status ...string) string {
 		t.Helper()
 		inputs, err := r.ResolveInputs(std, overrides)
 		if err != nil {
@@ -739,6 +739,10 @@ func TestBuiltinPlanRenders(t *testing.T) {
 		}
 		dir := t.TempDir()
 		if err := os.WriteFile(filepath.Join(dir, "prior-plan.md"), []byte(prior), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		// keyed-comment's graph-status.md: empty without a running graph.
+		if err := os.WriteFile(filepath.Join(dir, "graph-status.md"), []byte(strings.Join(status, "")), 0o644); err != nil {
 			t.Fatal(err)
 		}
 		var all strings.Builder
@@ -755,12 +759,23 @@ func TestBuiltinPlanRenders(t *testing.T) {
 		return all.String()
 	}
 	fresh := askAll(nil, "")
-	if strings.Contains(fresh, "<previous_plan>") || strings.Contains(fresh, "<feedback>") {
+	if strings.Contains(fresh, "<previous_plan>") || strings.Contains(fresh, "<feedback>") || strings.Contains(fresh, "<graph_status>") {
 		t.Errorf("a fresh plan mentions a previous plan or feedback:\n%s", fresh)
 	}
 	revise := askAll(map[string]string{"feedback": "merge steps 2 and 3"}, "## Summary\nold plan\n")
 	if !strings.Contains(revise, "<previous_plan>\n## Summary\nold plan") || !strings.Contains(revise, "<feedback>\nmerge steps 2 and 3") {
 		t.Errorf("a revision lacks the previous plan or the feedback:\n%s", revise)
+	}
+	if strings.Contains(revise, "<graph_status>") || strings.Contains(revise, "The graph is running") {
+		t.Errorf("a revision with no graph mentions one:\n%s", revise)
+	}
+	// A replan of a running graph: its status, the finished steps to read,
+	// and the done and active steps kept.
+	replan := askAll(nil, "## Breakdown\nold\n", "### Issue graph - Running · 1/2 done\n| a | - | fix | #8 | ✅ Succeeded |\n")
+	for _, want := range []string{"<graph_status>\n### Issue graph - Running", "closedByPullRequestsReferences", "The graph is running", "keep each of them in the Breakdown exactly as it is"} {
+		if !strings.Contains(replan, want) {
+			t.Errorf("a replan lacks %q:\n%s", want, replan)
+		}
 	}
 
 	out, err := ForSandbox(data)

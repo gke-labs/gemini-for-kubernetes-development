@@ -17,7 +17,10 @@
 # one PR each. overseer/implement on such a plan starts an issue graph
 # instead of a fix (the implement-graph watch rule,
 # design/issue-graph-plans.md); a revision keeps the steps' ids, which
-# name their sub-issues.
+# name their sub-issues. Revising the plan of a running graph (a replan:
+# overseer/plan again, or a checkpoint's), it reads the graph's status
+# comment and the finished sub-issues and their PRs, and keeps the steps
+# that are done or active as they are.
 name: plan
 on: [issue]
 as: coder
@@ -61,6 +64,16 @@ start:
         to: prior-plan.md
         optional: "true"
     - run: test -s "$TASK_DIR/prior-plan.md" || cp "/workspaces/plan-issue-${INPUT_ISSUE_NUMBER}.md" "$TASK_DIR/prior-plan.md" 2>/dev/null || true
+    # The graph's status, when the plan's Breakdown is running as an issue
+    # graph: the comment of key graph-status the graph controller keeps on
+    # the issue (the watcher, a pool login), each step's state and
+    # sub-issue. None is a plan with no graph yet.
+    - uses: keyed-comment
+      with:
+        key: graph-status
+        authors: pool
+        to: graph-status.md
+        optional: "true"
 
     - ask: |
         Investigate this issue. Do not write the plan yet.
@@ -87,6 +100,23 @@ start:
         <previous_plan>
         {{ . }}
         </previous_plan>
+        {{ end }}
+        {{- with file "graph-status.md" }}
+        The previous plan's Breakdown is running as an issue graph: each of
+        its steps is a sub-issue of this issue, opened when the steps before
+        it were done. Its status, kept by the graph controller:
+        <graph_status>
+        {{ . }}
+        </graph_status>
+        For each step that is done (Succeeded or Skipped), read its
+        sub-issue and what came of it: `gh issue view <n> --comments` (a
+        Skipped one says why, often that nothing should change), and the
+        pull request that closed it - `gh issue view <n> --json
+        closedByPullRequestsReferences`, then `gh pr view <pr>` for its
+        description and `gh pr diff <pr>` where it matters. What those
+        steps taught - a different design, a new step needed, a step no
+        longer needed - is what this revision is for. Active steps are in
+        progress: read their sub-issues, but they run on as they are.
         {{ end }}
         {{- with .Inputs.feedback }}
         The maintainer's feedback:
@@ -169,6 +199,15 @@ start:
         keep the step - the id names its sub-issue, which may already be
         open or done: do not rename, reorder into new ids, or drop a step
         that is done.
+        {{ end }}
+        {{- if file "graph-status.md" }}
+        The graph is running. Steps its status shows done or active have
+        happened: keep each of them in the Breakdown exactly as it is (id,
+        title, body, after, then). Only the steps not yet started may
+        change, be added or be removed, with their after edges, then,
+        checkpoints and finally. Say in "Changes since the previous
+        version" what the finished steps showed that made you change the
+        rest.
         {{ end }}
 
         Write the whole file with your file tool (if it refuses the path, with
