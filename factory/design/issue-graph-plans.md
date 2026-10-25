@@ -79,10 +79,10 @@ In this repository's `.agents/watch/` (any repository can adopt them):
 | Label | Rule | What happens |
 | :--- | :--- | :--- |
 | `<trigger>/plan` | `plan` | The plan comment is posted or updated, with a Breakdown when the work needs more than one PR; the watcher adds `<trigger>/planned`. Applied again, it revises the plan (§5). |
-| `<trigger>/implement` | `implement` | Approval of the plan. Its recipe first reads the plan (`keyed-comment`, trusted kinds) and looks for a `graph` block: **without one**, it is fix-with-plan and opens one PR (#2120); **with one**, no agent runs: it validates the block (and the depth limit) and posts the start block `source: plan` as a keyed comment (key `graph`) - the bot cannot edit the issue body - and the reconciler takes it from there. |
+| `<trigger>/implement` | `implement`, `implement-graph`, `implement-unplanned` | Approval of the plan. The plan's shape is a rule fact, `plan: none \| pr \| graph` (the plan comment by a trusted kind, with or without a `graph` block): **pr**, `implement` runs fix-with-plan and opens one PR (#2120); **graph**, `implement-graph` labels the issue `<trigger>/graph` and takes `implement` off - no sandbox - and the reconciler starts the graph from the plan; **none**, `implement-unplanned` says so and takes `implement` off. |
 | `<trigger>` on a planned issue | `fix` | Nothing: fix leaves an issue in the plan flow alone (`labels.none: [<trigger>/plan, <trigger>/planned]`, #2120). |
 
-The implement task's bot may not label, so the parent of a graph started from a plan does not carry `<trigger>/graph` yet: the graph controller sweeps planned issues too, and labels one it finds with a start block, from then on swept and left alone by fix and workflow like any graph parent.
+A graph-labelled issue with no start block whose plan has a `graph` block is started from its plan: the label is the approval (the watcher's on `implement`, or a maintainer's). A start block posted by a bot that may not label (`factory graph start --source plan`) works too: the graph controller sweeps planned issues, and labels one it finds with a start block.
 
 To get one PR from a plan that has a Breakdown, remove the Breakdown (edit the plan comment, or replan asking for one PR) before applying `implement`; to get sub-issues, replan asking for a Breakdown.
 
@@ -154,23 +154,21 @@ In this repository's `.agents/recipes/plan.yaml`:
 
 ---
 
-### 6.1 The implement recipe
+### 6.1 The implement rules
 
-`.agents/recipes/fix-with-plan.yaml` (the `implement` rule's) takes both paths in one run:
+The plan's shape is a rule fact, `plan`, read on demand (the issue's comments, only when a rule that could step asks), so the path is decided by the rules, at the moment of approval:
 
-1. Read the plan through `keyed-comment` (trusted kinds), as today, and note whether it has a `graph` block.
-2. **With a `graph` block:** the `graph-start` step (`factory graph start --source plan`) validates it (and the depth limit), posts the start block `source: plan` as a keyed comment (key `graph`), and the run ends: the remaining steps are skipped (`if:`), no agent runs, and the task leaves no Change (an optional result).
-3. **Without one:** the fix steps run as they do now, and `open-pr` opens the PR.
-
-So the rule stays one rule (`apply: open-pr`), and the path is decided by the plan, read once, at the moment of approval.
+1. **`plan: pr`** - `implement`: fix-with-plan (`.agents/recipes`), one PR, as #2120.
+2. **`plan: graph`** - `implement-graph`: the watcher labels the issue `<trigger>/graph` and takes `implement` off; no task. The graph controller starts the graph from the plan on its next pass, validating the block (and the depth limit) there.
+3. **`plan: none`** - `implement-unplanned`: a comment ("plan it first"), `implement` off; no task.
 
 ## 7. Edge cases
 
 | Case | Behaviour |
 | :--- | :--- |
-| `implement` on a plan with an invalid `graph` block | The task fails with the validation error; no PR, no graph. |
-| `implement` applied again after the graph started | The start block is already there; nothing changes. |
-| `implement` on an issue with no plan comment | The task fails: plan it first. |
+| `implement` on a plan with an invalid `graph` block | The graph is labelled and the status comment shows the validation error (phase invalid); no PR, no child. Fix the plan and the next pass starts it. |
+| `implement` applied again after the graph started | `implement-graph` says `graph: false`; the label just sits (no rule takes it). |
+| `implement` on an issue with no plan comment | `implement-unplanned`: a comment, the label off. |
 | A revision while a child is active | The active child runs on; the revision applies to the steps not yet started. |
 | A revision rewrites a done step | Not applied; the status warns (§5.2). |
 | A checkpoint reached while a plan run is queued or running | The label is already there: one revision covers it. |
