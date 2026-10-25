@@ -178,6 +178,11 @@ type When struct {
 	// children are ordinary issues, created when their steps are ready
 	// (design/issue-graph.md).
 	Graph *bool `yaml:"graph,omitempty" json:"graph,omitempty"`
+	// Plan is the shape of the issue's plan: its plan comment (key plan)
+	// by a trusted author kind - none, pr (one PR) or graph (a Breakdown,
+	// a `yaml graph` block: design/issue-graph-plans.md). A read of its
+	// own, made only for a rule that asks (Set.Needs).
+	Plan string `yaml:"plan,omitempty" json:"plan,omitempty"` // none | pr | graph
 
 	// Pull requests.
 	Checks    string `yaml:"checks,omitempty" json:"checks,omitempty"` // failing | pending | green
@@ -396,7 +401,7 @@ func Parse(data []byte) (*Rule, error) {
 // predicates are the When fields each kind of rule may set, by YAML name.
 var predicates = map[string][]string{
 	"*":     {"any-of", "labels", "assignee", "author", "last-run"},
-	OnIssue: {"linked-pr", "connected-pr", "workflow", "opened-by", "fanout", "graph"},
+	OnIssue: {"linked-pr", "connected-pr", "workflow", "opened-by", "fanout", "graph", "plan"},
 	OnPR:    {"checks", "mergeable", "feedback", "closes", "reviewed-at-head", "changes-requested", "approved", "draft", "inactive-for"},
 }
 
@@ -419,6 +424,7 @@ func (w When) set() []string {
 	add("opened-by", w.OpenedBy != "")
 	add("fanout", w.Fanout != nil)
 	add("graph", w.Graph != nil)
+	add("plan", w.Plan != "")
 	add("checks", w.Checks != "")
 	add("mergeable", w.Mergeable != nil)
 	add("feedback", w.Feedback != "")
@@ -437,6 +443,7 @@ var enums = map[string][]string{
 	"author":       {AuthorPool, AuthorOwner, AuthorMember, AuthorCollaborator, AuthorExternal},
 	"linked-pr":    {"none", "open"},
 	"connected-pr": {"none", "open"},
+	"plan":         {"none", "pr", "graph"},
 	"workflow":     {"none", "any", "missing"},
 	"opened-by":    {"watcher"},
 	"checks":       {"failing", "pending", "green"},
@@ -477,7 +484,7 @@ func (w When) validate(on string, nested bool) error {
 	}
 	for field, value := range map[string]string{
 		"assignee": w.Assignee, "linked-pr": w.LinkedPR, "connected-pr": w.ConnectedPR,
-		"workflow": w.Workflow, "opened-by": w.OpenedBy,
+		"workflow": w.Workflow, "opened-by": w.OpenedBy, "plan": w.Plan,
 		"checks": w.Checks, "feedback": w.Feedback, "last-run": w.LastRun,
 	} {
 		if err := checkEnum(field, value); err != nil {

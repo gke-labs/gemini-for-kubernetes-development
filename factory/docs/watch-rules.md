@@ -190,6 +190,7 @@ the merge queue get nothing from any rule.
 | `opened-by` | `watcher` | the watcher's own login opened it |
 | `fanout` | `true`, `false` | it is a fan-out's parent (the fanout label): the fan-out controller's, never fixed itself. A child is an ordinary issue, created when it is to be worked on |
 | `graph` | `true`, `false` | it is an issue graph's parent (the graph label): the graph controller's, never fixed itself. A child is an ordinary issue, created when its step is ready ([issue graphs](../design/issue-graph.md)) |
+| `plan` | `none`, `pr`, `graph` | the shape of the issue's plan: its plan comment (key `plan`, the plan recipe's) by a pool bot or a maintainer - none; one without a Breakdown (one PR); one with a `yaml graph` block (an issue graph, [plans](../design/issue-graph-plans.md)). Read from the issue's comments, so only when a rule that could otherwise step asks for it. A graph-labelled issue whose plan has a Breakdown is started from its plan |
 
 ### Pull requests
 
@@ -431,13 +432,17 @@ The prebaked PR rules, in order:
 
 On issues, `workflow-missing` (5) stops an issue whose workflow cannot be
 loaded, which ends the walk; `workflow` (10) and `fix` (20) both take the item; their
-predicates (`workflow: any` and `workflow: none`) keep them apart. Like a PR, an issue gets
+predicates (`workflow: any` and `workflow: none`) keep them apart. The plan
+flow's command labels come between: `plan` (14), then `implement` (16),
+`implement-graph` (17) and `implement-unplanned` (18), kept apart by
+`plan: pr | graph | none`; `fix` leaves an issue being planned or planned
+alone. Like a PR, an issue gets
 one task at a time: while its fix or a workflow step is queued or running,
 neither rule decides (an edited body naming a workflow waits for the fix). `ready`
 writes labels but takes the item: it must not hold beside a care rule, nor
 while a task runs.
 
-Some facts cost a GitHub call per issue: `connected-pr` (the timeline),
+Some facts cost a GitHub call per issue: `connected-pr` (the timeline), `plan` (the comments),
 and, for an issue naming a workflow, its definition (`workflow: any` and
 `missing`) and its cooldown (`{{workflow-cooldown}}`). The scan reads
 them only when a rule that would step on every other fact uses them, so a
@@ -682,9 +687,13 @@ the suite CI runs.
 | `fix` | issue | fixes an issue the overseer is pointed at and opens the PR |
 | `workflow-missing` | issue | stops an issue whose workflow definition cannot be loaded, with a comment saying so |
 | `workflow` | issue | takes the next step of the workflow an issue names (held while an open PR closes the issue) |
+| `plan` | issue | `<trigger>/plan`: the plan recipe writes or revises the issue's one plan comment (key `plan`), with a Breakdown when the work needs more than one PR; `<trigger>/planned` on success |
+| `implement` | issue | `<trigger>/implement` on a one-PR plan (`plan: pr`): fix-with-plan opens the PR |
+| `implement-graph` | issue | `<trigger>/implement` on a plan with a Breakdown (`plan: graph`): the graph label, for the graph controller (`--graphs`) to start from the plan; no task |
+| `implement-unplanned` | issue | `<trigger>/implement` with no plan: a comment, the label off |
 | `inherit-labels` | pr | copies the closing issues' labels onto the PR, ahead of the rules that take it |
 | `inactive` | pr | (no timeout by default, so it never holds) pauses a PR nobody looked at |
 | `comments` ... `ready-unreview` | pr | PR care, in [order](#order) |
 
 Each file starts with a `# Mirrors` comment naming the code of today's watch
-it describes.
+it describes; the plan flow's, born rules, say what they do.

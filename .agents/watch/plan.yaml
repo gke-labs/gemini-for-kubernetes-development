@@ -1,5 +1,4 @@
-# This repository's own rule (not one of factory's): plan an issue when a
-# maintainer labels it overseer/plan. The plan recipe writes an
+# Plan an issue when a maintainer labels it overseer/plan. The plan recipe writes an
 # implementation plan (summary, approach, steps, risks, test plan) and the
 # comment apply posts it on the issue as "Implementation plan", with a
 # hidden marker. The label is in the overseer's own namespace, so the watch

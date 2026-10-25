@@ -28,6 +28,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/api"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/conventions"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/graph"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/watch/rules"
 )
 
@@ -431,9 +432,9 @@ func (s *Scanner) queueTask(ctx context.Context, issue *githubv39.Issue, refIssu
 		it.TaskActive = s.queue.HasActiveIssueTask(num)
 		// The facts read only when a rule needs them (Set.Needs), in the
 		// order they cost.
-		it.Unknown = []string{rules.FactConnectedPR}
+		it.Unknown = []string{rules.FactConnectedPR, rules.FactPlan}
 		if wf.Name != "" {
-			it.Unknown = []string{rules.FactWorkflowCooldown, rules.FactWorkflowDefinition, rules.FactConnectedPR}
+			it.Unknown = []string{rules.FactWorkflowCooldown, rules.FactWorkflowDefinition, rules.FactConnectedPR, rules.FactPlan}
 		}
 	})
 
@@ -481,6 +482,14 @@ func (s *Scanner) queueTask(ctx context.Context, issue *githubv39.Issue, refIssu
 				s.rec.Fill(func(it *rules.Item) { it.ConnectedPR = "open" })
 				klog.Infof("Issue #%d has a linked PR according to the Timeline API.", num)
 			}
+		case rules.FactPlan:
+			var shape string
+			if shape, err = s.readPlanShape(ctx, num); err != nil {
+				s.rec.Gated("reading its plan failed")
+				klog.Errorf("Failed to read the plan of issue #%d: %v", num, err)
+				return
+			}
+			s.rec.Fill(func(it *rules.Item) { it.Plan = shape })
 		}
 		s.rec.Fill(func(it *rules.Item) {
 			it.Unknown = slices.DeleteFunc(it.Unknown, func(f string) bool { return f == needs[0] })
@@ -537,6 +546,16 @@ func (s *Scanner) queueTask(ctx context.Context, issue *githubv39.Issue, refIssu
 // the workflow (its handler is its own: stopForUnavailableWorkflow).
 func (s *Scanner) needsSet() rules.Set {
 	return slices.DeleteFunc(slices.Clone(s.rules.Set()), func(r *rules.Rule) bool { return r.Name == "workflow-missing" })
+}
+
+// readPlanShape reads the shape of the issue's plan, the rules' plan fact:
+// its comments, the plan comment by a trusted author kind (graph.PlanShape).
+func (s *Scanner) readPlanShape(ctx context.Context, num int) (string, error) {
+	comments, err := s.gh.ListIssueComments(ctx, num)
+	if err != nil {
+		return "", err
+	}
+	return graph.PlanShape(comments, s.rulesEnv()), nil
 }
 
 // readConnectedPR reads whether an open PR is connected to the issue on

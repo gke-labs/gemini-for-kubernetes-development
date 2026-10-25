@@ -55,6 +55,35 @@ func sync(t *testing.T, f *graphtest.Fake, opts Options) *Pass {
 	return p
 }
 
+// A graph-labelled issue with no start block whose plan has a Breakdown
+// is a graph started from its plan (the label is the approval: the watch's
+// implement-graph rule, or a maintainer's); without the label, or with only
+// an outsider's plan, it is no graph's parent.
+func TestSyncImplicitPlanStart(t *testing.T) {
+	for _, tc := range []struct {
+		name, label, author, assoc string
+		started                    bool
+	}{
+		{"graph label, the pool's plan", "overseer/graph", "hopper-coder-bot", "NONE", true},
+		{"trigger's graph label, a member's plan", "kcc/graph", "alice", "MEMBER", true},
+		{"planned only", "overseer/planned", "hopper-coder-bot", "NONE", false},
+		{"graph label, an outsider's plan", "overseer/graph", "mallory", "NONE", false},
+	} {
+		f := graphtest.New()
+		f.Issues[100] = &graphtest.Issue{Title: "Epic", Body: "Build it.", Author: "alice", Assoc: "MEMBER", Open: true, Labels: []string{tc.label}}
+		f.Comment(100, tc.author, tc.assoc, planComment)
+		opts := Options{Issue: 100, Trigger: "kcc", BotLogin: "watcher", Pool: []string{"hopper-coder-bot", "watcher"}}
+		p := sync(t, f, opts)
+		a := childOf(f, 100, "a")
+		if started := !p.NoGraph && a != 0; started != tc.started {
+			t.Errorf("%s: started %v (NoGraph %v, a=#%d), want %v", tc.name, started, p.NoGraph, a, tc.started)
+		}
+		if tc.started && (len(statusComments(f, 100)) != 1 || !strings.Contains(statusComments(f, 100)[0], "steps: plan v2")) {
+			t.Errorf("%s: status:\n%s", tc.name, strings.Join(statusComments(f, 100), "\n---\n"))
+		}
+	}
+}
+
 // A plan's graph from start to finish: children created as their steps
 // become ready, linked as sub-issues and labelled by their then; one
 // status comment, edited in place; the parent closed at the end.

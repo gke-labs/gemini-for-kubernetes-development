@@ -32,6 +32,12 @@ when:
     - labels: {any: ["{{trigger}}"]}
     - assignee: pool
     - opened-by: watcher
+  # Not an issue in the plan flow (the plan rule): planning it,
+  # or planned - only implement turns a planned issue into code, so the
+  # trigger label applied early does not start a fix that ignores the
+  # plan. Taking overseer/planned off makes it fix's again.
+  labels:
+    none: ["{{trigger}}/plan", "{{trigger}}/planned"]
   fanout: false
   # Not an issue graph's parent: its children are the graph's work
   # (design/issue-graph.md).

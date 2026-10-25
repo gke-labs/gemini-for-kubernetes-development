@@ -1,14 +1,14 @@
 # factory recipe fix-with-plan --url <issue> [--apply]:
 # implement an issue's approved plan, in the issue's sandbox. The plan is
-# the issue's plan comment (the one comment of key plan that
-# .agents/recipes/plan.yaml writes and every plan run updates), and only a
+# the issue's plan comment (the one comment of key plan that the plan
+# recipe writes and every plan run updates), and only a
 # comment by a pool bot or a maintainer counts (the keyed-comment step,
 # authors: the watch rules' author kinds): anyone else's carrying the
 # marker is not the plan. No plan comment fails the task.
 #
 # The agent gets the plan, not the issue's description or comments: the
-# plan is what a maintainer approved (overseer/implement,
-# .agents/watch/implement.yaml), refined against the issue's comments
+# plan is what a maintainer approved (overseer/implement, the
+# implement watch rule), refined against the issue's comments
 # before. Otherwise it is fix: the agent commits and never pushes, the
 # push step pushes the branch to the member's fork, and the Change's
 # open-pr opens the PR, which says which plan version it implements.

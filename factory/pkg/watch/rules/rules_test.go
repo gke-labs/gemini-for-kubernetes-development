@@ -14,8 +14,8 @@ func TestBuiltinRulesParseAndValidate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Builtin: %v", err)
 	}
-	want := []string{"ci", "comments", "conflict", "fix", "inactive",
-		"inherit-labels", "ready", "ready-unreview", "review", "workflow", "workflow-missing"}
+	want := []string{"ci", "comments", "conflict", "fix", "implement", "implement-graph", "implement-unplanned", "inactive",
+		"inherit-labels", "plan", "ready", "ready-unreview", "review", "workflow", "workflow-missing"}
 	var got []string
 	for _, r := range set {
 		got = append(got, r.Name)
@@ -23,10 +23,18 @@ func TestBuiltinRulesParseAndValidate(t *testing.T) {
 	if strings.Join(got, " ") != strings.Join(want, " ") {
 		t.Errorf("rules = %v, want %v", got, want)
 	}
-	// Each file says what code it mirrors.
+	// Each file says what code it mirrors; the plan flow's, which mirror
+	// none (they were born rules), say what they do.
+	native := []string{"plan.yaml", "implement.yaml", "implement-graph.yaml", "implement-unplanned.yaml"}
 	entries, _ := builtinFS.ReadDir(".")
 	for _, e := range entries {
 		data, _ := builtinFS.ReadFile(e.Name())
+		if slices.Contains(native, e.Name()) {
+			if !strings.HasPrefix(string(data), "# ") {
+				t.Errorf("%s does not start with a comment", e.Name())
+			}
+			continue
+		}
 		if !strings.HasPrefix(string(data), "# Mirrors ") {
 			t.Errorf("%s does not start with a # Mirrors comment", e.Name())
 		}

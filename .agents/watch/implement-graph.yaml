@@ -1,0 +1,24 @@
+# overseer/implement on an issue whose plan has a Breakdown (plan: graph - a `yaml graph` block in
+# the plan comment by a pool bot or a maintainer) approves an issue graph,
+# not a PR. The watcher labels the issue {{trigger}}/graph and takes the
+# command label off: the graph controller (factory watch --graphs) starts
+# the graph from the plan - the label is the approval - and opens a
+# sub-issue for each step as it becomes ready (design/issue-graph-plans.md).
+# No sandbox runs; a Breakdown that does not validate shows on the graph's
+# status comment.
+#
+# The plan is read when the controller syncs, so revising it (overseer/plan
+# again) changes the graph's steps: a step whose sub-issue exists keeps it,
+# by its id.
+name: implement-graph
+description: Start an issue graph from the plan of an issue labelled overseer/implement whose plan has a Breakdown
+on: issue
+order: 17
+when:
+  labels: {any: ["{{trigger}}/implement"]}
+  plan: graph
+  graph: false
+run:
+  label: ["{{trigger}}/graph"]
+  unlabel: ["{{trigger}}/implement"]
+  comment: "Implementing this issue's plan as an issue graph: a sub-issue for each step of its Breakdown, opened as the step becomes ready."
