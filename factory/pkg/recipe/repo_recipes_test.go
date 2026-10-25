@@ -53,6 +53,15 @@ func TestBuiltinPlanRecipe(t *testing.T) {
 	if !breakdown {
 		t.Error("the plan recipe asks for no `yaml graph` Breakdown")
 	}
+	var all string
+	for _, s := range rec.Start.Steps {
+		all += s.Ask
+	}
+	for _, want := range []string{"## Baseline", "## PR plan", "### Dependency graph", "| Step | Title | What it adds | Files | After | Verification |", "<details>", "</details>"} {
+		if !strings.Contains(all, want) {
+			t.Errorf("the plan recipe does not ask for %q", want)
+		}
+	}
 	if d := rec.OutputDecl(); d == nil || d.Comment == nil || d.Comment.Key != "plan" {
 		t.Errorf("task output %+v: want comment key plan", d)
 	}

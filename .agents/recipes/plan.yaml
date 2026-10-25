@@ -137,16 +137,49 @@ start:
         markdown, with no top-level title heading, in exactly these sections:
 
         ## Summary
-        2-3 sentences: what the issue asks for and the shape of the fix.
+        2-3 sentences: what the issue asks for and the shape of the change -
+        one pull request, or several (how many, and why split).
+
+        ## Baseline
+        What the default branch already has that this builds on, as a table:
+        | Area | Files | What exists today |. A few rows; for a small change,
+        one or two.
 
         ## Approach
         The chosen approach and why, including alternatives you rejected and
-        the reason. Name the actual packages/files involved.
+        the reason. Name the actual packages/files involved. When the change
+        spans several components, add a mermaid diagram (a flowchart of how
+        they depend on each other, or a sequence diagram of how they
+        interact) where it says more than prose.
 
-        ## Steps
-        A numbered list of concrete implementation steps. Each step names the
-        files it touches. Keep steps small enough that a reviewer can veto one
-        step without invalidating the rest.
+        ## PR plan
+        For one pull request: a numbered list of concrete implementation
+        steps, each naming the files it touches, small enough that a
+        reviewer can veto one step without invalidating the rest.
+
+        For several (the work is too big for one pull request a reviewer can
+        take in - several independent pieces, or a sequence where each piece
+        should land and be reviewed before the next; most plans are one PR):
+        each pull request is one vertical slice that works and is verified
+        on its own, with no unused code waiting for a later PR. Write:
+
+        ### Dependency graph
+        A mermaid flowchart (`flowchart LR`) from `main` to every PR: one
+        node per Breakdown step, labelled with its id and a short title, an
+        edge for each `after`, steps with no `after` coming from `main`.
+        Mark a `then: plan` step "(planned first)" and a `then: ask` step
+        "(decision)".
+
+        ### PRs
+        A table, in the Breakdown's order:
+        | Step | Title | What it adds | Files | After | Verification |
+        - What it adds: the capability, end to end, in a sentence or two.
+        - Files: the files and packages it touches.
+        - Verification: how a reviewer checks it works - the test or the
+          command, and what it shows.
+
+        The graph and the table must say exactly what the Breakdown says:
+        the same step ids, titles and after edges.
 
         ## Risks
         What could go wrong: behavior changes, migration concerns, blast
@@ -157,13 +190,12 @@ start:
         manual verification worth doing.
 
         ## Breakdown
-        Only if the work is too big for one pull request a reviewer can
-        take in (several independent pieces, or a sequence where each piece
-        should land and be reviewed before the next); otherwise leave this
-        section out entirely - most plans are one PR. Each step becomes a
-        sub-issue, and its pull request is fixed from the step's body
-        alone, so a body must stand on its own. Write the steps as one
-        fenced block whose info string is exactly `yaml graph`:
+        Only for several pull requests; otherwise leave this section out
+        entirely. It is the overseer's spec - people read the PR plan - so
+        fold it, exactly like this (the blank lines matter for GitHub):
+
+        <details>
+        <summary>Breakdown: the steps the overseer runs (an issue graph)</summary>
 
         ```yaml graph
         maxActive: 1         # how many steps may be open at once
@@ -185,16 +217,22 @@ start:
             ...
         ```
 
-        A step may set `then: plan` (its sub-issue is planned first, for a
-        piece still too big or unclear) or `then: ask` (a person decides,
-        and no bot works on it until then), instead of the default, fix.
-        Use `then: ask` only for what an agent cannot settle - a design
-        choice, an access or a judgment that is a maintainer's - and make
-        its body say exactly what must be decided and the options you see.
-        Its sub-issue goes to the maintainer who approved the plan; do not
-        name assignees yourself. `checkpoint: stop` pauses the
-        graph when the step is done, for a maintainer to look; `replan` has
-        this plan revised then. Do not use the id `finally`.
+        </details>
+
+        Each step becomes a sub-issue, and its pull request is fixed from
+        the step's body alone, so a body must stand on its own: what to
+        change, in which files, and how to verify it (the PR table's row,
+        in full). A step may set `then: plan` (its sub-issue is planned
+        first, for a piece still too big or unclear) or `then: ask` (a
+        person decides, and no bot works on it until then), instead of the
+        default, fix. Use `then: ask` only for what an agent cannot settle -
+        a design choice, an access or a judgment that is a maintainer's -
+        and make its body say exactly what must be decided and the options
+        you see, nothing about how to proceed: its sub-issue lists what the
+        person can do and goes to the maintainer who approved the plan; do
+        not name assignees yourself. `checkpoint: stop` pauses the graph
+        when the step is done, for a maintainer to look; `replan` has this
+        plan revised then. Do not use the id `finally`.
         {{ if file "prior-plan.md" }}
         ## Changes since the previous version
         A short bullet list of what changed from the previous plan and why
