@@ -7,7 +7,7 @@
 | **Created** | 2026-09-29 |
 | **Last Updated** | 2026-10-25 |
 | **Replaces** | [`.agents/workflows/kcc-greenfield.txt`](../../.agents/workflows/kcc-greenfield.txt) (LLM-driven `mode: workflow`) |
-| **Related** | [workflow-orchestration-and-session-reconciliation.md](workflow-orchestration-and-session-reconciliation.md), [watch-subcontrollers-architecture.md](watch-subcontrollers-architecture.md), [task-recipes-and-outputs.md](task-recipes-and-outputs.md), [fanout.md](fanout.md), [watch-rules.md](watch-rules.md) |
+| **Related** | [issue-graph-plans.md](issue-graph-plans.md) (companion: plans as graphs, replanning), [workflow-orchestration-and-session-reconciliation.md](workflow-orchestration-and-session-reconciliation.md), [watch-subcontrollers-architecture.md](watch-subcontrollers-architecture.md), [task-recipes-and-outputs.md](task-recipes-and-outputs.md), [fanout.md](fanout.md), [watch-rules.md](watch-rules.md) |
 | **Scope** | `factory watch`, `factory` CLI, `.agents/` rules and recipes |
 
 ---
@@ -27,7 +27,7 @@ Orchestration needs no sandbox, LLM session, journal branch or precondition scri
 
 Steps come from one of two sources: a **template** defined **only in the repository it runs against** (the latest definition on the default branch is always used), or an issue's **approved plan** - the breakdown in its plan comment (§4.5).
 
-Each step says what its child does first: be fixed, be planned, or wait for a person (`then`, §4.6). A child that is planned and broken down becomes the parent of its own graph, so graphs nest (§4.7).
+Each step says what its child does first: be fixed, be planned, or wait for a person (`then`, §4.6). A child that is planned and broken down becomes the parent of its own graph, so graphs nest (§4.7). How a plan becomes a graph, and how it is revised as the graph runs, is in the companion note [issue-graph-plans.md](issue-graph-plans.md).
 
 ---
 
@@ -206,49 +206,7 @@ The reconciler runs the same checks against the parent's actual params, or the p
 
 ### 4.5 Steps from a plan
 
-The plan recipe (`.agents/recipes/plan.yaml`) writes an issue's plan comment (key `plan`, refined in place: v1, v2, ...). When the work is bigger than one reviewable PR, the plan ends with a **Breakdown**: prose for people, and a fenced block in the step schema of §4.2, without params:
-
-````markdown
-## Breakdown
-1. **schema** - the versioned schema package.
-2. **recorder** - the event recorder (after schema); big enough to plan on its own.
-3. **compare** - threshold compare (after recorder).
-
-```yaml graph
-maxActive: 2
-steps:
-  - id: schema
-    title: Add the versioned schema package
-    body: |
-      ...
-  - id: recorder
-    after: [schema]
-    then: plan
-    title: Streaming event recorder and shard merge
-    body: |
-      ...
-  - id: compare
-    after: [recorder]
-    title: Threshold compare and stats.jsonl
-    body: |
-      ...
-finally:
-  title: Wire it into the CLI and document
-  body: |
-    ...
-```
-````
-
-* `source: plan` reads the newest comment of key `plan` by `pool`, `owner`, `member` or `collaborator`; anyone else's carrying the marker is ignored. A plan without a `graph` block is `Invalid` as a graph source: it is a one-PR plan, which `overseer/implement` implements (#2120).
-* The steps are read fresh every pass, as a template is: a plan refined after the graph started changes the steps not yet started.
-* The rules in `.agents/watch/` tie it together:
-
-| Label | Rule | What happens |
-| :--- | :--- | :--- |
-| `<trigger>/plan` | `plan` | The plan comment is posted or updated, with a Breakdown when the work needs more than one PR; the watcher adds `<trigger>/planned`. |
-| `<trigger>/implement` | `implement` | Approval of a one-PR plan: fix-with-plan opens the PR (#2120). |
-| `<trigger>/breakdown` | `breakdown` (new) | Approval of a plan with a Breakdown: a recipe with no agent validates the `graph` block and posts the start block `source: plan` as a keyed comment. The reconciler takes it from there. |
-| `<trigger>` on a planned issue | `fix` | Nothing: fix leaves an issue in the plan flow alone (#2120). |
+An issue's approved plan can be the source of its graph (`source: plan`, §4.3): the Breakdown at the end of its plan comment, a fenced `yaml graph` block in the step schema of §4.2 without params, read only from a trusted author kind. The steps are read fresh every pass, as a template is, so a plan refined after the graph started changes the steps not yet started. The Breakdown's format, the rules that tie planning to graphs (`<trigger>/plan`, `<trigger>/implement`, `<trigger>/breakdown`) and how a plan is revised are in the companion note, [issue-graph-plans.md](issue-graph-plans.md).
 
 ### 4.6 What each child does first (`then`)
 
@@ -262,30 +220,9 @@ The planner proposes `then` for each step and a maintainer approves it with the 
 
 ### 4.7 Nesting
 
-A child that is planned and broken down gets its own start block and becomes a parent. Its graph is reconciled like any other, one level down:
+A child that is planned and broken down gets its own start block and becomes a parent; its graph is reconciled like any other, one level down. A graph that finishes closes its parent as completed (§6.1), which completes the step one level up. Each child's marker records its depth, and a start block on an issue at `maxDepth` (default 3) is `Invalid`. A step depends only on its siblings. Details and an example: [issue-graph-plans.md](issue-graph-plans.md) §4.
 
-```
-#100 --plan--> breakdown: A, B (after A, then: plan), C (after A)
-  |- A  #101 --fix--> PR merged: A done
-  |- B  #102 --plan--> breakdown: B1, B2 (after B1)     <- #102 is a parent too
-  |     |- B1 #110 --fix--> PR merged
-  |     '- B2 #111 --fix--> PR merged: #102's graph done, #102 closed: B done
-  '- C  #103 --fix--> PR merged: C done
-#100's graph done: #100 closed
-```
-
-* **Completion bubbles up.** A graph that finishes closes its parent as completed (§6.1). One level up, that parent is a child, so its step is done. No level reads another level's graph.
-* **Depth.** Each child's marker records its depth. A start block on an issue at `maxDepth` (default 3, an overseer setting) is `Invalid`: deeper splits take a person filing a new issue.
-* **Dependencies stay within a level.** A step depends only on its siblings; anything else is said one level up, so each graph stays acyclic.
-
-### 4.8 Replanning
-
-A plan can change as its steps finish: what one step taught can change the ones still to come. Replanning is `<trigger>/plan` on the parent - the same label and the same `plan` rule that wrote the plan:
-
-* **A person** applies it at any time.
-* **The reconciler** applies it at a checkpoint (below).
-
-#### Checkpoints
+### 4.8 Checkpoints
 
 A step can be a **checkpoint**: when it is done, the reconciler pauses the graph, has the plan revised, or both, as [fan-out](fanout.md)'s checkpoints stop a fan-out for people to look:
 
@@ -298,14 +235,10 @@ A step can be a **checkpoint**: when it is done, the reconciler pauses the graph
 | `checkpoint` | When the step is done |
 | :--- | :--- |
 | `stop` | The reconciler adds the stop label to the parent: the graph is `Paused` (no new children; the status still updates). Removing the label resumes it. |
-| `replan` | The reconciler adds `<trigger>/plan` to the parent: the plan is revised (below), and the next pass follows it. |
+| `replan` | The reconciler adds `<trigger>/plan` to the parent: the plan is revised ([issue-graph-plans.md](issue-graph-plans.md)), and the next pass follows it. Plan source only. |
 | `[replan, stop]` | Both: the plan is revised and the graph holds until a maintainer has read the new version and removes the stop label - the approval of a replan. |
 
-Each checkpoint fires once: it is recorded in the status comment's state, so removing the stop label, or a later pass, does not trip it again. The reconciler only adds labels; the plan rule does the replanning and takes `<trigger>/plan` off when it is done. Children already open when a checkpoint stops the graph go on (stop each to pause it).
-
-On a replan, the plan recipe revises the plan comment (the next version) knowing what happened: the graph's status comment (`key=graph-status`: each step's state, child and PR) and the done children's PRs. Done and active steps keep their ids and stay as they are; steps not yet started can change, be added or be removed, and so can `finally`; the plan says what changed and why.
-
-The next pass reads the new version, as it reads a refined plan: steps not yet started follow it, active children run on, and a step removed after its child exists shows as orphaned. A revision that changes or drops a done or active step is not applied; the status says so, for a maintainer to fix.
+Each checkpoint fires once: it is recorded in the status comment's state, so removing the stop label, or a later pass, does not trip it again. The reconciler only adds labels. Children already open when a checkpoint stops the graph go on (stop each to pause it). A person can replan at any time the same way, by applying `<trigger>/plan` to the parent.
 
 ---
 
@@ -507,10 +440,6 @@ Existing kcc-greenfield parents are **not** migrated. New parents use the graph 
 | Cycle or unknown `after` | `Invalid`; nothing is created. |
 | A step added after `finally` started | Created as usual; the parent closes only when it and `finally` are both done. |
 | Several steps ready, `maxActive` reached | Created in definition order as active ones finish. |
-| Plan refined after the graph started | Steps not yet started follow the new version; existing children are never edited. |
-| A replan changes or drops a done or active step | Not applied; the status warns, and the graph keeps the last version that kept them. |
-| A checkpoint reached while a plan run is queued or running | The label is already there: one replan covers it. |
-| A plan comment by someone outside the trusted author kinds | Ignored; a parent with only such a plan is `Invalid`. |
 | Child that became a graph parent | `Active` until its own graph closes it. |
 | Start block on an issue at `maxDepth` | `Invalid` for that issue's graph; the level above is unaffected. |
 | Child reopened | Its step goes back to `Active`; steps depending on it that have not started wait again. |
@@ -558,8 +487,8 @@ Existing kcc-greenfield parents are **not** migrated. New parents use the graph 
   * DAG readiness, `maxActive`, cycles and unknown ids;
   * `then` routing labels;
   * nesting: a child as parent, completion bubbling, the depth limit;
-  * plan-source reads: trusted authors only, versions, steps added and removed;
-  * checkpoints: `stop`, `replan` and both, each once per step (removing stop does not re-trip it); a revision that rewrites a done step refused.
+  * checkpoints: `stop`, `replan` and both, each once per step (removing stop does not re-trip it);
+  * the plan source ([issue-graph-plans.md](issue-graph-plans.md) §8).
 * Executor tests against a fake GitHub, including partial failures and dropped labels.
 * `validate` run in CI over `.agents/graphs/`.
 * End to end on a scratch repository with a two-step graph, and a two-level graph from a plan, with real PR merges.
@@ -610,6 +539,5 @@ Existing kcc-greenfield parents are **not** migrated. New parents use the graph 
 | Name | **Issue graph** (`IssueGraph`, `.agents/graphs/`, `factory-graph`, `factory graph`); a pipeline is a graph of chained steps. |
 | Dependencies | `after` (a DAG) within a level, with `maxActive` (default 1), and an optional `finally` step after all the others. `dependsOn`, reserved in the pipeline design, is named `after`. |
 | A child's first move | `then` (`fix`, `plan` or `ask`) per step, set by the planner, overridable by a person until the child starts. |
-| Replanning | `<trigger>/plan` on the parent, by a person or by the reconciler at a `checkpoint: replan` step; the plan rule revises the plan, and the next pass follows it for steps not yet started. |
 | Checkpoints | `checkpoint: stop`, `replan` or `[replan, stop]` per step, each firing once, as fan-out's checkpoints do; `[replan, stop]` holds the graph until a maintainer approves the revised plan by removing stop. |
 | Nesting | A child can become a parent; depth recorded in markers, `maxDepth` default 3; completion bubbles up. |
