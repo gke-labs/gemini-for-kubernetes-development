@@ -2,6 +2,7 @@ package commands
 
 import (
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 
@@ -31,8 +32,10 @@ func poolLogins(cfg *config.FactoryConfig) []string {
 		return nil
 	}
 	var out []string
-	for _, role := range cfg.Roles {
-		for _, u := range role.Users {
+	// Roles in name order, so a login spelt two ways keeps the same one
+	// every time (a map's order is random).
+	for _, name := range slices.Sorted(maps.Keys(cfg.Roles)) {
+		for _, u := range cfg.Roles[name].Users {
 			if u != "" && !slices.ContainsFunc(out, func(o string) bool { return strings.EqualFold(o, u) }) {
 				out = append(out, u)
 			}

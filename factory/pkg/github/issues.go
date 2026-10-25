@@ -146,6 +146,27 @@ func (c *Client) CloseIssue(ctx context.Context, number int) error {
 	return nil
 }
 
+// SetIssueState opens or closes an issue: state "open", or "closed" with
+// a reason ("completed", "not_planned"). go-github's IssueRequest predates
+// state_reason, so this is the REST call itself.
+func (c *Client) SetIssueState(ctx context.Context, number int, state, reason string) error {
+	if !c.Ready() {
+		return errNoClient
+	}
+	body := map[string]string{"state": state}
+	if reason != "" {
+		body["state_reason"] = reason
+	}
+	req, err := c.gh.NewRequest("PATCH", fmt.Sprintf("repos/%s/%s/issues/%d", c.owner, c.repo, number), body)
+	if err != nil {
+		return err
+	}
+	if _, err := c.gh.Do(ctx, req, nil); err != nil {
+		return fmt.Errorf("setting #%d %s (%s): %w", number, state, reason, err)
+	}
+	return nil
+}
+
 // ListSubIssues returns the numbers of an issue's sub-issues.
 func (c *Client) ListSubIssues(ctx context.Context, number int) ([]int, error) {
 	if !c.Ready() {

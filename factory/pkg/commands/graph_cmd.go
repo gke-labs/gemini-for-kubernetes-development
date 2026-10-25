@@ -30,6 +30,9 @@ A graph's steps come from a template in the repository,
 ` + "`yaml graph`" + ` block of its plan comment.`,
 	}
 	cmd.AddCommand(newGraphValidateCommand(ctx))
+	cmd.AddCommand(newGraphReconcileCommand(ctx))
+	cmd.AddCommand(newGraphAdoptCommand(ctx))
+	cmd.AddCommand(newGraphStartCommand(ctx))
 	return cmd
 }
 
@@ -150,4 +153,167 @@ func describeGraph(out io.Writer, s *graph.Spec) {
 	if s.Finally != nil {
 		line(graph.FinallyID, *s.Finally)
 	}
+}
+
+// graphFlags are what the commands that read or write a graph share.
+type graphFlags struct {
+	url      string
+	trigger  string
+	maxDepth int
+	dryRun   bool
+}
+
+func (f *graphFlags) add(cmd *cobra.Command, dryRun string) {
+	cmd.Flags().StringVar(&f.url, "url", "", "the parent issue's URL")
+	cmd.Flags().StringVar(&f.trigger, "trigger-label", "", "the label a child to be fixed gets (default: the factory config's triggerLabel, as watch uses)")
+	cmd.Flags().IntVar(&f.maxDepth, "max-depth", 0, "how deep graphs may nest (default 3)")
+	cmd.Flags().BoolVar(&f.dryRun, "dry-run", false, dryRun)
+	_ = cmd.MarkFlagRequired("url")
+}
+
+// client is the parent's repository client and the options a pass runs
+// with: the caller's login, the factory config's pool and trusted logins.
+func (f *graphFlags) client(ctx context.Context, out io.Writer) (*github.Client, graph.Options, error) {
+	item, err := parseGitHubItemURL(f.url)
+	if err != nil {
+		return nil, graph.Options{}, err
+	}
+	if item.IsPR {
+		return nil, graph.Options{}, fmt.Errorf("%s is a pull request; a graph's parent is an issue", f.url)
+	}
+	gh, err := github.NewClient(ctx)
+	if err != nil {
+		return nil, graph.Options{}, err
+	}
+	client := github.ForRepo(gh, item.Owner, item.Repo)
+	login, err := client.AuthenticatedLogin(ctx)
+	if err != nil {
+		return nil, graph.Options{}, err
+	}
+	trigger := f.trigger
+	if trigger == "" {
+		trigger = watchTriggerLabel()
+	}
+	cfg, _ := config.LoadConfig()
+	return client, graph.Options{
+		Issue: item.Number, Trigger: trigger, BotLogin: login,
+		Pool: poolLogins(cfg), Members: cfg.TrustedLogins(),
+		MaxDepth: f.maxDepth, DryRun: f.dryRun,
+		Logf: func(format string, args ...any) { fmt.Fprintf(out, format+"\n", args...) },
+	}, nil
+}
+
+func newGraphReconcileCommand(ctx context.Context) *cobra.Command {
+	var f graphFlags
+	cmd := &cobra.Command{
+		Use:   "reconcile --url <parent>",
+		Short: "Run one pass over a graph's parent",
+		Long: `Run one pass over a graph's parent issue, as the watch will.
+
+A pass reads the parent's start block, its steps (a template's file on the
+default branch, or the issue's plan), its children (its sub-issues, the
+ones its status comment records, and the issues you recently created with
+its marker) and their merged bot PRs, then decides (graph.Reconcile) and
+writes, in order: repairs (duplicates closed, children linked), labels a
+child to be fixed lost, children done by a merged bot PR closed,
+checkpoints (the stop or plan label on the parent), the children of the
+steps now ready (within maxActive), the parent closed once every step is
+done - and the status comment.
+
+With --dry-run it writes nothing, and prints what it would write and the
+status comment.`,
+		Example: `  factory graph reconcile --url https://github.com/owner/repo/issues/123 --dry-run`,
+		Args:    cobra.NoArgs,
+		RunE: func(c *cobra.Command, _ []string) error {
+			out := c.OutOrStdout()
+			client, opts, err := f.client(ctx, out)
+			if err != nil {
+				return err
+			}
+			p, err := graph.Sync(ctx, client, opts)
+			if err != nil {
+				return err
+			}
+			if p.NoGraph {
+				fmt.Fprintf(out, "#%d has no factory-graph start block: it is no graph's parent\n", opts.Issue)
+				return nil
+			}
+			if f.dryRun {
+				fmt.Fprintf(out, "\n%s\n", p.Status)
+			} else {
+				fmt.Fprintf(out, "#%d: %s\n", opts.Issue, p.Result.Phase)
+			}
+			return nil
+		},
+	}
+	f.add(cmd, "write nothing; print what the pass would write")
+	return cmd
+}
+
+func newGraphAdoptCommand(ctx context.Context) *cobra.Command {
+	var f graphFlags
+	var step string
+	var issue int
+	cmd := &cobra.Command{
+		Use:   "adopt --url <parent> --step <id> --issue <n>",
+		Short: "Bind an existing issue to a step of a graph",
+		Long: `Bind an existing issue to a step of the parent's graph: its body gets the
+step's marker, and it is linked as the parent's sub-issue. The next pass
+counts it as the step's child.`,
+		Args: cobra.NoArgs,
+		RunE: func(c *cobra.Command, _ []string) error {
+			client, opts, err := f.client(ctx, c.OutOrStdout())
+			if err != nil {
+				return err
+			}
+			return graph.Adopt(ctx, client, opts, step, issue)
+		},
+	}
+	f.add(cmd, "write nothing; print what it would do")
+	cmd.Flags().StringVar(&step, "step", "", "the step's id")
+	cmd.Flags().IntVar(&issue, "issue", 0, "the issue to bind to the step")
+	_ = cmd.MarkFlagRequired("step")
+	_ = cmd.MarkFlagRequired("issue")
+	return cmd
+}
+
+func newGraphStartCommand(ctx context.Context) *cobra.Command {
+	var f graphFlags
+	var source, name string
+	var params []string
+	cmd := &cobra.Command{
+		Use:   "start --url <issue> (--source plan | --graph <template> [--param k=v]...)",
+		Short: "Make an issue a graph's parent",
+		Long: `Make an issue a graph's parent: check the steps - the issue's plan
+(--source plan) or a template and its params (--graph) - and post the
+start block as a keyed comment, which a pass reads as it reads one in the
+body. The bot cannot edit another account's issue body; this is how a rule
+starts a graph. An issue that already has a start block is left as it is.`,
+		Example: `  factory graph start --url https://github.com/owner/repo/issues/123 --source plan
+  factory graph start --url https://github.com/owner/repo/issues/124 --graph kcc-greenfield --param kind=SpannerInstanceConfig`,
+		Args: cobra.NoArgs,
+		RunE: func(c *cobra.Command, _ []string) error {
+			client, opts, err := f.client(ctx, c.OutOrStdout())
+			if err != nil {
+				return err
+			}
+			start := graph.Start{Graph: name, Source: source}
+			for _, kv := range params {
+				k, v, ok := strings.Cut(kv, "=")
+				if !ok {
+					return fmt.Errorf("--param %q: give name=value", kv)
+				}
+				if start.Params == nil {
+					start.Params = map[string]string{}
+				}
+				start.Params[k] = v
+			}
+			return graph.StartGraph(ctx, client, opts, start)
+		},
+	}
+	f.add(cmd, "write nothing; print what it would do")
+	cmd.Flags().StringVar(&source, "source", "", "plan: the steps are the issue's plan's graph block")
+	cmd.Flags().StringVar(&name, "graph", "", "a template: .agents/graphs/<name>.yaml")
+	cmd.Flags().StringArrayVar(&params, "param", nil, "a template param, name=value (repeatable)")
+	return cmd
 }
