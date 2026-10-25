@@ -360,7 +360,7 @@ flowchart LR
     IS -- "normal fix task" --> Q["Task queue"]
 ```
 
-* **Issue scanner and rules.** An issue with a `factory-graph` start block is routed to the graph reconciler and is never queued as a task or treated as a workflow: the scanner records it as a fact, and the `fix` and `workflow` rules exclude it (`graph: false`), as they exclude fan-out parents with `fanout: false`.
+* **Issue scanner and rules.** An issue with a `factory-graph` start block is routed to the graph reconciler and is never queued as a task or treated as a workflow: the scanner records it as a fact, and the `fix` and `workflow` rules exclude it (`labels.none: <trigger>/graph`), as they exclude fan-out parents with `fanout: false`.
 * **Graph reconciler** (`watch/graphs`). It reconciles at startup, on nudges and on a periodic resync. Each pass covers open graph parents, plus recently closed ones so that accidental closes are caught. It never touches the task queue or sandboxes.
 * **Children.** Children are ordinary issues routed by the labels their `then` gives (§4.6), so the existing rules pick them up.
 * **Single writer.** Only one reconciler per repository writes. Others run in dry-run mode. The mechanism (for example, a Kubernetes `Lease`) is an implementation choice. Graphs are behind a flag during rollout.

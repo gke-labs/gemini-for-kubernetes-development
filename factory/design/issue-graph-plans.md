@@ -82,6 +82,8 @@ In this repository's `.agents/watch/` (any repository can adopt them):
 | `<trigger>/implement` | `implement` | Approval of the plan. Its recipe first reads the plan (`keyed-comment`, trusted kinds) and looks for a `graph` block: **without one**, it is fix-with-plan and opens one PR (#2120); **with one**, no agent runs: it validates the block (and the depth limit) and posts the start block `source: plan` as a keyed comment (key `graph`) - the bot cannot edit the issue body - and the reconciler takes it from there. |
 | `<trigger>` on a planned issue | `fix` | Nothing: fix leaves an issue in the plan flow alone (`labels.none: [<trigger>/plan, <trigger>/planned]`, #2120). |
 
+The implement task's bot may not label, so the parent of a graph started from a plan does not carry `<trigger>/graph` yet: the graph controller sweeps planned issues too, and labels one it finds with a start block, from then on swept and left alone by fix and workflow like any graph parent.
+
 To get one PR from a plan that has a Breakdown, remove the Breakdown (edit the plan comment, or replan asking for one PR) before applying `implement`; to get sub-issues, replan asking for a Breakdown.
 
 ---
