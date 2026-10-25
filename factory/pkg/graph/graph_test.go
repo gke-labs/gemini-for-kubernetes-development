@@ -193,6 +193,20 @@ func TestValidateTemplateParams(t *testing.T) {
 	}
 }
 
+// A plan whose graph block does not parse is still graph-shaped: the
+// graph's start reports what is wrong with it.
+func TestPlanShapeInvalidBlock(t *testing.T) {
+	c := &githubv39.IssueComment{Body: githubv39.String("x\n```yaml graph\nsteps: [oops\n```\n<!-- factory:comment key=plan v=1 -->"),
+		User: &githubv39.User{Login: githubv39.String("hopper-coder-bot")}, AuthorAssociation: githubv39.String("NONE")}
+	env := rules.Env{Pool: []string{"hopper-coder-bot"}}
+	if got := PlanShape([]*githubv39.IssueComment{c}, env); got != ShapeGraph {
+		t.Errorf("PlanShape = %q, want graph", got)
+	}
+	if _, err := PlanFromComments([]*githubv39.IssueComment{c}, env); err == nil {
+		t.Error("PlanFromComments: want the block's error")
+	}
+}
+
 // The plan is the newest plan comment by a trusted author kind: a pool bot
 // or a maintainer. Anyone else's comment carrying the marker is ignored.
 func TestPlanFromComments(t *testing.T) {
@@ -229,6 +243,14 @@ func TestPlanFromComments(t *testing.T) {
 		}, 1, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			// The rules' plan fact reads the same comment.
+			shape := map[bool]string{true: ShapeGraph, false: ShapePR}[tc.steps > 0]
+			if tc.version == 0 {
+				shape = ""
+			}
+			if got := PlanShape(tc.comments, env); got != shape {
+				t.Errorf("PlanShape = %q, want %q", got, shape)
+			}
 			p, err := PlanFromComments(tc.comments, env)
 			if err != nil {
 				t.Fatal(err)

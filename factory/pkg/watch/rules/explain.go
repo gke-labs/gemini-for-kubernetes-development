@@ -208,6 +208,11 @@ func factOf(predicate string, it Item, env Env, runs []PastRun) string {
 			return "connected-pr not read"
 		}
 		return "connected-pr " + orNone(it.ConnectedPR)
+	case "plan":
+		if it.unknown(FactPlan) {
+			return "plan not read"
+		}
+		return "plan " + orNone(it.Plan)
 	case "workflow":
 		if it.WorkflowMissing {
 			return "workflow " + it.Workflow + ", which cannot be loaded"
@@ -496,6 +501,9 @@ func (r *Rule) facts(runs []PastRun) []string {
 	for _, w := range append([]When{r.When}, r.When.AnyOf...) {
 		if w.ConnectedPR != "" {
 			add(FactConnectedPR)
+		}
+		if w.Plan != "" {
+			add(FactPlan)
 		}
 		if w.Workflow == "any" || w.Workflow == "missing" {
 			add(FactWorkflowDefinition)

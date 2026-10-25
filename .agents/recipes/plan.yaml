@@ -12,6 +12,12 @@
 # version. The agent writes the plan to a file of its task, so after a
 # conversation in its session (Continue session) it rewrites the plan
 # when asked, and the task's result follows (taskoutput.Refresh).
+#
+# Work too big for one PR gets a Breakdown: a `yaml graph` block of steps,
+# one PR each. overseer/implement on such a plan starts an issue graph
+# instead of a fix (.agents/watch/implement-graph.yaml,
+# design/issue-graph-plans.md); a revision keeps the steps' ids, which
+# name their sub-issues.
 name: plan
 on: [issue]
 as: coder
@@ -119,10 +125,50 @@ start:
         ## Test plan
         How the change will be verified: which tests to add or update, and any
         manual verification worth doing.
+
+        ## Breakdown
+        Only if the work is too big for one pull request a reviewer can
+        take in (several independent pieces, or a sequence where each piece
+        should land and be reviewed before the next); otherwise leave this
+        section out entirely - most plans are one PR. Each step becomes a
+        sub-issue, and its pull request is fixed from the step's body
+        alone, so a body must stand on its own. Write the steps as one
+        fenced block whose info string is exactly `yaml graph`:
+
+        ```yaml graph
+        maxActive: 1         # how many steps may be open at once
+        steps:
+          - id: api          # lowercase letters, digits and dashes; unique
+            title: Add the Foo API
+            body: |
+              What this step changes and how to verify it, in full: the
+              files, the approach, the tests.
+          - id: controller
+            title: Reconcile Foo
+            after: [api]     # steps that must be done before this starts
+            body: |
+              ...
+            checkpoint: replan  # optional: stop, replan, or [stop, replan]
+        finally:             # optional: once every step is done
+          title: Document Foo
+          body: |
+            ...
+        ```
+
+        A step may set `then: plan` (its sub-issue is planned first, for a
+        piece still too big or unclear) or `then: ask` (a maintainer
+        decides), instead of the default, fix. `checkpoint: stop` pauses the
+        graph when the step is done, for a maintainer to look; `replan` has
+        this plan revised then. Do not use the id `finally`.
         {{ if file "prior-plan.md" }}
         ## Changes since the previous version
         A short bullet list of what changed from the previous plan and why
         (whose feedback), so a reader sees what moved.
+
+        If the previous plan had a Breakdown, keep each step's id when you
+        keep the step - the id names its sub-issue, which may already be
+        open or done: do not rename, reorder into new ids, or drop a step
+        that is done.
         {{ end }}
 
         Write the whole file with your file tool (if it refuses the path, with

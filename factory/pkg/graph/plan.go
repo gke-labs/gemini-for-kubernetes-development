@@ -36,6 +36,20 @@ type Plan struct {
 // the overseer trusts as members). No such comment is nil, no error; a
 // plan whose graph block does not parse is an error.
 func PlanFromComments(comments []*githubv39.IssueComment, env rules.Env) (*Plan, error) {
+	found, version := trustedPlanComment(comments, env)
+	if found == nil {
+		return nil, nil
+	}
+	steps, err := ParsePlanBlock(found.GetBody())
+	if err != nil {
+		return nil, fmt.Errorf("plan v%d (comment %d): %w", version, found.GetID(), err)
+	}
+	return &Plan{Comment: found, Version: version, Steps: steps}, nil
+}
+
+// trustedPlanComment is the newest comment of key plan by a trusted author kind,
+// and its version; nil when there is none.
+func trustedPlanComment(comments []*githubv39.IssueComment, env rules.Env) (*githubv39.IssueComment, int) {
 	var found *githubv39.IssueComment
 	version := 0
 	for _, c := range comments {
@@ -52,12 +66,32 @@ func PlanFromComments(comments []*githubv39.IssueComment, env rules.Env) (*Plan,
 			version, _ = strconv.Atoi(m[len(m)-1][1])
 		}
 	}
-	if found == nil {
-		return nil, nil
+	return found, version
+}
+
+// The shapes of an issue's plan (the rules' plan fact, PlanShape).
+const (
+	ShapePR    = "pr"
+	ShapeGraph = "graph"
+)
+
+// PlanShape is the shape of an issue's plan, the rules' plan fact: graph
+// when its plan comment (PlanFromComments' choice) has a `yaml graph`
+// block, valid or not - a graph's start reports what is wrong with it -
+// pr when it has none, "" when the issue has no plan comment.
+func PlanShape(comments []*githubv39.IssueComment, env rules.Env) string {
+	found, _ := trustedPlanComment(comments, env)
+	switch {
+	case found == nil:
+		return ""
+	case HasPlanBlock(found.GetBody()):
+		return ShapeGraph
 	}
-	steps, err := ParsePlanBlock(found.GetBody())
-	if err != nil {
-		return nil, fmt.Errorf("plan v%d (comment %d): %w", version, found.GetID(), err)
-	}
-	return &Plan{Comment: found, Version: version, Steps: steps}, nil
+	return ShapePR
+}
+
+// HasPlanBlock is whether markdown has a `yaml graph` block.
+func HasPlanBlock(markdown string) bool {
+	_, ok := planBlock(markdown)
+	return ok
 }

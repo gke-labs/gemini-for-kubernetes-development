@@ -4,11 +4,13 @@
 // actions - creating the children of the steps now ready, repairing,
 // closing the parent at the end - and keeps its status comment.
 //
-// A parent is an issue labelled '<trigger>/graph'. A graph started from a
-// plan (overseer/implement on a plan with a Breakdown) gets that label from
-// here: its start block is posted by the implement task's bot, which may
-// not label, so planned issues are swept too, and one found with a start
-// block is labelled.
+// A parent is an issue labelled '<trigger>/graph'. One with no start block
+// whose plan has a Breakdown is started from its plan: the label is the
+// approval, put on by a maintainer or by the watch on overseer/implement
+// (.agents/watch/implement-graph.yaml). A start block posted by a bot that
+// may not label (factory graph start) is found on a planned issue, so
+// planned issues are swept too, and one found with a start block is
+// labelled.
 //
 // It owns no workers: parents are synced one after another from a single
 // goroutine, on a slow sweep and whenever a child is reported closed. The

@@ -190,6 +190,7 @@ the merge queue get nothing from any rule.
 | `opened-by` | `watcher` | the watcher's own login opened it |
 | `fanout` | `true`, `false` | it is a fan-out's parent (the fanout label): the fan-out controller's, never fixed itself. A child is an ordinary issue, created when it is to be worked on |
 | `graph` | `true`, `false` | it is an issue graph's parent (the graph label): the graph controller's, never fixed itself. A child is an ordinary issue, created when its step is ready ([issue graphs](../design/issue-graph.md)) |
+| `plan` | `none`, `pr`, `graph` | the shape of the issue's plan: its plan comment (key `plan`, the plan recipe's) by a pool bot or a maintainer - none; one without a Breakdown (one PR); one with a `yaml graph` block (an issue graph, [plans](../design/issue-graph-plans.md)). Read from the issue's comments, so only when a rule that could otherwise step asks for it. A graph-labelled issue whose plan has a Breakdown is started from its plan |
 
 ### Pull requests
 
@@ -437,7 +438,7 @@ neither rule decides (an edited body naming a workflow waits for the fix). `read
 writes labels but takes the item: it must not hold beside a care rule, nor
 while a task runs.
 
-Some facts cost a GitHub call per issue: `connected-pr` (the timeline),
+Some facts cost a GitHub call per issue: `connected-pr` (the timeline), `plan` (the comments),
 and, for an issue naming a workflow, its definition (`workflow: any` and
 `missing`) and its cooldown (`{{workflow-cooldown}}`). The scan reads
 them only when a rule that would step on every other fact uses them, so a

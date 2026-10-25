@@ -4,8 +4,10 @@
 # fix-with-plan recipe follows the issue's plan comment (key plan, written
 # by .agents/watch/plan.yaml's runs) and nothing else of the issue, and
 # open-pr opens the PR, ready, with the trigger label (the issue's others
-# follow, inherit-labels). An issue with no plan comment by a pool bot or a
-# maintainer fails.
+# follow, inherit-labels). It is the one-PR plan's (plan: pr, the plan
+# comment by a pool bot or a maintainer, without a Breakdown):
+# implement-graph takes a plan with a Breakdown - an issue graph, no PR -
+# and implement-unplanned an issue with no plan.
 #
 # The issue's plain fix stays off it (.agents/watch/fix.yaml leaves an
 # issue in the plan flow alone): implement is how a planned issue becomes
@@ -21,6 +23,7 @@ on: issue
 order: 16
 when:
   labels: {any: ["{{trigger}}/implement"]}
+  plan: pr
   linked-pr: none
 run:
   recipe: fix-with-plan

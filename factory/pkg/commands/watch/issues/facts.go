@@ -43,9 +43,9 @@ func (s *Scanner) Facts(ctx context.Context, num int) (rules.Item, rules.Env, er
 	if s.entities.GetReferencedIssuesMap()[num] {
 		it.LinkedPR = "open"
 	}
-	it.Unknown = []string{rules.FactConnectedPR}
+	it.Unknown = []string{rules.FactConnectedPR, rules.FactPlan}
 	if wf.Name != "" {
-		it.Unknown = []string{rules.FactWorkflowCooldown, rules.FactWorkflowDefinition, rules.FactConnectedPR}
+		it.Unknown = []string{rules.FactWorkflowCooldown, rules.FactWorkflowDefinition, rules.FactConnectedPR, rules.FactPlan}
 	}
 	for {
 		asked := it
@@ -73,6 +73,10 @@ func (s *Scanner) Facts(ctx context.Context, num int) (rules.Item, rules.Env, er
 			}
 			if connected {
 				it.ConnectedPR = "open"
+			}
+		case rules.FactPlan:
+			if it.Plan, err = s.readPlanShape(ctx, num); err != nil {
+				return it, env, fmt.Errorf("reading the plan: %w", err)
 			}
 		}
 		it.Unknown = slices.DeleteFunc(it.Unknown, func(f string) bool { return f == needs[0] })

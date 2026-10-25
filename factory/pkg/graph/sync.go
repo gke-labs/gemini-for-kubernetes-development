@@ -128,6 +128,9 @@ func Observe(ctx context.Context, gh GitHub, opts Options) (*Pass, *githubv39.Is
 		return nil, nil, err
 	}
 	start, err := FindStart(parent.GetBody(), comments, opts.env())
+	if err == nil && start == nil && implicitPlanStart(parent, comments, opts) {
+		start = &Start{Source: SourcePlan}
+	}
 	p := &Pass{Start: start}
 	if err == nil && start == nil {
 		p.NoGraph = true
@@ -169,6 +172,19 @@ func Observe(ctx context.Context, gh GitHub, opts Options) (*Pass, *githubv39.Is
 	}
 	p.Observed = o
 	return p, statusComment, nil
+}
+
+// implicitPlanStart is whether an issue with no start block is a graph
+// started from its plan all the same: it carries the graph label - a
+// maintainer's (labelling takes triage access) or the watch's on
+// overseer/implement (.agents/watch/implement-graph.yaml) - and its plan
+// comment has a Breakdown (PlanShape graph). The label is the approval.
+func implicitPlanStart(parent *githubv39.Issue, comments []*githubv39.IssueComment, opts Options) bool {
+	labels := labelNames(parent.Labels)
+	if !hasLabel(labels, opts.Trigger+"/graph") && !hasLabel(labels, "overseer/graph") {
+		return false
+	}
+	return PlanShape(comments, opts.env()) == ShapeGraph
 }
 
 // readSteps reads and validates the steps: a template's file on the
