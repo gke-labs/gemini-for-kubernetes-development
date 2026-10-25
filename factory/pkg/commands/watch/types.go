@@ -14,6 +14,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/concurrency"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/dispatcher"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/fanouts"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/graphs"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/issues"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/prs"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/sandbox"
@@ -83,6 +84,9 @@ type Flags struct {
 	// GraphQLPRDetails makes the PR scanner read the details of the pull
 	// requests it evaluates in GraphQL batches (prs.Config.GraphQLPRDetails).
 	GraphQLPRDetails bool
+	// Graphs runs the issue graph subcontroller (package graphs): parents
+	// labelled '<trigger>/graph', and planned issues whose graph started.
+	Graphs bool
 	// RulesDisabled are rules the watch does not act on at all, through
 	// the scanners or the engine: the operator's emergency switch
 	// ("review,ci").
@@ -160,6 +164,7 @@ type Watcher struct {
 	issueScanner  *issues.Scanner
 	prScanner     *prs.Scanner
 	fanouts       *fanouts.Controller
+	graphs        *graphs.Controller
 	warmWorkspace *warmworkspace.Controller
 	timeoutChan   <-chan time.Time
 }
@@ -202,6 +207,7 @@ func (w *Watcher) initComponents() {
 	})
 	w.dispatcher = w.newDispatcher(w.newCLIRunner())
 	w.fanouts = w.newFanoutController()
+	w.graphs = w.newGraphController()
 	w.warmWorkspace = w.newWarmWorkspaceController()
 	w.reconciler = w.newReconciler()
 	w.chores = w.newChoreScheduler()

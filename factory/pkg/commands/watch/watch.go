@@ -28,6 +28,9 @@ func (w *Watcher) Run(ctx context.Context) error {
 		if w.issuesEnabled() {
 			w.issueScanner.ScanOnce(ctx)
 			w.fanouts.SyncOnce(ctx)
+			if w.graphs != nil {
+				w.graphs.SyncOnce(ctx)
+			}
 		}
 		if w.prsEnabled() {
 			w.prScanner.ScanOnce(ctx)
@@ -71,6 +74,13 @@ func (w *Watcher) Run(ctx context.Context) error {
 			defer wg.Done()
 			_ = w.fanouts.Run(daemonCtx)
 		}()
+		if w.graphs != nil {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				_ = w.graphs.Run(daemonCtx)
+			}()
+		}
 	}
 	if w.prsEnabled() {
 		wg.Add(1)
