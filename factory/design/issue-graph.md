@@ -14,7 +14,7 @@
 
 ## 1. Summary
 
-Add a declarative **`IssueGraph`**: a set of steps, each a templated GitHub issue, with `dependsOn` edges between them (a DAG). A new deterministic graph reconciler in `factory watch`:
+Add a declarative **`IssueGraph`**: a set of steps, each a templated GitHub issue, with `after` edges between them (a DAG). A new deterministic graph reconciler in `factory watch`:
 
 1. Opens a step as a **sub-issue** of a parent issue once every step it depends on is done, at most `maxActive` at a time.
 2. Waits until those children are **closed**.
@@ -116,7 +116,7 @@ spec:
         Generate the types at `{{ .Params.version }}`.
 
     - id: controller
-      dependsOn: [gen-types]
+      after: [gen-types]
       title: 'Greenfield: Implement direct controller, E2E fixtures, and fuzzer for {{ .Params.kind }}'
       labels: [step/controller]
       review: |
@@ -126,19 +126,19 @@ spec:
         The types were added in #{{ (step "gen-types").Issue }}.
 
     - id: mockgcp
-      dependsOn: [controller]
+      after: [controller]
       title: 'Greenfield: Implement MockGCP and Alignment for {{ .Params.kind }}'
       body: |
         ...
 
     - id: mockgcp-alignment
-      dependsOn: [mockgcp]
+      after: [mockgcp]
       title: 'Greenfield: Align MockGCP logs with RealGCP for {{ .Params.kind }}'
       body: |
         ...
 ```
 
-`apiVersion`/`kind` is a versioned schema header, **not** a Kubernetes resource. It lets the format evolve and lets tools recognise a graph file. A chain of `dependsOn` is a pipeline; steps that do not depend on each other may run side by side, within `maxActive`.
+`apiVersion`/`kind` is a versioned schema header, **not** a Kubernetes resource. It lets the format evolve and lets tools recognise a graph file. A chain of `after` is a pipeline; steps that do not depend on each other may run side by side, within `maxActive`.
 
 ### 4.2 Schema
 
@@ -152,8 +152,8 @@ spec:
 | `labels` | Added to `defaults.labels`. The deployment's trigger label is always added; definitions never name it. |
 | `review` | Optional review instructions (a template). When set, the child's PR goes through [automated review](pr-automated-review.md): the reconciler adds the review label (`<triggerLabel>/review`) to the child and appends the rendered text to the child body under a `## Review Instructions` heading. The PR inherits both from the child it references, as described in pr-automated-review.md. When omitted, the PR is not reviewed automatically. |
 | `assignees` | Optional. Defaults to the watch's target assignee, so the child is picked up quickly. |
-| `completion.closeOnLinkedPRMerge` | Default on. When a bot PR that references the open child merges, the reconciler closes the child as completed (§6.3). |
-| `dependsOn` | Step ids that must be done before this step's child is created. They must form a DAG: unknown ids and cycles are invalid. A step without `dependsOn` is ready at once. |
+| `after` | Step ids that must be done before this step's child is created. They must form a DAG: unknown ids and cycles are invalid. A step without `after` is ready at once. |
+| `finally` | Optional: one step (`title`, `body`, `then`, `labels`, `review`), created once every other step is done, with no `after` to keep up to date. The parent closes when it is done. Without it, the parent closes when the steps are done. |
 | `maxActive` | How many steps may be active at once. Default 1. |
 | `then` | What the child does first: `fix` (default), `plan` or `ask` (§4.6). |
 
@@ -194,7 +194,7 @@ The block is read from the parent's body, or from a keyed comment (`<!-- factory
 
 `factory graph validate` is suitable for CI. It checks:
 * that the schema is strict, with no unknown fields;
-* that step ids are unique, and `dependsOn` names existing steps without a cycle;
+* that step ids are unique, and `after` names existing steps without a cycle (`finally` has no `after`);
 * that every param is constrained;
 * that every `default` is on an optional param and satisfies its constraint;
 * that templates parse and only reference steps they depend on.
@@ -221,16 +221,20 @@ steps:
     body: |
       ...
   - id: recorder
-    dependsOn: [schema]
+    after: [schema]
     then: plan
     title: Streaming event recorder and shard merge
     body: |
       ...
   - id: compare
-    dependsOn: [recorder]
+    after: [recorder]
     title: Threshold compare and stats.jsonl
     body: |
       ...
+finally:
+  title: Wire it into the CLI and document
+  body: |
+    ...
 ```
 ````
 
@@ -316,7 +320,7 @@ Each step follows this state machine:
 ```mermaid
 stateDiagram-v2
     [*] --> Pending
-    Pending --> Ready: every dependsOn step done
+    Pending --> Ready: every after step done
     Ready --> Active: within maxActive / create child
     Active --> Succeeded: child closed as completed
     Active --> Succeeded: bot PR referencing child merged / reconciler closes child
@@ -325,7 +329,7 @@ stateDiagram-v2
     Skipped --> Active: child reopened
 ```
 
-A step is **done** when it is `Succeeded` or `Skipped`. A child that became a parent is `Active` until its own graph closes it.
+A step is **done** when it is `Succeeded` or `Skipped`. A child that became a parent is `Active` until its own graph closes it. The `finally` step is `Pending` until every other step is done, then `Ready`.
 
 The graph's phase is derived from the steps and the parent:
 
@@ -354,9 +358,9 @@ The design separates **deciding** from **doing**:
 3. **Invalid** definition or params. Label the parent and report it in the status; create nothing.
 4. **Params changed** after start. The phase is `Blocked`; create nothing.
 5. **Repair.** Link marked children that aren't yet linked (§5.2), and close duplicates (§5.1).
-6. **Active child.** Re-apply missing labels and assignees. Close the child as completed if a bot PR that references it has merged (§6.3).
+6. **Active child.** Re-apply missing labels and assignees. Close the child as completed if a bot PR that references it has merged (§6.3); always on, with no per-step setting: a step that needs several PRs is a child with `then: plan` that breaks down into its own steps.
 7. **Create.** For each ready step in definition order, while fewer than `maxActive` steps are active, create its child with the labels its `then` gives (§4.6).
-8. **Complete.** When every step is done and the parent isn't marked complete, write the completion marker and close the parent as completed. No completion comment is posted; the final status comment shows the result. Completion is final; a parent reopened afterwards is left alone. A nested parent closing completes its step one level up (§4.7).
+8. **Complete.** When every step, and the `finally` step if there is one, is done and the parent isn't marked complete, write the completion marker and close the parent as completed. No completion comment is posted; the final status comment shows the result. Completion is final; a parent reopened afterwards is left alone. A nested parent closing completes its step one level up (§4.7).
 9. **Status.** Update the status comment if, and only if, its content changed.
 
 There are at most `maxActive` active steps, and at most one create per step per cycle. A step added to the definition runs once the steps it depends on are done.
@@ -456,7 +460,7 @@ A single comment on the parent, edited in place, replaces the hand-written progr
 
 Existing kcc-greenfield parents are **not** migrated. New parents use the graph template, and in-flight ones finish on the old workflow.
 
-1. Commit `.agents/graphs/kcc-greenfield.yaml` to the KCC repository. Step bodies copy over almost verbatim, with placeholders becoming template params and the step order becoming `dependsOn`. The review label becomes a `review` field holding the reviewer's instructions. The precondition script, cooldown, journal, guardrails and "search before create" instructions aren't carried over.
+1. Commit `.agents/graphs/kcc-greenfield.yaml` to the KCC repository. Step bodies copy over almost verbatim, with placeholders becoming template params and the step order becoming `after`. The review label becomes a `review` field holding the reviewer's instructions. The precondition script, cooldown, journal, guardrails and "search before create" instructions aren't carried over.
 2. File new greenfield parents with a `factory-graph` block instead of the workflow reference.
 3. Leave in-flight parents on `kcc-greenfield.txt` until they finish. The two don't interfere: a parent is handled as a graph only if it has a `factory-graph` start block. The workflow rules, including the pinned `workflow-missing`, are unchanged.
 4. Delete `kcc-greenfield.txt` once no open parent references it.
@@ -469,7 +473,8 @@ Existing kcc-greenfield parents are **not** migrated. New parents use the graph 
 | :--- | :--- |
 | Definition edited mid-flight | The latest definition is used. Existing children are never edited. New or changed steps take effect when they come up. Removed steps that have children show as orphaned. |
 | Step added ahead of a started step | Runs once the steps it depends on are done. |
-| Cycle or unknown `dependsOn` | `Invalid`; nothing is created. |
+| Cycle or unknown `after` | `Invalid`; nothing is created. |
+| A step added after `finally` started | Created as usual; the parent closes only when it and `finally` are both done. |
 | Several steps ready, `maxActive` reached | Created in definition order as active ones finish. |
 | Plan refined after the graph started | Steps not yet started follow the new version; existing children are never edited. |
 | A plan comment by someone outside the trusted author kinds | Ignored; a parent with only such a plan is `Invalid`. |
@@ -529,7 +534,7 @@ Existing kcc-greenfield parents are **not** migrated. New parents use the graph 
 1. Schema, `validate` and `reconcile --dry-run` (read-only).
 2. Executor and one-shot `reconcile` (manual progression).
 3. Reconciler in `factory watch`, behind a flag.
-4. `dependsOn`, `maxActive` and `then` routing.
+4. `after`, `maxActive` and `then` routing.
 5. The plan source, the `breakdown` rule, nesting and the depth limit.
 6. Start one new greenfield Kind on the graph template, then use it for all new Kinds and enable the flag by default. Delete `kcc-greenfield.txt` once in-flight parents finish.
 
@@ -569,6 +574,6 @@ Existing kcc-greenfield parents are **not** migrated. New parents use the graph 
 | Parent on completion | Always closed as completed, with no completion comment. |
 | Fan-out in v1? | **No.** Deferred; the design leaves room for it (§14). |
 | Name | **Issue graph** (`IssueGraph`, `.agents/graphs/`, `factory-graph`, `factory graph`); a pipeline is a graph of chained steps. |
-| Dependencies | `dependsOn` (a DAG) within a level, with `maxActive` (default 1). |
+| Dependencies | `after` (a DAG) within a level, with `maxActive` (default 1), and an optional `finally` step after all the others. `dependsOn`, reserved in the pipeline design, is named `after`. |
 | A child's first move | `then` (`fix`, `plan` or `ask`) per step, set by the planner, overridable by a person until the child starts. |
 | Nesting | A child can become a parent; depth recorded in markers, `maxDepth` default 3; completion bubbles up. |
