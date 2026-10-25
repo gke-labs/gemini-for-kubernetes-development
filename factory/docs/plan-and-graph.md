@@ -163,9 +163,50 @@ finally:                # optional: created once every step is done
 ````
 
 `finally` is one more sub-issue, created last - not the parent running.
-`factory graph validate --url <issue>` checks an issue's plan as a graph,
-and `factory graph reconcile --url <issue> --dry-run` shows what a pass
-would do.
+
+### Validating a graph: `factory graph validate`
+
+Use `factory graph validate` to check a graph before the controller creates
+anything. It checks either:
+
+- **A graph template file** (`.agents/graphs/<name>.yaml`): validates the strict
+  schema (`apiVersion: factory.gemini.google.com/v1alpha1`, `kind: IssueGraph`),
+  unique step IDs, dependency edges (`after`) with no cycles, `then` actions
+  (`fix`, `plan`, `ask`), checkpoints (`stop`), param constraints, and step
+  template rendering.
+- **An issue's plan comment** (`--url <issue>`): finds the latest plan comment
+  by a trusted author (a pool bot, owner, member, or collaborator) and checks
+  its `yaml graph` Breakdown block (same rules, with `checkpoint: replan`
+  allowed).
+
+Runnable command invocations:
+
+```sh
+# Validate a graph template file
+factory graph validate .agents/graphs/kcc-greenfield.yaml
+
+# Validate an issue's plan comment
+factory graph validate --url https://github.com/owner/repo/issues/100
+```
+
+Representative terminal output (for the Breakdown above on issue #100):
+
+```
+#100: plan v1 (by @coder-bot) is a valid graph
+maxActive 1
+  api                  after -                        then fix    Add the Foo API
+  controller           after api                      then plan   checkpoint replan  Reconcile Foo
+  docs                 after api                      then fix    Document Foo
+  storage              after -                        then ask    Pick the storage backend
+  finally              after every step               then fix    End-to-end test for Foo
+```
+
+For a template file, the header reports the file path and template name
+(e.g., `.agents/graphs/kcc-greenfield.yaml: graph kcc-greenfield is valid`),
+followed by the same `maxActive` limit and step table layout.
+
+Once validated, `factory graph reconcile --url <issue> --dry-run` shows what
+a pass would do.
 
 ## 5. Nesting
 
