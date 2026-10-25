@@ -66,6 +66,9 @@ type Parent struct {
 	// ClosedByCommit.
 	ClosedBy string
 	Labels   []string
+	// Assignees are the parent's: an ask step's child, the plan naming no
+	// one, goes to its humans among them (askAssignees).
+	Assignees []string
 	// Depth is the parent's own depth: 0 for an issue that is no graph's
 	// child, a child's marker depth otherwise.
 	Depth int
@@ -129,8 +132,11 @@ type Action struct {
 	Of     int
 	Labels []string
 	// Assignees are the step's, given its child when it is created (GitHub
-	// notifies them).
+	// notifies them). AskPerson is a then: ask step's child: with no
+	// assignees of the step's, it goes to the parent's humans, else to
+	// whoever approved the graph (askAssignees).
 	Assignees []string
+	AskPerson bool
 	// Title, Body and Child are a child to create: the rendered title,
 	// body (without the marker) and what its marker says.
 	Title string
@@ -311,6 +317,7 @@ func Reconcile(o Observed) Result {
 			Kind: ActCreateChild, Step: ss.ID, Title: strings.TrimSpace(title), Body: body,
 			Labels:    childLabels(s, *st, o.Trigger),
 			Assignees: slices.Clone(st.Assignees),
+			AskPerson: st.ThenOrDefault() == ThenAsk,
 			Child:     ChildInfo{Parent: o.Parent.Number, Source: o.Source, Step: ss.ID, Depth: o.Parent.Depth + 1, Params: hash},
 		})
 		r.Steps[i].State = StepActive

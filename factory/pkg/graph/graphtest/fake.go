@@ -21,11 +21,13 @@ type Issue struct {
 	Reason                     string
 	Labels                     []string
 	Assignees                  []string
-	Comments                   []*githubv39.IssueComment
-	SubIssues                  []int
-	IsPR, Merged               bool
-	Refs                       []int // issues or PRs that cross-reference it
-	ClosedByCommit             bool
+	// Events are timeline events (labeled...), before the closing one.
+	Events         []*githubv39.Timeline
+	Comments       []*githubv39.IssueComment
+	SubIssues      []int
+	IsPR, Merged   bool
+	Refs           []int // issues or PRs that cross-reference it
+	ClosedByCommit bool
 }
 
 // Fake is an in-memory repository: GitHub as a pass sees it.
@@ -65,6 +67,9 @@ func (f *Fake) GetIssue(_ context.Context, n int) (*githubv39.Issue, error) {
 	for _, l := range is.Labels {
 		out.Labels = append(out.Labels, &githubv39.Label{Name: githubv39.String(l)})
 	}
+	for _, a := range is.Assignees {
+		out.Assignees = append(out.Assignees, &githubv39.User{Login: githubv39.String(a)})
+	}
 	if is.IsPR {
 		out.PullRequestLinks = &githubv39.PullRequestLinks{}
 	}
@@ -93,14 +98,15 @@ func (f *Fake) ListIssueComments(_ context.Context, n int) ([]*githubv39.IssueCo
 
 func (f *Fake) ListIssueTimeline(_ context.Context, n int) ([]*githubv39.Timeline, bool, error) {
 	is := f.Issues[n]
+	events := slices.Clone(is.Events)
 	if is.Open {
-		return nil, true, nil
+		return events, true, nil
 	}
 	ev := &githubv39.Timeline{Event: githubv39.String("closed")}
 	if is.ClosedByCommit {
 		ev.CommitID = githubv39.String("abc123")
 	}
-	return []*githubv39.Timeline{ev}, true, nil
+	return append(events, ev), true, nil
 }
 
 func (f *Fake) ListIssues(_ context.Context, opts *githubv39.IssueListByRepoOptions) ([]*githubv39.Issue, *githubv39.Response, error) {

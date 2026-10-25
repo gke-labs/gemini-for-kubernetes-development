@@ -88,7 +88,7 @@ The parent never opens a PR. `fix` and `workflow` leave it alone
 |---|---|---|
 | `fix` (default) | `<t>`, the graph's default labels, the step's labels, `<t>/review` with review instructions | the `fix` rule: a coder bot fixes the child from its body and opens a PR `Fixes #<child>`; PR care follows (review, CI, comments, ready-for-human) |
 | `plan` | `<t>/plan` | the `plan` rule plans the child; a maintainer applies `<t>/implement` - one PR, or a graph of its own (section 5) |
-| `ask` | `<t>/needs-human` | waits for a person: no bot works on it. Its body says, under the step's text, what the person can do - label it `<t>` (fix) or `<t>/plan`, do it and close it, or close it as not planned to skip the step. The step's `assignees` are assigned, so they are notified |
+| `ask` | `<t>/needs-human` | waits for a person: no bot works on it. Its body says, under the step's text, what the person can do - label it `<t>` (fix) or `<t>/plan`, do it and close it, or close it as not planned to skip the step. It is assigned, so GitHub notifies them: to the step's `assignees` if the plan names any, else the parent's human assignees, else whoever approved the graph (the last person to label the parent `<t>/implement` or `<t>/graph`) |
 
 ### Progress, pauses and checkpoints
 
@@ -144,7 +144,8 @@ steps:
   - id: storage
     title: Pick the storage backend
     then: ask           # a person decides; the child is labelled <t>/needs-human
-    assignees: [alice]  # assigned when the child is created (any step may have them)
+    assignees: [alice]  # optional, any step: assigned when its child is created
+                        # (an ask step without: the parent's humans, else the approver)
     body: |
       Spanner or Bigtable? ...
     body: |

@@ -43,7 +43,7 @@ Because GitHub requires labels to exist in the repository before bots can attach
 | **Planned** | `overseer/planned` | Overseer (Automated) | The issue has a plan; plain fixing leaves it alone until `overseer/implement`. |
 | **Implement** | `overseer/implement` | Maintainers | **Approves the plan.** One PR for a one-PR plan; for a plan with a Breakdown, a graph of sub-issues. |
 | **Graph** | `overseer/graph` | Overseer / Maintainers | The issue is an issue graph's parent: its steps become sub-issues as they are ready. |
-| **Needs Human** | `overseer/needs-human` | Overseer (Automated) | A graph step (`then: ask`) waits for a person to decide: its body lists the choices (label it `overseer` or `overseer/plan`, do it and close it, or close it as not planned). The step's assignees are notified. |
+| **Needs Human** | `overseer/needs-human` | Overseer (Automated) | A graph step (`then: ask`) waits for a person to decide: its body lists the choices (label it `overseer` or `overseer/plan`, do it and close it, or close it as not planned). It is assigned to whoever approved the plan (or the parent's human assignees), so they are notified. |
 | **Stop / Pause** | `overseer/stop` | Maintainers / Overseer | **Circuit breaker and manual pause.** Halts and skips all automated processing on this issue or PR. Applied automatically if CI investigation retries exceed limits (3 attempts) or on inactivity. Maintainers can also manually apply it to freeze bot activity; remove it to resume. |
 
 > [!NOTE]
