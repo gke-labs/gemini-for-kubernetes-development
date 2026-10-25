@@ -19,6 +19,8 @@ type IssueRef struct {
 	StateReason string
 	// Merged is a pull request that was merged.
 	Merged bool
+	// Author is who opened it.
+	Author string
 	Labels []string
 }
 
@@ -30,7 +32,10 @@ type rawIssue struct {
 	State         string `json:"state"`
 	StateReason   string `json:"state_reason"`
 	RepositoryURL string `json:"repository_url"`
-	Labels        []struct {
+	User          struct {
+		Login string `json:"login"`
+	} `json:"user"`
+	Labels []struct {
 		Name string `json:"name"`
 	} `json:"labels"`
 	PullRequest *struct {
@@ -47,6 +52,7 @@ func (r rawIssue) ref() IssueRef {
 		Open:        r.State == "open",
 		StateReason: r.StateReason,
 		Merged:      r.PullRequest != nil && r.PullRequest.MergedAt != nil,
+		Author:      r.User.Login,
 	}
 	for _, l := range r.Labels {
 		ref.Labels = append(ref.Labels, l.Name)
