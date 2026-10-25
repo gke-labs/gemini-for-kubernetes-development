@@ -228,12 +228,16 @@ func AddSuspendedKey(key string) error {
 
 // DefaultModels is the list of Gemini models to check when verifying general token health.
 var DefaultModels = []string{
+	"gemini-3.8-flash",
 	"gemini-3.7-flash",
 	"gemini-3.6-flash",
 	"gemini-3.5-flash",
+	"gemini-3.5-flash-lite",
 	"gemini-3-flash-preview",
+	"gemini-4-argon",
 	"gemini-3.1-pro-preview",
 	"gemini-2.5-pro",
+	"gemini-2.5-flash",
 }
 
 // GetAvailableModels returns the list of models (from the given candidates) whose quota is not exceeded for the key, loading the quota list exactly once.
