@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	githubv39 "github.com/google/go-github/v39/github"
+
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/graph/graphtest"
 )
 
@@ -81,6 +83,55 @@ func TestSyncImplicitPlanStart(t *testing.T) {
 		if tc.started && (len(statusComments(f, 100)) != 1 || !strings.Contains(statusComments(f, 100)[0], "steps: plan v2")) {
 			t.Errorf("%s: status:\n%s", tc.name, strings.Join(statusComments(f, 100), "\n---\n"))
 		}
+	}
+}
+
+// A then: ask step's child is created labelled needs-human, saying what
+// a person can do, and assigned: to the step's assignees, else the
+// parent's humans (not the pool's bots), else whoever approved the graph -
+// the last human to label the parent implement or graph (not the watcher,
+// which labels it graph on implement) - else no one.
+func TestSyncAskStep(t *testing.T) {
+	labeled := func(label, actor string) *githubv39.Timeline {
+		return &githubv39.Timeline{Event: githubv39.String("labeled"), Label: &githubv39.Label{Name: githubv39.String(label)}, Actor: &githubv39.User{Login: githubv39.String(actor)}}
+	}
+	approved := []*githubv39.Timeline{
+		labeled("overseer/plan", "dave"),
+		labeled("overseer/implement", "carol"),
+		labeled("overseer/graph", "watcher"),
+	}
+	for _, tc := range []struct {
+		name      string
+		assignees string // the step's, as YAML
+		parent    []string
+		events    []*githubv39.Timeline
+		want      []string
+	}{
+		{"the step's", "[alice]", []string{"bob"}, approved, []string{"alice"}},
+		{"the parent's humans", "[]", []string{"hopper-coder-bot", "bob"}, approved, []string{"bob"}},
+		{"the approver", "[]", []string{"hopper-coder-bot"}, approved, []string{"carol"}},
+		{"a maintainer's graph label", "[]", nil, []*githubv39.Timeline{labeled("overseer/graph", "erin")}, []string{"erin"}},
+		{"only the watcher labelled", "[]", nil, []*githubv39.Timeline{labeled("overseer/graph", "watcher"), labeled("overseer/plan", "dave")}, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := graphtest.New()
+			f.Issues[100] = &graphtest.Issue{Title: "Epic", Body: "Build it.", Author: "alice", Assoc: "MEMBER", Open: true,
+				Labels: []string{"overseer/graph"}, Assignees: tc.parent, Events: tc.events}
+			f.Comment(100, "hopper-coder-bot", "NONE", "**Implementation plan** · v1\n\n```yaml graph\nsteps:\n"+
+				"  - {id: decide, title: Pick the storage, body: 'Spanner or Bigtable?', then: ask, assignees: "+tc.assignees+"}\n```\n\n<!-- factory:comment key=plan v=1 -->")
+			sync(t, f, Options{Issue: 100, Trigger: "overseer", BotLogin: "watcher", Pool: []string{"hopper-coder-bot", "watcher"}})
+			n := childOf(f, 100, "decide")
+			if n == 0 {
+				t.Fatal("no child for the ask step")
+			}
+			is := f.Issues[n]
+			if !slices.Equal(is.Labels, []string{"overseer/needs-human"}) || !strings.Contains(is.Body, "Spanner or Bigtable?\n\n## Needs a person") || !slices.Contains(f.Issues[100].SubIssues, n) {
+				t.Errorf("child = %+v", is)
+			}
+			if !slices.Equal(is.Assignees, tc.want) {
+				t.Errorf("assigned %v, want %v", is.Assignees, tc.want)
+			}
+		})
 	}
 }
 

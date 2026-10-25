@@ -26,6 +26,7 @@ type GitHub interface {
 	CreateIssue(ctx context.Context, title, body string, labels []string) (int, error)
 	EditIssue(ctx context.Context, number int, title, body string) error
 	AddLabels(ctx context.Context, number int, labels []string) error
+	AddAssignees(ctx context.Context, number int, assignees []string) error
 	AddSubIssue(ctx context.Context, parent, child int) error
 	AddComment(ctx context.Context, number int, body string) error
 	EditComment(ctx context.Context, commentID int64, body string) error
@@ -138,7 +139,7 @@ func Observe(ctx context.Context, gh GitHub, opts Options) (*Pass, *githubv39.Is
 	}
 
 	o := Observed{
-		Parent:   Parent{Number: opts.Issue, Open: parent.GetState() == "open", Labels: labelNames(parent.Labels)},
+		Parent:   Parent{Number: opts.Issue, Open: parent.GetState() == "open", Labels: labelNames(parent.Labels), Assignees: logins(parent.Assignees)},
 		Trigger:  opts.Trigger,
 		MaxDepth: opts.MaxDepth,
 		Children: map[string][]Child{},
@@ -365,6 +366,17 @@ func applyOne(ctx context.Context, gh GitHub, opts Options, p *Pass, a Action) e
 				return err
 			}
 		}
+		assignees := a.Assignees
+		if len(assignees) == 0 && a.AskPerson {
+			assignees = askAssignees(ctx, gh, opts, p.Observed.Parent)
+		}
+		if len(assignees) > 0 {
+			// Not the pass's failure: the child stands, and a login GitHub
+			// will not assign is the plan's to fix.
+			if err := gh.AddAssignees(ctx, n, assignees); err != nil {
+				opts.logf("assigning #%d (step %s) to %s: %v", n, a.Step, strings.Join(assignees, ", "), err)
+			}
+		}
 		return gh.AddSubIssue(ctx, opts.Issue, n)
 	case ActLinkChild:
 		return gh.AddSubIssue(ctx, opts.Issue, a.Issue)
@@ -399,7 +411,14 @@ func describe(a Action, dryRun bool) string {
 	}
 	switch a.Kind {
 	case ActCreateChild:
-		return fmt.Sprintf("%screate step %s's child %q, labelled %s", would, a.Step, a.Title, strings.Join(a.Labels, ", "))
+		assigned := ""
+		switch {
+		case len(a.Assignees) > 0:
+			assigned = ", assigned to " + strings.Join(a.Assignees, ", ")
+		case a.AskPerson:
+			assigned = ", assigned to the parent's humans or the graph's approver"
+		}
+		return fmt.Sprintf("%screate step %s's child %q, labelled %s%s", would, a.Step, a.Title, strings.Join(a.Labels, ", "), assigned)
 	case ActLinkChild:
 		return fmt.Sprintf("%slink #%d (step %s) as a sub-issue", would, a.Issue, a.Step)
 	case ActCloseDuplicate:
@@ -416,6 +435,55 @@ func describe(a Action, dryRun bool) string {
 		return fmt.Sprintf("%sclose the parent #%d as completed", would, a.Issue)
 	}
 	return would + a.Kind
+}
+
+// askAssignees is who an ask step's child goes to when its step names no
+// one: the parent's human assignees, else whoever approved the graph - the
+// last human to label the parent <trigger>/implement or <trigger>/graph
+// (the label takes triage access, so GitHub can assign them). Humans are
+// neither the pool's bots, the watcher, nor an app. None found, or the
+// timeline unreadable, is no one: the label and the body still say it.
+func askAssignees(ctx context.Context, gh GitHub, opts Options, parent Parent) []string {
+	human := func(login string) bool {
+		return login != "" && !strings.EqualFold(login, opts.BotLogin) && !strings.HasSuffix(login, "[bot]") &&
+			!slices.ContainsFunc(opts.Pool, func(p string) bool { return strings.EqualFold(p, login) })
+	}
+	var out []string
+	for _, a := range parent.Assignees {
+		if human(a) {
+			out = append(out, a)
+		}
+	}
+	if len(out) > 0 {
+		return out
+	}
+	events, _, err := gh.ListIssueTimeline(ctx, parent.Number)
+	if err != nil {
+		opts.logf("reading #%d's timeline for who approved its graph: %v", parent.Number, err)
+		return nil
+	}
+	approvals := []string{opts.Trigger + "/implement", opts.Trigger + "/graph", "overseer/implement", "overseer/graph"}
+	approver := ""
+	for _, e := range events {
+		if e.GetEvent() != "labeled" || !slices.ContainsFunc(approvals, func(l string) bool { return strings.EqualFold(l, e.GetLabel().GetName()) }) {
+			continue
+		}
+		if login := e.GetActor().GetLogin(); human(login) {
+			approver = login
+		}
+	}
+	if approver == "" {
+		return nil
+	}
+	return []string{approver}
+}
+
+func logins(users []*githubv39.User) []string {
+	var out []string
+	for _, u := range users {
+		out = append(out, u.GetLogin())
+	}
+	return out
 }
 
 func labelNames(labels []*githubv39.Label) []string {

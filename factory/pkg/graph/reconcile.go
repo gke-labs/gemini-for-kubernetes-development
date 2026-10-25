@@ -51,7 +51,7 @@ type Observed struct {
 	// first pass.
 	State State
 	// Trigger is the deployment's trigger label: the label a child to be
-	// fixed gets, and the prefix of the plan, route and stop labels.
+	// fixed gets, and the prefix of the plan, needs-human and stop labels.
 	Trigger string
 	// MaxDepth is how deep graphs may nest: a parent at this depth or more
 	// starts none. 0 is the default, 3.
@@ -66,6 +66,9 @@ type Parent struct {
 	// ClosedByCommit.
 	ClosedBy string
 	Labels   []string
+	// Assignees are the parent's: an ask step's child, the plan naming no
+	// one, goes to its humans among them (askAssignees).
+	Assignees []string
 	// Depth is the parent's own depth: 0 for an issue that is no graph's
 	// child, a child's marker depth otherwise.
 	Depth int
@@ -128,6 +131,12 @@ type Action struct {
 	// or the PR a child is closed as completed by.
 	Of     int
 	Labels []string
+	// Assignees are the step's, given its child when it is created (GitHub
+	// notifies them). AskPerson is a then: ask step's child: with no
+	// assignees of the step's, it goes to the parent's humans, else to
+	// whoever approved the graph (askAssignees).
+	Assignees []string
+	AskPerson bool
 	// Title, Body and Child are a child to create: the rendered title,
 	// body (without the marker) and what its marker says.
 	Title string
@@ -232,7 +241,7 @@ func Reconcile(o Observed) Result {
 		}
 		st := s.Step(id)
 		if st.ThenOrDefault() == ThenFix {
-			// A plan or route label is a command its rule takes off: only a
+			// A plan or needs-human label is taken off when it is acted on: only a
 			// child to be fixed keeps its labels.
 			if missing := missingLabels(c.Labels, childLabels(s, *st, o.Trigger)); len(missing) > 0 {
 				r.Actions = append(r.Actions, Action{Kind: ActAddChildLabels, Step: id, Issue: c.Number, Labels: missing})
@@ -301,10 +310,15 @@ func Reconcile(o Observed) Result {
 			}
 			body = strings.TrimRight(body, "\n") + "\n\n## Review Instructions\n\n" + review
 		}
+		if st.ThenOrDefault() == ThenAsk {
+			body = strings.TrimRight(body, "\n") + "\n\n" + needsHumanSection(o.Parent.Number, o.Trigger)
+		}
 		r.Actions = append(r.Actions, Action{
 			Kind: ActCreateChild, Step: ss.ID, Title: strings.TrimSpace(title), Body: body,
-			Labels: childLabels(s, *st, o.Trigger),
-			Child:  ChildInfo{Parent: o.Parent.Number, Source: o.Source, Step: ss.ID, Depth: o.Parent.Depth + 1, Params: hash},
+			Labels:    childLabels(s, *st, o.Trigger),
+			Assignees: slices.Clone(st.Assignees),
+			AskPerson: st.ThenOrDefault() == ThenAsk,
+			Child:     ChildInfo{Parent: o.Parent.Number, Source: o.Source, Step: ss.ID, Depth: o.Parent.Depth + 1, Params: hash},
 		})
 		r.Steps[i].State = StepActive
 		active++
@@ -398,16 +412,35 @@ func statuses(s *Spec, ids []string, canonical map[string]Child) []StepStatus {
 
 func done(state string) bool { return state == StepSucceeded || state == StepSkipped }
 
+// NeedsHumanLabel, under the trigger, marks the child of a then: ask step:
+// it waits for a person, and no bot works on it until one decides.
+const NeedsHumanLabel = "needs-human"
+
+// needsHumanSection is what a then: ask step's child says under the step's
+// own text: that it waits for a person, and what that person can do.
+func needsHumanSection(parent int, trigger string) string {
+	return fmt.Sprintf(`## Needs a person
+
+This step of #%d's plan waits for a decision: no bot works on it until a person makes it. What it needs is described above. Then either:
+
+- label it `+"`%s`"+` to have it fixed (one PR),
+- label it `+"`%s/plan`"+` to have it planned first,
+- do it yourself and close it as completed, or
+- close it as not planned to skip the step.
+
+The steps after it start once it is closed.`, parent, trigger, trigger)
+}
+
 // childLabels are the labels a step's child is created with, by what it
 // does first: to be fixed, the trigger label, the defaults, the step's own
 // and the review label when it has review instructions; to be planned,
-// <trigger>/plan; to wait for a person, <trigger>/route.
+// <trigger>/plan; to wait for a person, <trigger>/needs-human.
 func childLabels(s *Spec, st Step, trigger string) []string {
 	switch st.ThenOrDefault() {
 	case ThenPlan:
 		return []string{trigger + "/plan"}
 	case ThenAsk:
-		return []string{trigger + "/route"}
+		return []string{trigger + "/" + NeedsHumanLabel}
 	}
 	labels := []string{trigger}
 	labels = append(labels, s.Defaults.Labels...)

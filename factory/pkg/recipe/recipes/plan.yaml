@@ -186,8 +186,13 @@ start:
         ```
 
         A step may set `then: plan` (its sub-issue is planned first, for a
-        piece still too big or unclear) or `then: ask` (a maintainer
-        decides), instead of the default, fix. `checkpoint: stop` pauses the
+        piece still too big or unclear) or `then: ask` (a person decides,
+        and no bot works on it until then), instead of the default, fix.
+        Use `then: ask` only for what an agent cannot settle - a design
+        choice, an access or a judgment that is a maintainer's - and make
+        its body say exactly what must be decided and the options you see.
+        Its sub-issue goes to the maintainer who approved the plan; do not
+        name assignees yourself. `checkpoint: stop` pauses the
         graph when the step is done, for a maintainer to look; `replan` has
         this plan revised then. Do not use the id `finally`.
         {{ if file "prior-plan.md" }}

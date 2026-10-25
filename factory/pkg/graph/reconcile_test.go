@@ -141,7 +141,7 @@ func TestReconcileRoutesAndLabels(t *testing.T) {
 	s, err := ParsePlanBlock("```yaml graph\nmaxActive: 3\ndefaults: {labels: [area/x]}\nsteps:\n" +
 		"  - {id: f, title: F, body: f, labels: [kind/y], review: Look closely.}\n" +
 		"  - {id: p, title: P, body: p, then: plan}\n" +
-		"  - {id: q, title: Q, body: q, then: ask}\n```\n")
+		"  - {id: q, title: Q, body: q, then: ask, assignees: [alice]}\n```\n")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -159,15 +159,27 @@ func TestReconcileRoutesAndLabels(t *testing.T) {
 	if l := got["p"].Labels; !slices.Equal(l, []string{"overseer/plan"}) {
 		t.Errorf("plan labels %v", l)
 	}
-	if l := got["q"].Labels; !slices.Equal(l, []string{"overseer/route"}) {
+	if l := got["q"].Labels; !slices.Equal(l, []string{"overseer/needs-human"}) {
 		t.Errorf("ask labels %v", l)
+	}
+	// An ask step's child says it waits for a person, and what they can do;
+	// it is assigned to the step's assignees. No other step's says so.
+	if b := got["q"].Body; !strings.HasPrefix(b, "q\n\n## Needs a person\n\nThis step of #100's plan") ||
+		!strings.Contains(b, "label it `overseer` to have it fixed") || !strings.Contains(b, "label it `overseer/plan` to have it planned first") {
+		t.Errorf("ask body %q", b)
+	}
+	if !slices.Equal(got["q"].Assignees, []string{"alice"}) || len(got["f"].Assignees) != 0 {
+		t.Errorf("assignees q %v, f %v", got["q"].Assignees, got["f"].Assignees)
+	}
+	if strings.Contains(got["f"].Body, "Needs a person") || strings.Contains(got["p"].Body, "Needs a person") {
+		t.Errorf("a fix or plan step's child asks for a person: %q / %q", got["f"].Body, got["p"].Body)
 	}
 	// An open child to be fixed that lost a label gets it back; one to be
 	// planned does not (its plan label is a command the plan rule takes off).
 	r = Reconcile(observed(s, map[string][]Child{
 		"f": {{Number: 1, Open: true, Linked: true, Labels: []string{"overseer"}}},
 		"p": {{Number: 2, Open: true, Linked: true}},
-		"q": {{Number: 3, Open: true, Linked: true, Labels: []string{"overseer/route"}}},
+		"q": {{Number: 3, Open: true, Linked: true, Labels: []string{"overseer/needs-human"}}},
 	}, State{}))
 	if !slices.Equal(kinds(r), []string{"add-child-labels:f"}) || !slices.Equal(r.Actions[0].Labels, []string{"area/x", "kind/y", "overseer/review"}) {
 		t.Errorf("re-applied %v %v", kinds(r), r.Actions)

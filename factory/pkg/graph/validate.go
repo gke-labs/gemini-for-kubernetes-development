@@ -11,7 +11,10 @@ import (
 )
 
 var (
-	stepIDRE    = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
+	stepIDRE = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
+	// loginRE is a GitHub login: letters, digits and single hyphens, not at
+	// either end; bots' [bot] logins cannot be assigned.
+	loginRE     = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9]|-[A-Za-z0-9]){0,38}$`)
 	paramNameRE = regexp.MustCompile(`^[a-z][a-zA-Z0-9_]*$`)
 )
 
@@ -106,6 +109,11 @@ func (st Step) validateFields(plan bool) error {
 	case "", ThenFix, ThenPlan, ThenAsk:
 	default:
 		return fmt.Errorf("then %q is not one of %s, %s, %s", st.Then, ThenFix, ThenPlan, ThenAsk)
+	}
+	for _, a := range st.Assignees {
+		if !loginRE.MatchString(a) {
+			return fmt.Errorf("assignee %q is not a GitHub login", a)
+		}
 	}
 	for i, a := range st.Checkpoint {
 		switch a {
