@@ -1,29 +1,33 @@
-# Design Note: Deterministic Multi-Step Issue Pipelines (`IssuePipeline`)
+# Design Note: Issue Graphs (`IssueGraph`)
 
 | Metadata | Details |
 | :--- | :--- |
-| **Status** | Proposal; not built. No `IssuePipeline` schema, reconciler or `factory pipeline` command exists (2026-10-21); only this note (#1841). Since it was written, the watch's decisions moved to the rules engine ([watch-rules.md](watch-rules.md)) and [fan-out](fanout.md) shipped, so a pipeline reconciler would sit beside `watch/fanouts`, and parents would be kept from `fix`/`workflow` by a fact, as `fanout: false` does for fan-out parents. |
-| **Author(s)** | Sam Dowell (`sdowell@google.com`) |
+| **Status** | Proposal; not built. First written as *Deterministic Multi-Step Issue Pipelines* (`IssuePipeline`, #1841); revised as issue graphs: a pipeline is a graph whose steps each depend on the one before. Since #1841 the watch's decisions moved to the rules engine ([watch-rules.md](watch-rules.md)) and [fan-out](fanout.md) shipped, so the reconciler sits beside `watch/fanouts`, and parents are kept from `fix`/`workflow` by a fact, as `fanout: false` does for fan-out parents. Issues are now planned and implemented through `.agents` rules and recipes (#2119, #2120), which gives graphs a second source of steps: a plan's breakdown. |
+| **Author(s)** | Sam Dowell (`sdowell@google.com`); revised for DAGs, plans and nesting |
 | **Created** | 2026-09-29 |
-| **Last Updated** | 2026-10-21 |
+| **Last Updated** | 2026-10-25 |
 | **Replaces** | [`.agents/workflows/kcc-greenfield.txt`](../../.agents/workflows/kcc-greenfield.txt) (LLM-driven `mode: workflow`) |
 | **Related** | [workflow-orchestration-and-session-reconciliation.md](workflow-orchestration-and-session-reconciliation.md), [watch-subcontrollers-architecture.md](watch-subcontrollers-architecture.md), [task-recipes-and-outputs.md](task-recipes-and-outputs.md), [fanout.md](fanout.md), [watch-rules.md](watch-rules.md) |
-| **Scope** | `factory watch`, `factory` CLI |
+| **Scope** | `factory watch`, `factory` CLI, `.agents/` rules and recipes |
 
 ---
 
 ## 1. Summary
 
-Add a declarative, YAML-defined **`IssuePipeline`**: an ordered list of steps, each a templated GitHub issue. A new deterministic pipeline reconciler in `factory watch`:
+Add a declarative **`IssueGraph`**: a set of steps, each a templated GitHub issue, with `dependsOn` edges between them (a DAG). A new deterministic graph reconciler in `factory watch`:
 
-1. Opens step N as a **sub-issue** of a parent issue.
-2. Waits until that child is **closed**.
-3. Opens step N+1.
+1. Opens a step as a **sub-issue** of a parent issue once every step it depends on is done, at most `maxActive` at a time.
+2. Waits until those children are **closed**.
+3. Opens the steps that are now ready.
 4. Closes the parent after the last step.
+
+A pipeline is the special case where each step depends on the one before.
 
 Orchestration needs no sandbox, LLM session, journal branch or precondition script. Child issues are ordinary trigger-labelled issues, and they go through the existing flow: the `fix` rule, then the PR rules (`comments`, `conflict`, `ci`, `review`, `ready`).
 
-Pipelines are defined **only in the repository they run against**, and the latest definition on the default branch is always used.
+Steps come from one of two sources: a **template** defined **only in the repository it runs against** (the latest definition on the default branch is always used), or an issue's **approved plan** - the breakdown in its plan comment (§4.5).
+
+Each step says what its child does first: be fixed, be planned, or wait for a person (`then`, §4.6). A child that is planned and broken down becomes the parent of its own graph, so graphs nest (§4.7).
 
 ---
 
@@ -41,35 +45,40 @@ Pipelines are defined **only in the repository they run against**, and the lates
 | Safety | Long "do NOT…" guardrail list | Guardrails only work if the LLM follows them |
 | Cost | Sandbox + LLM tokens on every run, including "still waiting" | Wasted compute and tokens |
 
-Latency is no longer the main problem: the `nudge` rule already steps a workflow when an issue it links closes. What remains is determinism, idempotency and cost. The orchestration needs no judgement. It is a fixed state machine over GitHub issue state, so it should be code.
+Latency is no longer the main problem: the `nudge` rule already steps a workflow when an issue it links closes. What remains is determinism, idempotency and cost. On KCC staging, most of the ~150 workflow runs every 3 hours are an orchestrator waking a suspended sandbox to check on its children, and under cluster pressure those wakes fail (two on 2026-10-25, on `FailedScheduling` and `FailedAttachVolume`).
+
+Plans have a related gap: `overseer/implement` turns an approved plan into one fix PR (#2120), but a plan whose work needs several PRs, some depending on others, has nowhere to go. The orchestration needs no judgement. It is a fixed state machine over GitHub issue state, so it should be code.
 
 ---
 
 ## 3. Goals / Non-Goals
 
 **Goals**
-* Declare a multi-step flow as one YAML file in the repository it runs against.
+* Declare a multi-step flow as one YAML file in the repository it runs against, or as an approved plan's breakdown.
 * Deterministic, idempotent, level-triggered reconciliation: the same definition and GitHub state always give the same actions.
-* Each step becomes a sub-issue. Step N+1 is created only after step N is closed, and only one step is active at a time.
+* Each step becomes a sub-issue. A step's child is created only after every step it depends on is closed, and at most `maxActive` steps are active at a time (default 1).
+* Each child's first move (`then: fix | plan | ask`) is set by the planner and can be overridden by a person.
+* Graphs nest: a child can be planned and broken down into its own graph, up to a depth limit.
 * GitHub is the only state store. Nothing in the daemon has to survive a restart.
 * The next child is created within one resync interval of the previous child closing, sooner when a nudge arrives.
 * The decision logic is a pure function that can be table-tested.
 
 **Non-Goals (v1)**
-* Fan-out (repeating a step once per value of a list), DAGs, parallel steps and conditional steps. The design leaves room for these (§14).
-* Pipelines defined outside the watched repository, or pinned to a definition version.
+* Fan-out (repeating a step once per value of a list) and conditional steps. The design leaves room for these (§14).
+* Dependencies across levels of a nested graph: a step depends only on its siblings.
+* Templates defined outside the watched repository, or pinned to a definition version.
 * Replacing LLM-driven workflows that need judgement (for example `kcc-direct-migration-tracker`).
 * Changing how child issues are worked on.
 
 ---
 
-## 4. Defining a pipeline
+## 4. Defining a graph
 
-### 4.1 Definition file (`.agents/pipelines/<name>.yaml`)
+### 4.1 Definition file (`.agents/graphs/<name>.yaml`)
 
 ```yaml
 apiVersion: factory.gemini.google.com/v1alpha1
-kind: IssuePipeline
+kind: IssueGraph
 metadata:
   name: kcc-greenfield
   description: >-
@@ -88,6 +97,9 @@ spec:
       enum: [v1alpha1, v1beta1]
       default: v1alpha1
 
+  # How many steps may be active at once (default 1).
+  maxActive: 1
+
   # Applied to every step unless the step overrides it.
   defaults:
     labels: [greenfield]     # the deployment's trigger label is always added
@@ -104,6 +116,7 @@ spec:
         Generate the types at `{{ .Params.version }}`.
 
     - id: controller
+      dependsOn: [gen-types]
       title: 'Greenfield: Implement direct controller, E2E fixtures, and fuzzer for {{ .Params.kind }}'
       labels: [step/controller]
       review: |
@@ -113,17 +126,19 @@ spec:
         The types were added in #{{ (step "gen-types").Issue }}.
 
     - id: mockgcp
+      dependsOn: [controller]
       title: 'Greenfield: Implement MockGCP and Alignment for {{ .Params.kind }}'
       body: |
         ...
 
     - id: mockgcp-alignment
+      dependsOn: [mockgcp]
       title: 'Greenfield: Align MockGCP logs with RealGCP for {{ .Params.kind }}'
       body: |
         ...
 ```
 
-`apiVersion`/`kind` is a versioned schema header, **not** a Kubernetes resource. It lets the format evolve and lets tools recognise a pipeline file.
+`apiVersion`/`kind` is a versioned schema header, **not** a Kubernetes resource. It lets the format evolve and lets tools recognise a graph file. A chain of `dependsOn` is a pipeline; steps that do not depend on each other may run side by side, within `maxActive`.
 
 ### 4.2 Schema
 
@@ -133,48 +148,130 @@ spec:
 | `params[].required` | Defaults to `true`. An optional param (`required: false`) may be left out of the parent's block. |
 | `params[].default` | Only allowed on optional params, and must satisfy the param's constraint. An omitted optional param takes its `default`, or the empty string if it has none, so templates can test it with `{{ if .Params.<name> }}`. |
 | `steps[].id` | Unique, stable identity. Children are matched to steps by `id`, never by position or title. |
-| `title` / `body` | Templates. They can use `.Params`, a few string helpers, and `step "<id>"`, which gives the issue number and URL of an **earlier** step. |
+| `title` / `body` | Templates. They can use `.Params`, a few string helpers, and `step "<id>"`, which gives the issue number and URL of a step this one depends on, directly or not. |
 | `labels` | Added to `defaults.labels`. The deployment's trigger label is always added; definitions never name it. |
 | `review` | Optional review instructions (a template). When set, the child's PR goes through [automated review](pr-automated-review.md): the reconciler adds the review label (`<triggerLabel>/review`) to the child and appends the rendered text to the child body under a `## Review Instructions` heading. The PR inherits both from the child it references, as described in pr-automated-review.md. When omitted, the PR is not reviewed automatically. |
 | `assignees` | Optional. Defaults to the watch's target assignee, so the child is picked up quickly. |
 | `completion.closeOnLinkedPRMerge` | Default on. When a bot PR that references the open child merges, the reconciler closes the child as completed (§6.3). |
-| `dependsOn` | **Reserved** for DAGs. In v1 each step depends on the previous one. |
+| `dependsOn` | Step ids that must be done before this step's child is created. They must form a DAG: unknown ids and cycles are invalid. A step without `dependsOn` is ready at once. |
+| `maxActive` | How many steps may be active at once. Default 1. |
+| `then` | What the child does first: `fix` (default), `plan` or `ask` (§4.6). |
 
-A child closed as not planned or as a duplicate is treated as done: its step is `Skipped` and the pipeline moves on (§5.5). To stop a pipeline instead, add the stop label to the parent or close it.
+A child closed as not planned or as a duplicate is treated as done: its step is `Skipped` and the graph moves on (§5.5). To stop a graph instead, add the stop label to the parent or close it.
 
 When the last step is done, the reconciler always closes the parent as completed (§6.1).
 
-### 4.3 Starting a pipeline from a parent issue
+### 4.3 Starting a graph from a parent issue
 
 The parent issue body contains one fenced block:
 
 ````markdown
 Onboard SpannerInstanceConfig as a greenfield resource.
 
-```factory-pipeline
-pipeline: kcc-greenfield
+```factory-graph
+graph: kcc-greenfield
 params:
   kind: SpannerInstanceConfig
 ```
 ````
 
-* `pipeline:` is a bare name, resolved to `.agents/pipelines/<name>.yaml` in the watched repository. Paths, URLs and other repositories are rejected, so a pipeline can only create issues in the repository that defines it.
+For a planned issue, the steps come from its plan instead (§4.5):
+
+````markdown
+```factory-graph
+source: plan
+```
+````
+
+The block is read from the parent's body, or from a keyed comment (`<!-- factory:comment key=graph v=N -->`) by a trusted author: one of the author kinds `pool`, `owner`, `member`, `collaborator`, as the `keyed-comment` recipe step reads them. The bot cannot edit another account's issue body, so a rule starts a graph by posting that comment (`overseer/breakdown`, §4.5).
+
+* `graph:` is a bare name, resolved to `.agents/graphs/<name>.yaml` in the watched repository. Paths, URLs and other repositories are rejected, so a graph can only create issues in the repository that defines it.
 * `params:` must include every required param and may include optional ones. Unknown params are rejected.
 * The parent must be an issue the watch already acts on (trigger-labelled or assigned to a bot), which needs at least triage access.
-* Existing issues are bound to steps by an operator (`factory pipeline adopt`, §9), never from the issue body.
+* Existing issues are bound to steps by an operator (`factory graph adopt`, §9), never from the issue body.
 
 ### 4.4 Validation
 
-`factory pipeline validate` is suitable for CI. It checks:
+`factory graph validate` is suitable for CI. It checks:
 * that the schema is strict, with no unknown fields;
-* that step ids are unique;
+* that step ids are unique, and `dependsOn` names existing steps without a cycle;
 * that every param is constrained;
 * that every `default` is on an optional param and satisfies its constraint;
-* that templates parse and only reference earlier steps.
+* that templates parse and only reference steps they depend on.
 
 It then renders every step with each param's `example`, and again with every optional param omitted.
 
-The reconciler runs the same checks against the parent's actual params before it creates anything.
+The reconciler runs the same checks against the parent's actual params, or the plan's steps, before it creates anything.
+
+### 4.5 Steps from a plan
+
+The plan recipe (`.agents/recipes/plan.yaml`) writes an issue's plan comment (key `plan`, refined in place: v1, v2, ...). When the work is bigger than one reviewable PR, the plan ends with a **Breakdown**: prose for people, and a fenced block in the step schema of §4.2, without params:
+
+````markdown
+## Breakdown
+1. **schema** - the versioned schema package.
+2. **recorder** - the event recorder (after schema); big enough to plan on its own.
+3. **compare** - threshold compare (after recorder).
+
+```yaml graph
+maxActive: 2
+steps:
+  - id: schema
+    title: Add the versioned schema package
+    body: |
+      ...
+  - id: recorder
+    dependsOn: [schema]
+    then: plan
+    title: Streaming event recorder and shard merge
+    body: |
+      ...
+  - id: compare
+    dependsOn: [recorder]
+    title: Threshold compare and stats.jsonl
+    body: |
+      ...
+```
+````
+
+* `source: plan` reads the newest comment of key `plan` by `pool`, `owner`, `member` or `collaborator`; anyone else's carrying the marker is ignored. A plan without a `graph` block is `Invalid` as a graph source: it is a one-PR plan, which `overseer/implement` implements (#2120).
+* The steps are read fresh every pass, as a template is: a plan refined after the graph started changes the steps not yet started.
+* The rules in `.agents/watch/` tie it together:
+
+| Label | Rule | What happens |
+| :--- | :--- | :--- |
+| `<trigger>/plan` | `plan` | The plan comment is posted or updated, with a Breakdown when the work needs more than one PR; the watcher adds `<trigger>/planned`. |
+| `<trigger>/implement` | `implement` | Approval of a one-PR plan: fix-with-plan opens the PR (#2120). |
+| `<trigger>/breakdown` | `breakdown` (new) | Approval of a plan with a Breakdown: a recipe with no agent validates the `graph` block and posts the start block `source: plan` as a keyed comment. The reconciler takes it from there. |
+| `<trigger>` on a planned issue | `fix` | Nothing: fix leaves an issue in the plan flow alone (#2120). |
+
+### 4.6 What each child does first (`then`)
+
+| `then` | The child is created with | So |
+| :--- | :--- | :--- |
+| `fix` (default) | the trigger label, `labels` and the review label | the `fix` rule implements it; the PR rules care for its PR. |
+| `plan` | `<trigger>/plan` | the `plan` rule plans it; a maintainer approves with `<trigger>/implement` (one PR) or `<trigger>/breakdown` (its own graph, §4.7). |
+| `ask` | `<trigger>/route` | nothing runs until a person applies the trigger label (fix) or `<trigger>/plan`. |
+
+The planner proposes `then` for each step and a maintainer approves it with the plan. Until a child starts, anyone with triage access can override its route by changing its labels; later, a triage rule on `<trigger>/route` children could choose.
+
+### 4.7 Nesting
+
+A child that is planned and broken down gets its own start block and becomes a parent. Its graph is reconciled like any other, one level down:
+
+```
+#100 --plan--> breakdown: A, B (after A, then: plan), C (after A)
+  |- A  #101 --fix--> PR merged: A done
+  |- B  #102 --plan--> breakdown: B1, B2 (after B1)     <- #102 is a parent too
+  |     |- B1 #110 --fix--> PR merged
+  |     '- B2 #111 --fix--> PR merged: #102's graph done, #102 closed: B done
+  '- C  #103 --fix--> PR merged: C done
+#100's graph done: #100 closed
+```
+
+* **Completion bubbles up.** A graph that finishes closes its parent as completed (§6.1). One level up, that parent is a child, so its step is done. No level reads another level's graph.
+* **Depth.** Each child's marker records its depth. A start block on an issue at `maxDepth` (default 3, an overseer setting) is `Invalid`: deeper splits take a person filing a new issue.
+* **Dependencies stay within a level.** A step depends only on its siblings; anything else is said one level up, so each graph stays acyclic.
 
 ---
 
@@ -185,9 +282,9 @@ The reconciler keeps no state of its own. Each cycle it reads everything it need
 | Artifact | Purpose |
 | :--- | :--- |
 | **Sub-issue link** (parent → child) | Discovers children and gives native nesting in the GitHub UI. |
-| **Hidden marker in each child body** | Names the parent, pipeline and step, plus a hash of the params the parent supplied when the child was rendered. |
-| **Status comment on the parent** | Human-readable progress (§8). Output only; apart from the completion marker, never read back as state. |
-| **Completion marker** | A hidden marker in the status comment, recording that the pipeline finished, so completion happens exactly once. |
+| **Hidden marker in each child body** | Names the parent, the source (template or `plan`), the step and the depth, plus a hash of the params the parent supplied when the child was rendered. |
+| **Status comment on the parent** | Human-readable progress (§8): a keyed comment (`key=graph-status`) the watcher edits in place. Output only; apart from the completion marker, never read back as state. |
+| **Completion marker** | A hidden marker in the status comment, recording that the graph finished, so completion happens exactly once. |
 
 Child bodies don't mention the parent as `#N`. The sub-issue link already shows the relationship, and leaving the reference out makes it less likely that an agent writes `Fixes #<parent>` (§6.3).
 
@@ -210,7 +307,7 @@ Without push access, labels and assignees set when an issue is created are silen
 
 ### 5.4 Params can't change after start
 
-Each child records a hash of the params the parent supplied. If someone edits the parent so the params no longer match, the pipeline is **Blocked** until they are restored. To run with different params, file a new parent. This stops a body edit from changing what the remaining steps ask agents to do. Only the supplied params are frozen; the definition, including defaults for omitted optional params, is still read fresh (§11).
+Each child records a hash of the params the parent supplied. If someone edits the parent so the params no longer match, the graph is **Blocked** until they are restored. To run with different params, file a new parent. This stops a body edit from changing what the remaining steps ask agents to do. Only the supplied params are frozen; the definition, including defaults for omitted optional params, is still read fresh (§11).
 
 ### 5.5 States
 
@@ -219,7 +316,8 @@ Each step follows this state machine:
 ```mermaid
 stateDiagram-v2
     [*] --> Pending
-    Pending --> Active: first pending step, none active / create child
+    Pending --> Ready: every dependsOn step done
+    Ready --> Active: within maxActive / create child
     Active --> Succeeded: child closed as completed
     Active --> Succeeded: bot PR referencing child merged / reconciler closes child
     Active --> Skipped: child closed as not planned or duplicate
@@ -227,18 +325,18 @@ stateDiagram-v2
     Skipped --> Active: child reopened
 ```
 
-A step is **done** when it is `Succeeded` or `Skipped`.
+A step is **done** when it is `Succeeded` or `Skipped`. A child that became a parent is `Active` until its own graph closes it.
 
-The pipeline phase is derived from the steps and the parent:
+The graph's phase is derived from the steps and the parent:
 
 | Phase | Meaning |
 | :--- | :--- |
-| `Running` | A step is active or about to start. |
+| `Running` | A step is active or ready. |
 | `Blocked` | Params changed after start. |
 | `Paused` | The parent has the stop label. |
 | `Succeeded` | Every step is done. |
 | `Cancelled` | A person closed the parent. |
-| `Invalid` | The definition or params failed validation. |
+| `Invalid` | The definition, the plan's steps, the params or the depth failed validation. |
 
 ---
 
@@ -251,17 +349,17 @@ The design separates **deciding** from **doing**:
 
 ### 6.1 Algorithm
 
-1. **Parent closed.** If a PR or commit closed it while steps remain, reopen it with a comment. If a person closed it, the phase is `Cancelled`. If the pipeline already completed, do nothing.
+1. **Parent closed.** If a PR or commit closed it while steps remain, reopen it with a comment. If a person closed it, the phase is `Cancelled`. If the graph already completed, do nothing.
 2. **Stop label.** The phase is `Paused`; only the status is updated.
 3. **Invalid** definition or params. Label the parent and report it in the status; create nothing.
 4. **Params changed** after start. The phase is `Blocked`; create nothing.
 5. **Repair.** Link marked children that aren't yet linked (§5.2), and close duplicates (§5.1).
 6. **Active child.** Re-apply missing labels and assignees. Close the child as completed if a bot PR that references it has merged (§6.3).
-7. **Create.** If any step is active, stop. Otherwise create the child for the first pending step in definition order.
-8. **Complete.** When every step is done and the parent isn't marked complete, write the completion marker and close the parent as completed. No completion comment is posted; the final status comment shows the result. Completion is final; a parent reopened afterwards is left alone.
+7. **Create.** For each ready step in definition order, while fewer than `maxActive` steps are active, create its child with the labels its `then` gives (§4.6).
+8. **Complete.** When every step is done and the parent isn't marked complete, write the completion marker and close the parent as completed. No completion comment is posted; the final status comment shows the result. Completion is final; a parent reopened afterwards is left alone. A nested parent closing completes its step one level up (§4.7).
 9. **Status.** Update the status comment if, and only if, its content changed.
 
-There is at most one active step, and at most one create per parent per cycle. A step added to the definition ahead of a started step runs after the active step finishes.
+There are at most `maxActive` active steps, and at most one create per step per cycle. A step added to the definition runs once the steps it depends on are done.
 
 ### 6.2 Applying actions
 
@@ -287,22 +385,22 @@ The reconciler is a new subcontroller in the [subcontroller architecture](watch-
 
 ```mermaid
 flowchart LR
-    IS["Issue scanner"] -- "parent with pipeline block:<br/>label it, don't queue a task" --> GH[(GitHub)]
+    IS["Issue scanner"] -- "parent with a graph start block:<br/>label it, don't queue a task" --> GH[(GitHub)]
     NU["linked-issue-closed event / merged-PR handling"] -- "child closed,<br/>or bot PR merged" --> PR
-    PR["Pipeline reconciler<br/>(startup, nudges, periodic resync)"] -- "observe, reconcile, apply" --> GH
+    PR["Graph reconciler<br/>(startup, nudges, periodic resync)"] -- "observe, reconcile, apply" --> GH
     GH -- "children: trigger label,<br/>assigned to the bot" --> IS
     IS -- "normal fix task" --> Q["Task queue"]
 ```
 
-* **Issue scanner and rules.** An issue with a `factory-pipeline` block is routed to the pipeline reconciler and is never queued as a task or treated as a workflow: the scanner records it as a fact, and the `fix` and `workflow` rules exclude it, as they exclude fan-out parents with `fanout: false`.
-* **Pipeline reconciler.** It reconciles at startup, on nudges and on a periodic resync. Each pass covers open pipeline parents, plus recently closed ones so that accidental closes are caught. It never touches the task queue or sandboxes.
-* **Children.** Children are ordinary issues with the trigger label, assigned to the bot, so the existing fast issue scan picks them up.
-* **Single writer.** Only one reconciler per repository writes. Others run in dry-run mode. The mechanism (for example, a Kubernetes `Lease`) is an implementation choice. Pipelines are behind a flag during rollout.
+* **Issue scanner and rules.** An issue with a `factory-graph` start block is routed to the graph reconciler and is never queued as a task or treated as a workflow: the scanner records it as a fact, and the `fix` and `workflow` rules exclude it (`graph: false`), as they exclude fan-out parents with `fanout: false`.
+* **Graph reconciler** (`watch/graphs`). It reconciles at startup, on nudges and on a periodic resync. Each pass covers open graph parents, plus recently closed ones so that accidental closes are caught. It never touches the task queue or sandboxes.
+* **Children.** Children are ordinary issues routed by the labels their `then` gives (§4.6), so the existing rules pick them up.
+* **Single writer.** Only one reconciler per repository writes. Others run in dry-run mode. The mechanism (for example, a Kubernetes `Lease`) is an implementation choice. Graphs are behind a flag during rollout.
 * **Overseer.** If the Overseer runs `factory watch` in time-boxed windows, the startup pass means every window makes progress.
 
 ### 7.2 Nudges
 
-When a pipeline child closes, the sandbox GC's closed-issue hook (the `linked-issue-closed` event the `nudge` rule acts on, and that already wakes a fan-out parent) triggers the reconciler for the child's parent instead of stepping a workflow. Nudges can be missed, so the periodic resync stays as the backstop.
+When a graph child closes, the sandbox GC's closed-issue hook (the `linked-issue-closed` event the `nudge` rule acts on, and that already wakes a fan-out parent) triggers the reconciler for the child's parent instead of stepping a workflow. A nested parent closing wakes the level above the same way. Nudges can be missed, so the periodic resync stays as the backstop.
 
 ### 7.3 Identity
 
@@ -319,7 +417,7 @@ Each pass makes a few repository-wide listings, plus one sub-issue read per pare
 A single comment on the parent, edited in place, replaces the hand-written progress table:
 
 ```markdown
-### Pipeline `kcc-greenfield` — SpannerInstanceConfig
+### Graph `kcc-greenfield` — SpannerInstanceConfig
 **Phase:** Running · **Current step:** 2/4 `controller`
 
 | # | Step | Issue | State | Started | Completed |
@@ -331,12 +429,13 @@ A single comment on the parent, edited in place, replaces the hand-written progr
 
 > ⚠️ #10901 is missing label `factory`: re-adding failed (permission denied)
 
-<sub>definition: .agents/pipelines/kcc-greenfield.yaml@a1b2c3d</sub>
+<sub>definition: .agents/graphs/kcc-greenfield.yaml@a1b2c3d</sub>
 ```
 
 * It is rendered purely from the definition and observed state, with no timestamps of its own, so it changes only when something real changes.
 * Skipped steps are shown as `⏭️ Skipped`, with a link to the closed child.
 * Warnings cover missing labels, closed duplicates, changed params, unmanaged sub-issues and orphaned steps.
+* A child that is itself a graph parent shows its own progress, read from its status comment.
 * It is a comment rather than the issue body because the reconciler can always edit its own comment, while editing someone else's body can fail.
 
 ---
@@ -345,21 +444,21 @@ A single comment on the parent, edited in place, replaces the hand-written progr
 
 | Command | Purpose |
 | :--- | :--- |
-| `factory pipeline validate <file>` | Static checks (§4.4); CI-friendly. Writes nothing. |
-| `factory pipeline reconcile --url <parent> [--dry-run]` | One-shot reconcile. (`factory fix` is gone, #1884; `factory recipe fix` on a parent would route here.) |
-| `factory pipeline adopt --url <parent> --step <id> --issue <n> [--dry-run]` | Bind an existing issue to a step: add the marker and link it as a sub-issue. |
+| `factory graph validate <file>` | Static checks (§4.4); CI-friendly. Writes nothing. With `--url <issue>`, the same on an issue's plan `graph` block. |
+| `factory graph reconcile --url <parent> [--dry-run]` | One-shot reconcile. (`factory fix` is gone, #1884; `factory recipe fix` on a parent would route here.) |
+| `factory graph adopt --url <parent> --step <id> --issue <n> [--dry-run]` | Bind an existing issue to a step: add the marker and link it as a sub-issue. |
 
 **Dry-run mode.** Every command that writes to GitHub accepts `--dry-run`. It runs the same observe and reconcile code as a real run, then prints the rendered status and the actions the executor would apply, instead of applying them. Its output is therefore exactly what a real run would do at that moment, which makes it the way to preview a new or edited definition against a real parent. `factory watch` has the same mode (§13).
 
 ---
 
-## 10. Moving kcc-greenfield to pipelines
+## 10. Moving kcc-greenfield to a graph
 
-Existing kcc-greenfield parents are **not** migrated. New parents use the pipeline, and in-flight ones finish on the old workflow.
+Existing kcc-greenfield parents are **not** migrated. New parents use the graph template, and in-flight ones finish on the old workflow.
 
-1. Commit `.agents/pipelines/kcc-greenfield.yaml` to the KCC repository. Step bodies copy over almost verbatim, with placeholders becoming template params. The review label becomes a `review` field holding the reviewer's instructions. The precondition script, cooldown, journal, guardrails and "search before create" instructions aren't carried over.
-2. File new greenfield parents with a `factory-pipeline` block instead of the workflow reference.
-3. Leave in-flight parents on `kcc-greenfield.txt` until they finish. The two don't interfere: a parent is handled as a pipeline only if it has a `factory-pipeline` block.
+1. Commit `.agents/graphs/kcc-greenfield.yaml` to the KCC repository. Step bodies copy over almost verbatim, with placeholders becoming template params and the step order becoming `dependsOn`. The review label becomes a `review` field holding the reviewer's instructions. The precondition script, cooldown, journal, guardrails and "search before create" instructions aren't carried over.
+2. File new greenfield parents with a `factory-graph` block instead of the workflow reference.
+3. Leave in-flight parents on `kcc-greenfield.txt` until they finish. The two don't interfere: a parent is handled as a graph only if it has a `factory-graph` start block. The workflow rules, including the pinned `workflow-missing`, are unchanged.
 4. Delete `kcc-greenfield.txt` once no open parent references it.
 
 ---
@@ -369,8 +468,14 @@ Existing kcc-greenfield parents are **not** migrated. New parents use the pipeli
 | Case | Behaviour |
 | :--- | :--- |
 | Definition edited mid-flight | The latest definition is used. Existing children are never edited. New or changed steps take effect when they come up. Removed steps that have children show as orphaned. |
-| Step added ahead of a started step | Runs after the active step finishes. |
-| Child reopened | Its step goes back to `Active`. |
+| Step added ahead of a started step | Runs once the steps it depends on are done. |
+| Cycle or unknown `dependsOn` | `Invalid`; nothing is created. |
+| Several steps ready, `maxActive` reached | Created in definition order as active ones finish. |
+| Plan refined after the graph started | Steps not yet started follow the new version; existing children are never edited. |
+| A plan comment by someone outside the trusted author kinds | Ignored; a parent with only such a plan is `Invalid`. |
+| Child that became a graph parent | `Active` until its own graph closes it. |
+| Start block on an issue at `maxDepth` | `Invalid` for that issue's graph; the level above is unaffected. |
+| Child reopened | Its step goes back to `Active`; steps depending on it that have not started wait again. |
 | Several open children for one step | The oldest is kept; the others are closed as duplicates. |
 | Child closed as not planned or duplicate | The step is `Skipped`, and the next step starts. |
 | Optional param omitted | Takes its current `default` from the definition, or the empty string. |
@@ -391,9 +496,11 @@ Existing kcc-greenfield parents are **not** migrated. New parents use the pipeli
 
 | Alternative | Why not (for v1) |
 | :--- | :--- |
-| **Create every child upfront**, linked with GitHub's blocked-by dependencies | Freezes future steps at creation, which conflicts with always using the latest definition. The scanner would also have to skip blocked issues. Blocked-by links could still be added later for display. |
+| **Create every child upfront**, linked with GitHub's blocked-by dependencies | Freezes future steps at creation, which conflicts with always using the latest definition (or the latest plan). The scanner would also have to skip blocked issues. Blocked-by links could still be added later for display. |
+| **Extend fan-out** with `after:` | Fan-out is one task over many items; a plan's steps are different tasks. A graph is the general form, and fan-out can become one of its sources (§14). |
+| **A recipe that emits sub-issues** | One-shot: nothing would open the next steps, track progress or close the parent. |
 | **GitHub Actions** in the target repo | Needs a workflow and a write token in every target repo, which factory doesn't control. Splits the logic and has no dry run. |
-| **Kubernetes CRD** for pipelines | The trigger is a GitHub issue, so the CR would only mirror GitHub state, and local runs would depend on a cluster. The schema header keeps this option open. |
+| **Kubernetes CRD** for graphs | The trigger is a GitHub issue, so the CR would only mirror GitHub state, and local runs would depend on a cluster. The schema header keeps this option open. |
 | **Keep the LLM workflow** and make only the gating deterministic | Cheaper, but sequencing, idempotency and status would stay LLM-driven. |
 
 ---
@@ -409,20 +516,26 @@ Existing kcc-greenfield parents are **not** migrated. New parents use the pipeli
   * duplicates;
   * parent closes (by a person vs. by a PR) and reopens;
   * PR-merge completion;
-  * a step added ahead of a started step.
+  * a step added ahead of a started step;
+  * DAG readiness, `maxActive`, cycles and unknown ids;
+  * `then` routing labels;
+  * nesting: a child as parent, completion bubbling, the depth limit;
+  * plan-source reads: trusted authors only, versions, steps added and removed.
 * Executor tests against a fake GitHub, including partial failures and dropped labels.
-* `validate` run in CI over `.agents/pipelines/`.
-* End to end on a scratch repository with a two-step pipeline and real PR merges.
+* `validate` run in CI over `.agents/graphs/`.
+* End to end on a scratch repository with a two-step graph, and a two-level graph from a plan, with real PR merges.
 
 **Rollout**
 1. Schema, `validate` and `reconcile --dry-run` (read-only).
 2. Executor and one-shot `reconcile` (manual progression).
 3. Reconciler in `factory watch`, behind a flag.
-4. Start one new greenfield Kind on the pipeline, then use it for all new Kinds and enable the flag by default. Delete `kcc-greenfield.txt` once in-flight parents finish.
+4. `dependsOn`, `maxActive` and `then` routing.
+5. The plan source, the `breakdown` rule, nesting and the depth limit.
+6. Start one new greenfield Kind on the graph template, then use it for all new Kinds and enable the flag by default. Delete `kcc-greenfield.txt` once in-flight parents finish.
 
 **Observability**
 * A journal entry for every action taken.
-* Pipeline phase and step states exposed on the watch's local API.
+* Graph phase and step states exposed on the watch's local API.
 * Dry-run mode that logs actions instead of writing them.
 * Warnings for persistent write failures and for not being the single writer.
 
@@ -430,14 +543,15 @@ Existing kcc-greenfield parents are **not** migrated. New parents use the pipeli
 
 ## 14. Future extensions
 
-* **Fan-out.** Repeat a step once per value of a list param, with one sub-issue per value and a cap on how many are open at once. This overlaps with the separate, implemented [fan-out](fanout.md) (sub-issues under a parent, a progress comment, `overseer/stop` to hold), and issue pipelines could be extended to supersede it. v1 leaves room for this:
+* **Fan-out.** Repeat a step once per value of a list param, with one sub-issue per value and a cap on how many are open at once. This overlaps with the separate, implemented [fan-out](fanout.md) (sub-issues under a parent, a progress comment, `overseer/stop` to hold), and issue graphs could be extended to supersede it, as another source of steps. v1 leaves room for this:
   * steps are identified by `id`, not position;
   * the child marker can carry an extra per-value key;
   * params can gain a list type;
   * the status comment can nest per-value rows under a step.
-* **`dependsOn`**: steps form a DAG.
 * **Gate steps**: wait on a label or approval without creating an issue.
-* **Conditions** on params.
+* **Conditions** on params, and `skip-if`: a deterministic check at a step's turn that skips it.
+* **One label for implement and breakdown**, choosing by whether the plan has a Breakdown.
+* **Route by triage:** a rule that chooses `fix` or `plan` for `<trigger>/route` children.
 * **Require a merged PR** for completion, if closed-as-completed proves too loose.
 * **Blocked-by links** between children, for display.
 
@@ -448,9 +562,13 @@ Existing kcc-greenfield parents are **not** migrated. New parents use the pipeli
 | Question | Decision |
 | :--- | :--- |
 | Pin the definition version? | **No.** Always use the latest definition on the default branch. |
-| Where can definitions live? | **Only in the watched repository**, under `.agents/pipelines/`. |
-| Params source | An explicit `factory-pipeline` block in the parent. Supplied params are frozen after start. |
+| Where can definitions live? | **Only in the watched repository**, under `.agents/graphs/`, or in the parent's plan comment (`source: plan`). |
+| Params source | An explicit `factory-graph` start block, in the parent's body or a keyed comment by a trusted author. Supplied params are frozen after start. |
 | Completion signal | The child is closed as completed. As a backstop, a merged bot PR that references the child also completes it. |
 | Child closed as not planned? | **Skip** the step and continue. No per-step policy or retry count in v1. |
 | Parent on completion | Always closed as completed, with no completion comment. |
 | Fan-out in v1? | **No.** Deferred; the design leaves room for it (§14). |
+| Name | **Issue graph** (`IssueGraph`, `.agents/graphs/`, `factory-graph`, `factory graph`); a pipeline is a graph of chained steps. |
+| Dependencies | `dependsOn` (a DAG) within a level, with `maxActive` (default 1). |
+| A child's first move | `then` (`fix`, `plan` or `ask`) per step, set by the planner, overridable by a person until the child starts. |
+| Nesting | A child can become a parent; depth recorded in markers, `maxDepth` default 3; completion bubbles up. |
