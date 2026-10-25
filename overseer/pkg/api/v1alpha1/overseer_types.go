@@ -161,6 +161,15 @@ type OverseerSpec struct {
 	// +kubebuilder:validation:Optional
 	RulesRecord bool `json:"rulesRecord,omitempty"`
 
+	// Graphs runs the watcher's issue graph controller: every issue
+	// labelled <trigger>/graph - an approved plan with a Breakdown
+	// (overseer/implement), or one labelled by a maintainer - has its steps
+	// opened as sub-issues as they become ready, a status comment kept, and
+	// is closed when every step is done (factory/docs/plan-and-graph.md).
+	// Off, the graph label does nothing.
+	// +kubebuilder:validation:Optional
+	Graphs bool `json:"graphs,omitempty"`
+
 	// SharedScan makes the watcher's issue and PR scanners read one shared
 	// set of GitHub listings, refreshed with what changed since the last
 	// pass and kept in its queue directory across restarts, instead of each
