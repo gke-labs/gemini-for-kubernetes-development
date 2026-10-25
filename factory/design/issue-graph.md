@@ -214,9 +214,9 @@ An issue's approved plan can be the source of its graph (`source: plan`, §4.3):
 | :--- | :--- | :--- |
 | `fix` (default) | the trigger label, `labels` and the review label | the `fix` rule implements it; the PR rules care for its PR. |
 | `plan` | `<trigger>/plan` | the `plan` rule plans it; a maintainer approves with `<trigger>/implement`: one PR, or its own graph if its plan has a Breakdown (§4.7). |
-| `ask` | `<trigger>/route` | nothing runs until a person applies the trigger label (fix) or `<trigger>/plan`. |
+| `ask` | `<trigger>/needs-human` | nothing runs until a person applies the trigger label (fix) or `<trigger>/plan`, or closes it; its body says so, and the step's `assignees` are notified. |
 
-The planner proposes `then` for each step and a maintainer approves it with the plan. Until a child starts, anyone with triage access can override its route by changing its labels; later, a triage rule on `<trigger>/route` children could choose.
+The planner proposes `then` for each step and a maintainer approves it with the plan. Until a child starts, anyone with triage access can override its route by changing its labels; later, a triage rule on `<trigger>/needs-human` children could choose.
 
 ### 4.7 Nesting
 
@@ -518,7 +518,7 @@ Existing kcc-greenfield parents are **not** migrated. New parents use the graph 
   * the status comment can nest per-value rows under a step.
 * **Gate steps**: wait on a label or approval without creating an issue.
 * **Conditions** on params, and `skip-if`: a deterministic check at a step's turn that skips it.
-* **Route by triage:** a rule that chooses `fix` or `plan` for `<trigger>/route` children.
+* **Route by triage:** a rule that chooses `fix` or `plan` for `<trigger>/needs-human` children.
 * **Require a merged PR** for completion, if closed-as-completed proves too loose.
 * **Blocked-by links** between children, for display.
 
