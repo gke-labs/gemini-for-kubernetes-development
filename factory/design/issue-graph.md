@@ -144,7 +144,7 @@ spec:
 
 | Field | Meaning |
 | :--- | :--- |
-| `params[]` | Inputs from the parent issue. Each must have a `pattern` or an `enum`, so free text never reaches a template. Values are strings in v1. |
+| `params[]` | Inputs from the parent issue. Each must have a `pattern` or an `enum`, so free text never reaches a template; a pattern-only param also needs an `example`. Values are strings in v1. |
 | `params[].required` | Defaults to `true`. An optional param (`required: false`) may be left out of the parent's block. |
 | `params[].default` | Only allowed on optional params, and must satisfy the param's constraint. An omitted optional param takes its `default`, or the empty string if it has none, so templates can test it with `{{ if .Params.<name> }}`. |
 | `steps[].id` | Unique, stable identity. Children are matched to steps by `id`, never by position or title. |
@@ -196,7 +196,7 @@ The block is read from the parent's body, or from a keyed comment (`<!-- factory
 `factory graph validate` is suitable for CI. It checks:
 * that the schema is strict, with no unknown fields;
 * that step ids are unique, and `after` names existing steps without a cycle (`finally` has no `after`);
-* that every param is constrained;
+* that every param is constrained, and a param with a pattern alone has an `example` (the steps are rendered with it);
 * that every `default` is on an optional param and satisfies its constraint;
 * that templates parse and only reference steps they depend on.
 
