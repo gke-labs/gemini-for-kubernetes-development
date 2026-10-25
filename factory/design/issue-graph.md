@@ -156,6 +156,7 @@ spec:
 | `finally` | Optional: one step (`title`, `body`, `then`, `labels`, `review`), created once every other step is done, with no `after` to keep up to date. The parent closes when it is done. Without it, the parent closes when the steps are done. |
 | `maxActive` | How many steps may be active at once. Default 1. |
 | `then` | What the child does first: `fix` (default), `plan` or `ask` (§4.6). |
+| `replan` | `true` makes the step a checkpoint: when it is done, the reconciler applies `<trigger>/plan` to the parent (§4.8). Plan source only. |
 
 A child closed as not planned or as a duplicate is treated as done: its step is `Skipped` and the graph moves on (§5.5). To stop a graph instead, add the stop label to the parent or close it.
 
@@ -277,6 +278,25 @@ A child that is planned and broken down gets its own start block and becomes a p
 * **Depth.** Each child's marker records its depth. A start block on an issue at `maxDepth` (default 3, an overseer setting) is `Invalid`: deeper splits take a person filing a new issue.
 * **Dependencies stay within a level.** A step depends only on its siblings; anything else is said one level up, so each graph stays acyclic.
 
+### 4.8 Replanning
+
+A plan can change as its steps finish: what one step taught can change the ones still to come. Replanning is `<trigger>/plan` on the parent - the same label and the same `plan` rule that wrote the plan:
+
+* **A person** applies it at any time.
+* **The reconciler** applies it when a step marked `replan: true` is done (a checkpoint the planner or a maintainer chose):
+
+  ```yaml
+  - id: recorder
+    after: [schema]
+    replan: true      # once recorder is done, revisit what is left
+  ```
+
+The reconciler only adds the label, once per checkpoint (recorded in the status state); the plan rule does the rest, and takes the label off when it is done.
+
+On a replan, the plan recipe revises the plan comment (the next version) knowing what happened: the graph's status comment (`key=graph-status`: each step's state, child and PR) and the done children's PRs. Done and active steps keep their ids and stay as they are; steps not yet started can change, be added or be removed, and so can `finally`; the plan says what changed and why.
+
+The next pass reads the new version, as it reads a refined plan: steps not yet started follow it, active children run on, and a step removed after its child exists shows as orphaned. A revision that changes or drops a done or active step is not applied; the status says so, for a maintainer to fix.
+
 ---
 
 ## 5. State model: GitHub is the database
@@ -359,9 +379,10 @@ The design separates **deciding** from **doing**:
 4. **Params changed** after start. The phase is `Blocked`; create nothing.
 5. **Repair.** Link marked children that aren't yet linked (§5.2), and close duplicates (§5.1).
 6. **Active child.** Re-apply missing labels and assignees. Close the child as completed if a bot PR that references it has merged (§6.3); always on, with no per-step setting: a step that needs several PRs is a child with `then: plan` that breaks down into its own steps.
-7. **Create.** For each ready step in definition order, while fewer than `maxActive` steps are active, create its child with the labels its `then` gives (§4.6).
-8. **Complete.** When every step, and the `finally` step if there is one, is done and the parent isn't marked complete, write the completion marker and close the parent as completed. No completion comment is posted; the final status comment shows the result. Completion is final; a parent reopened afterwards is left alone. A nested parent closing completes its step one level up (§4.7).
-9. **Status.** Update the status comment if, and only if, its content changed.
+7. **Checkpoints.** For each step marked `replan` that is done and not yet recorded, add `<trigger>/plan` to the parent and record it (§4.8).
+8. **Create.** For each ready step in definition order, while fewer than `maxActive` steps are active, create its child with the labels its `then` gives (§4.6).
+9. **Complete.** When every step, and the `finally` step if there is one, is done and the parent isn't marked complete, write the completion marker and close the parent as completed. No completion comment is posted; the final status comment shows the result. Completion is final; a parent reopened afterwards is left alone. A nested parent closing completes its step one level up (§4.7).
+10. **Status.** Update the status comment if, and only if, its content changed.
 
 There are at most `maxActive` active steps, and at most one create per step per cycle. A step added to the definition runs once the steps it depends on are done.
 
@@ -477,6 +498,8 @@ Existing kcc-greenfield parents are **not** migrated. New parents use the graph 
 | A step added after `finally` started | Created as usual; the parent closes only when it and `finally` are both done. |
 | Several steps ready, `maxActive` reached | Created in definition order as active ones finish. |
 | Plan refined after the graph started | Steps not yet started follow the new version; existing children are never edited. |
+| A replan changes or drops a done or active step | Not applied; the status warns, and the graph keeps the last version that kept them. |
+| A checkpoint reached while a plan run is queued or running | The label is already there: one replan covers it. |
 | A plan comment by someone outside the trusted author kinds | Ignored; a parent with only such a plan is `Invalid`. |
 | Child that became a graph parent | `Active` until its own graph closes it. |
 | Start block on an issue at `maxDepth` | `Invalid` for that issue's graph; the level above is unaffected. |
@@ -525,7 +548,8 @@ Existing kcc-greenfield parents are **not** migrated. New parents use the graph 
   * DAG readiness, `maxActive`, cycles and unknown ids;
   * `then` routing labels;
   * nesting: a child as parent, completion bubbling, the depth limit;
-  * plan-source reads: trusted authors only, versions, steps added and removed.
+  * plan-source reads: trusted authors only, versions, steps added and removed;
+  * checkpoints: the label added once per `replan` step, and a revision that rewrites a done step refused.
 * Executor tests against a fake GitHub, including partial failures and dropped labels.
 * `validate` run in CI over `.agents/graphs/`.
 * End to end on a scratch repository with a two-step graph, and a two-level graph from a plan, with real PR merges.
@@ -576,4 +600,5 @@ Existing kcc-greenfield parents are **not** migrated. New parents use the graph 
 | Name | **Issue graph** (`IssueGraph`, `.agents/graphs/`, `factory-graph`, `factory graph`); a pipeline is a graph of chained steps. |
 | Dependencies | `after` (a DAG) within a level, with `maxActive` (default 1), and an optional `finally` step after all the others. `dependsOn`, reserved in the pipeline design, is named `after`. |
 | A child's first move | `then` (`fix`, `plan` or `ask`) per step, set by the planner, overridable by a person until the child starts. |
+| Replanning | `<trigger>/plan` on the parent, by a person or by the reconciler at a `replan: true` step; the plan rule revises the plan, and the next pass follows it for steps not yet started. |
 | Nesting | A child can become a parent; depth recorded in markers, `maxDepth` default 3; completion bubbles up. |
