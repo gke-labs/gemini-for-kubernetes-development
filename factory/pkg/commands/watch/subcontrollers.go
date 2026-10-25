@@ -20,6 +20,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/conventions"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/dispatcher"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/fanouts"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/graphs"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/issues"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/prs"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/sandbox"
@@ -84,7 +85,11 @@ func (w *Watcher) newLinkedWork() sandbox.LinkedWork {
 		Sandboxes: w.sandboxes,
 		Users:     watcherUserSelector{w: w},
 	})
-	return linkedWorks{nudger, w.fanouts}
+	works := linkedWorks{nudger, w.fanouts}
+	if w.graphs != nil {
+		works = append(works, w.graphs)
+	}
+	return works
 }
 
 // linkedWorks tells each of its members about every closed issue, in order.
@@ -112,6 +117,24 @@ func (w *Watcher) newFanoutController() *fanouts.Controller {
 		Propose:  w.proposeFanout,
 		CanStart: w.belowMaxPending,
 	})
+}
+
+// newGraphController constructs the issue graph controller when graphs are
+// on (Flags.Graphs), else nil. It is built before the reconciler, which
+// wakes it when a child's sandbox is collected.
+func (w *Watcher) newGraphController() *graphs.Controller {
+	if !w.Graphs {
+		return nil
+	}
+	return graphs.New(graphs.Config{
+		Interval:     graphs.DefaultInterval,
+		TriggerLabel: w.triggerLabel,
+		GitHubLogin:  w.githubLogin,
+		Pool:         w.allBotUsers,
+		Members:      w.cfg.TrustedLogins(),
+		MinNumber:    w.minIssueNumber(),
+		DryRun:       w.loopDryRun(w.IssueMode),
+	}, graphs.Deps{GitHub: w.repoClient, Paused: w.draining})
 }
 
 // proposeFanout runs ProposeFanout on parent n, if it is set, as the

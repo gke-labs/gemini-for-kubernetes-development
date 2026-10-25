@@ -32,6 +32,10 @@ when:
     - labels: {any: ["{{trigger}}"]}
     - assignee: pool
     - opened-by: watcher
+  # Not an issue graph's parent: its children are the graph's work
+  # (design/issue-graph.md).
+  labels:
+    none: ["{{trigger}}/graph"]
   fanout: false
   linked-pr: none
   # No open PR connected to it on its timeline either (a read of its own,

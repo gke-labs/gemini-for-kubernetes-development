@@ -38,9 +38,10 @@ when:
   # Not an issue in the plan flow (.agents/watch/plan.yaml): planning it,
   # or planned - only implement turns a planned issue into code, so the
   # trigger label applied early does not start a fix that ignores the
-  # plan. Taking overseer/planned off makes it fix's again.
+  # plan. Taking overseer/planned off makes it fix's again. Nor an issue
+  # graph's parent: its children are the graph's work.
   labels:
-    none: ["{{trigger}}/plan", "{{trigger}}/planned"]
+    none: ["{{trigger}}/plan", "{{trigger}}/planned", "{{trigger}}/graph"]
   fanout: false
   linked-pr: none
   # No open PR connected to it on its timeline either (a read of its own,

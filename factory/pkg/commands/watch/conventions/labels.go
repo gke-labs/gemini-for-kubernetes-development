@@ -59,6 +59,24 @@ func FanoutLabels(triggerLabel string) []string {
 	return namespaced(triggerLabel, "fanout")
 }
 
+// GraphLabels are the label marking an issue graph's parent, in each of
+// its spellings.
+func GraphLabels(triggerLabel string) []string {
+	return namespaced(triggerLabel, "graph")
+}
+
+// PlannedLabels are the label the plan rule leaves on a planned issue, in
+// each of its spellings: where a graph started from a plan is found before
+// it carries the graph label.
+func PlannedLabels(triggerLabel string) []string {
+	return namespaced(triggerLabel, "planned")
+}
+
+// HasGraphLabel reports whether an issue is marked an issue graph's parent.
+func HasGraphLabel(labels []*githubv39.Label, triggerLabel string) bool {
+	return hasAny(labels, GraphLabels(triggerLabel))
+}
+
 // HasFanoutLabel reports whether an issue is a fan-out parent.
 func HasFanoutLabel(labels []*githubv39.Label, triggerLabel string) bool {
 	return hasAny(labels, FanoutLabels(triggerLabel))
