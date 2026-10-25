@@ -5,16 +5,18 @@
 | **Status** | Proposal; not built. The plan flow it extends is built: `.agents/watch/plan.yaml`, `implement.yaml`, the plan recipe's keyed comment (#2119), the fix guard and fix-with-plan (#2120). |
 | **Companion to** | [issue-graph.md](issue-graph.md): the graph schema, the reconciler, `then` routing, nesting and checkpoints are there; this note is how a plan becomes a graph and how it is revised. |
 | **Last Updated** | 2026-10-25 |
-| **Scope** | `.agents/` rules and recipes (plan, breakdown), the graph reconciler's plan source |
+| **Scope** | `.agents/` rules and recipes (plan, implement), the graph reconciler's plan source |
 
 ---
 
 ## 1. Summary
 
-An issue is planned on `<trigger>/plan`: the plan recipe writes its plan comment (key `plan`, refined in place, v1, v2…). A maintainer approves it in one of two ways:
+An issue is planned on `<trigger>/plan`: the plan recipe writes its plan comment (key `plan`, refined in place, v1, v2…). A maintainer approves it with `<trigger>/implement`, and the plan's shape decides what happens:
 
-* **One PR:** `<trigger>/implement` - fix-with-plan follows the plan and opens the PR (#2120).
-* **Several PRs:** `<trigger>/breakdown` - the plan's **Breakdown** becomes an [issue graph](issue-graph.md) under the issue: sub-issues, opened as the steps they come `after` are done, each fixed or planned in turn.
+* **No Breakdown - one PR:** fix-with-plan follows the plan and opens the PR (#2120).
+* **A Breakdown - several PRs:** the Breakdown becomes an [issue graph](issue-graph.md) under the issue: sub-issues, opened as the steps they come `after` are done, each fixed or planned in turn.
+
+The maintainer approves the plan, and the plan says how it is done: one label for both.
 
 As the graph runs, the plan can be **revised** - by a person at any time, or at a checkpoint - and the graph follows the new version for the steps not yet started.
 
@@ -77,24 +79,23 @@ In this repository's `.agents/watch/` (any repository can adopt them):
 | Label | Rule | What happens |
 | :--- | :--- | :--- |
 | `<trigger>/plan` | `plan` | The plan comment is posted or updated, with a Breakdown when the work needs more than one PR; the watcher adds `<trigger>/planned`. Applied again, it revises the plan (§5). |
-| `<trigger>/implement` | `implement` | Approval of a one-PR plan: fix-with-plan opens the PR (#2120). |
-| `<trigger>/breakdown` | `breakdown` (new) | Approval of a plan with a Breakdown: a recipe with no agent validates the `graph` block (and the depth limit) and posts the start block `source: plan` as a keyed comment (key `graph`) - the bot cannot edit the issue body. The reconciler takes it from there. |
+| `<trigger>/implement` | `implement` | Approval of the plan. Its recipe first reads the plan (`keyed-comment`, trusted kinds) and looks for a `graph` block: **without one**, it is fix-with-plan and opens one PR (#2120); **with one**, no agent runs: it validates the block (and the depth limit) and posts the start block `source: plan` as a keyed comment (key `graph`) - the bot cannot edit the issue body - and the reconciler takes it from there. |
 | `<trigger>` on a planned issue | `fix` | Nothing: fix leaves an issue in the plan flow alone (`labels.none: [<trigger>/plan, <trigger>/planned]`, #2120). |
 
-`implement` and `breakdown` could later become one label, choosing by whether the plan has a Breakdown; separate in v1 so the maintainer's choice is explicit.
+To get one PR from a plan that has a Breakdown, remove the Breakdown (edit the plan comment, or replan asking for one PR) before applying `implement`; to get sub-issues, replan asking for a Breakdown.
 
 ---
 
 ## 4. Children that are planned: nesting
 
-A step with `then: plan` gives a child labelled `<trigger>/plan`: the same rules plan it, and its maintainer approves with `implement` (one PR) or `breakdown` (its own graph, one level down). A step with `then: ask` waits, labelled `<trigger>/route`, for a person to choose ([issue-graph.md §4.6](issue-graph.md)).
+A step with `then: plan` gives a child labelled `<trigger>/plan`: the same rules plan it, and its maintainer approves with `implement`: one PR, or - if its plan has a Breakdown - its own graph, one level down. A step with `then: ask` waits, labelled `<trigger>/route`, for a person to choose ([issue-graph.md §4.6](issue-graph.md)).
 
 A child that is planned and broken down gets its own start block and becomes a parent. Its graph is reconciled like any other, one level down:
 
 ```
-#100 --plan--> breakdown: A, B (after A, then: plan), C (after A)
+#100 --plan, implement--> graph: A, B (after A, then: plan), C (after A)
   |- A  #101 --fix--> PR merged: A done
-  |- B  #102 --plan--> breakdown: B1, B2 (after B1)     <- #102 is a parent too
+  |- B  #102 --plan, implement--> graph: B1, B2 (after B1)     <- #102 is a parent too
   |     |- B1 #110 --fix--> PR merged
   |     '- B2 #111 --fix--> PR merged: #102's graph done, #102 closed: B done
   '- C  #103 --fix--> PR merged: C done
@@ -151,13 +152,23 @@ In this repository's `.agents/recipes/plan.yaml`:
 
 ---
 
+### 6.1 The implement recipe
+
+`.agents/recipes/fix-with-plan.yaml` (the `implement` rule's) takes both paths in one run:
+
+1. Read the plan through `keyed-comment` (trusted kinds), as today, and note whether it has a `graph` block.
+2. **With a `graph` block:** validate it (`factory graph validate`, and the depth limit), post the start block `source: plan` as a keyed comment (key `graph`), and end: the remaining steps are skipped (`if:`), no agent runs, and the task leaves no Change (an optional result).
+3. **Without one:** the fix steps run as they do now, and `open-pr` opens the PR.
+
+So the rule stays one rule (`apply: open-pr`), and the path is decided by the plan, read once, at the moment of approval.
+
 ## 7. Edge cases
 
 | Case | Behaviour |
 | :--- | :--- |
-| `breakdown` on a plan without a `graph` block | The breakdown task fails; nothing is posted. |
-| `breakdown` applied again after the graph started | The start block is already there; nothing changes. |
-| `implement` on a plan that has a Breakdown | fix-with-plan implements the whole plan as one PR, as asked; the maintainer chose it. |
+| `implement` on a plan with an invalid `graph` block | The task fails with the validation error; no PR, no graph. |
+| `implement` applied again after the graph started | The start block is already there; nothing changes. |
+| `implement` on an issue with no plan comment | The task fails: plan it first. |
 | A revision while a child is active | The active child runs on; the revision applies to the steps not yet started. |
 | A revision rewrites a done step | Not applied; the status warns (§5.2). |
 | A checkpoint reached while a plan run is queued or running | The label is already there: one revision covers it. |
@@ -167,7 +178,7 @@ In this repository's `.agents/recipes/plan.yaml`:
 
 ## 8. Testing
 
-* Decide-scenario tests for the `breakdown` rule, and for the fix guard on planned issues and graph parents.
-* The `breakdown` recipe: a plan with and without a `graph` block, an invalid block, the depth limit.
+* Decide-scenario tests for the fix guard on planned issues and graph parents.
+* The `implement` recipe: a plan without a `graph` block (one PR), with one (the start block posted, no agent run), an invalid block, the depth limit, no plan.
 * Reconciler table tests for the plan source: trusted authors only, versions, steps added and removed, a revision that rewrites a done step refused, checkpoints firing once.
-* End to end on a scratch repository: plan → breakdown → a child planned and broken down → completion bubbling to the top.
+* End to end on a scratch repository: plan → implement (a graph) → a child planned and implemented as its own graph → completion bubbling to the top.

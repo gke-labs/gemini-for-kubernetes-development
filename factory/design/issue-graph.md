@@ -184,7 +184,7 @@ source: plan
 ```
 ````
 
-The block is read from the parent's body, or from a keyed comment (`<!-- factory:comment key=graph v=N -->`) by a trusted author: one of the author kinds `pool`, `owner`, `member`, `collaborator`, as the `keyed-comment` recipe step reads them. The bot cannot edit another account's issue body, so a rule starts a graph by posting that comment (`overseer/breakdown`, §4.5).
+The block is read from the parent's body, or from a keyed comment (`<!-- factory:comment key=graph v=N -->`) by a trusted author: one of the author kinds `pool`, `owner`, `member`, `collaborator`, as the `keyed-comment` recipe step reads them. The bot cannot edit another account's issue body, so a rule starts a graph by posting that comment (`overseer/implement` on a plan with a Breakdown, §4.5).
 
 * `graph:` is a bare name, resolved to `.agents/graphs/<name>.yaml` in the watched repository. Paths, URLs and other repositories are rejected, so a graph can only create issues in the repository that defines it.
 * `params:` must include every required param and may include optional ones. Unknown params are rejected.
@@ -206,14 +206,14 @@ The reconciler runs the same checks against the parent's actual params, or the p
 
 ### 4.5 Steps from a plan
 
-An issue's approved plan can be the source of its graph (`source: plan`, §4.3): the Breakdown at the end of its plan comment, a fenced `yaml graph` block in the step schema of §4.2 without params, read only from a trusted author kind. The steps are read fresh every pass, as a template is, so a plan refined after the graph started changes the steps not yet started. The Breakdown's format, the rules that tie planning to graphs (`<trigger>/plan`, `<trigger>/implement`, `<trigger>/breakdown`) and how a plan is revised are in the companion note, [issue-graph-plans.md](issue-graph-plans.md).
+An issue's approved plan can be the source of its graph (`source: plan`, §4.3): the Breakdown at the end of its plan comment, a fenced `yaml graph` block in the step schema of §4.2 without params, read only from a trusted author kind. The steps are read fresh every pass, as a template is, so a plan refined after the graph started changes the steps not yet started. The Breakdown's format, the rules that tie planning to graphs (`<trigger>/plan`, then `<trigger>/implement`, which opens one PR or starts the graph by the plan's shape) and how a plan is revised are in the companion note, [issue-graph-plans.md](issue-graph-plans.md).
 
 ### 4.6 What each child does first (`then`)
 
 | `then` | The child is created with | So |
 | :--- | :--- | :--- |
 | `fix` (default) | the trigger label, `labels` and the review label | the `fix` rule implements it; the PR rules care for its PR. |
-| `plan` | `<trigger>/plan` | the `plan` rule plans it; a maintainer approves with `<trigger>/implement` (one PR) or `<trigger>/breakdown` (its own graph, §4.7). |
+| `plan` | `<trigger>/plan` | the `plan` rule plans it; a maintainer approves with `<trigger>/implement`: one PR, or its own graph if its plan has a Breakdown (§4.7). |
 | `ask` | `<trigger>/route` | nothing runs until a person applies the trigger label (fix) or `<trigger>/plan`. |
 
 The planner proposes `then` for each step and a maintainer approves it with the plan. Until a child starts, anyone with triage access can override its route by changing its labels; later, a triage rule on `<trigger>/route` children could choose.
@@ -498,7 +498,7 @@ Existing kcc-greenfield parents are **not** migrated. New parents use the graph 
 2. Executor and one-shot `reconcile` (manual progression).
 3. Reconciler in `factory watch`, behind a flag.
 4. `after`, `maxActive` and `then` routing.
-5. The plan source, the `breakdown` rule, nesting and the depth limit.
+5. The plan source, `implement` starting a graph from a plan with a Breakdown, nesting and the depth limit.
 6. Start one new greenfield Kind on the graph template, then use it for all new Kinds and enable the flag by default. Delete `kcc-greenfield.txt` once in-flight parents finish.
 
 **Observability**
@@ -518,7 +518,6 @@ Existing kcc-greenfield parents are **not** migrated. New parents use the graph 
   * the status comment can nest per-value rows under a step.
 * **Gate steps**: wait on a label or approval without creating an issue.
 * **Conditions** on params, and `skip-if`: a deterministic check at a step's turn that skips it.
-* **One label for implement and breakdown**, choosing by whether the plan has a Breakdown.
 * **Route by triage:** a rule that chooses `fix` or `plan` for `<trigger>/route` children.
 * **Require a merged PR** for completion, if closed-as-completed proves too loose.
 * **Blocked-by links** between children, for display.
