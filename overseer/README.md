@@ -25,6 +25,9 @@ Overseer is that somebody. It works from GitHub state (labels, assignees, commen
 - Skips issues that already have an open PR referencing them, and issues numbered below `minNumber`.
 - `priority/<level>` labels (`critical`, `urgent`, `important`, `high`, `medium`, `low`) set the task's place in the queue.
 
+### Plans and issue graphs
+- `overseer/plan` on an issue: a coder bot writes an implementation plan as one comment, revised in place each time the label is applied again (v2, v3...). `overseer/implement` approves it: a one-PR plan becomes one PR; a plan with a Breakdown becomes a graph of sub-issues, each fixed (or planned again, as a graph of its own) as its steps become ready, the parent closed when all are done. See [plans and issue graphs](../factory/docs/plan-and-graph.md). The graph controller cannot be turned on from the Overseer resource yet.
+
 ### Pull request care
 For PRs written by its bot pool that carry the trigger label or are assigned to a bot, each sweep picks one action:
 - **Address feedback** (`pr-comments`): new comments, reviews and inline comments from trusted humans (repository owners, members and collaborators, plus `allowlistedUsers`) or allowlisted review bots are handed to the agent. Feedback from anyone else is ignored. Reactions record what happened to each comment: 👀 picked up, 👍 resolved, 😕 failed. A human adds 🚀 to ask for another pass. A line starting with `/overseer-ignore` (or `/<trigger>-ignore`) opts a comment out. Approvals and `/lgtm` are not treated as feedback.
@@ -147,5 +150,6 @@ The logic itself lives in [`factory`](../factory/), mostly under `factory/pkg/co
 ## Documentation
 
 - [User Guide & Installation Manual](docs/user-guide.md): prerequisites, robot accounts, labels, local `kind` development, the KCC walk-through, day-to-day operations.
+- [Plans and issue graphs](../factory/docs/plan-and-graph.md): planning an issue, approving the plan, and running it as one PR or a graph of sub-issues.
 - [System Architecture & Interaction Diagrams](docs/architecture-overseer-factory.md): the supervisor loop, sandbox lifecycle, token usage telemetry, the queue shared by Overseer and factory.
 - [Core Design Principles](docs/design-overseer.md): the ideas behind autonomous agent loops and multi-agent orchestration.

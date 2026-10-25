@@ -56,7 +56,7 @@
 - **Issue rules**, in order:
   1. `workflow-missing`: an issue that names a workflow definition that cannot be loaded is stopped, with a comment saying which and why.
   2. `workflow`: an issue whose body names a workflow runs its next step (the `workflow` recipe).
-  3. The plan flow, by command label: `plan` (`<trigger>/plan`: the `plan` recipe writes or revises the issue's one plan comment), then on `<trigger>/implement` by the plan's shape - `implement` (one PR: `fix-with-plan`), `implement-graph` (a Breakdown: the graph label, for the graph controller), `implement-unplanned` (no plan: a comment).
+  3. The plan flow ([plans and issue graphs](docs/plan-and-graph.md)), by command label: `plan` (`<trigger>/plan`: the `plan` recipe writes or revises the issue's one plan comment), then on `<trigger>/implement` by the plan's shape - `implement` (one PR: `fix-with-plan`), `implement-graph` (a Breakdown: the graph label, for the graph controller), `implement-unplanned` (no plan: a comment).
   4. `fix`: an issue the overseer is pointed at (the trigger label - `triggerLabel`, default `factory`; the Overseer image sets `overseer` - a pool assignee, or opened by the watcher) with no linked open PR, not in the plan flow, is fixed with `recipe fix --apply --action open-pr --pr-labels --input draft=false`: the PR opens ready for review, labelled with the trigger label, the config's `additionalLabels` and the issue's labels.
 
   An issue has one task at a time; after 3 failed fixes since a human spoke or the last pause, `fix` gives up with the stop label.
@@ -272,6 +272,7 @@ Global flags (`--engine`, `--user`, `--namespace`, `--timeout`, `--disclose`, re
 - [Overseer and factory architecture](../overseer/docs/architecture-overseer-factory.md)
 - [Configuration guide (`.factory.cfg`)](docs/configuration.md)
 - [Watch rules guide](docs/watch-rules.md): the rule files' fields, and how the watch's rules decide
+- [Plans and issue graphs](docs/plan-and-graph.md): from an issue to a reviewed plan, then one PR or a graph of sub-issues, steered with labels
 - Watch internals: [watch rules design](design/watch-rules.md), [design note](design/watch-design-note.md), [subcontroller architecture](design/watch-subcontrollers-architecture.md)
 - [Resilient and reconnectable task execution](design/resilient-task-execution.md)
 - [Multi-engine sandboxes](design/multi-engine.md)
