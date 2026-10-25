@@ -90,7 +90,7 @@ To get one PR from a plan that has a Breakdown, remove the Breakdown (edit the p
 
 ## 4. Children that are planned: nesting
 
-A step with `then: plan` gives a child labelled `<trigger>/plan`: the same rules plan it, and its maintainer approves with `implement`: one PR, or - if its plan has a Breakdown - its own graph, one level down. A step with `then: ask` waits, labelled `<trigger>/needs-human`, for a person to choose ([issue-graph.md §4.6](issue-graph.md)). The reconciler does not re-apply a `plan` or `route` label to an open child, as it does a fixed child's labels: each is a command its rule takes off when done.
+A step with `then: plan` gives a child labelled `<trigger>/plan`: the same rules plan it, and its maintainer approves with `implement`: one PR, or - if its plan has a Breakdown - its own graph, one level down. A step with `then: ask` waits, labelled `<trigger>/needs-human`, for a person to choose ([issue-graph.md §4.6](issue-graph.md)): its body lists the choices under the step's text, and the step's `assignees` are assigned, so GitHub notifies them. The reconciler does not re-apply a `plan` or `route` label to an open child, as it does a fixed child's labels: each is a command its rule takes off when done.
 
 A child that is planned and broken down gets its own start block and becomes a parent. Its graph is reconciled like any other, one level down:
 

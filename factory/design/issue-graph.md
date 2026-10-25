@@ -214,7 +214,7 @@ An issue's approved plan can be the source of its graph (`source: plan`, §4.3):
 | :--- | :--- | :--- |
 | `fix` (default) | the trigger label, `labels` and the review label | the `fix` rule implements it; the PR rules care for its PR. |
 | `plan` | `<trigger>/plan` | the `plan` rule plans it; a maintainer approves with `<trigger>/implement`: one PR, or its own graph if its plan has a Breakdown (§4.7). |
-| `ask` | `<trigger>/needs-human` | nothing runs until a person applies the trigger label (fix) or `<trigger>/plan`, or closes it; its body says so, and the step's `assignees` are notified. |
+| `ask` | `<trigger>/needs-human` | nothing runs until a person applies the trigger label (fix) or `<trigger>/plan`. |
 
 The planner proposes `then` for each step and a maintainer approves it with the plan. Until a child starts, anyone with triage access can override its route by changing its labels; later, a triage rule on `<trigger>/needs-human` children could choose.
 
