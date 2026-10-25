@@ -159,7 +159,7 @@ In this repository's `.agents/recipes/plan.yaml`:
 `.agents/recipes/fix-with-plan.yaml` (the `implement` rule's) takes both paths in one run:
 
 1. Read the plan through `keyed-comment` (trusted kinds), as today, and note whether it has a `graph` block.
-2. **With a `graph` block:** validate it (`factory graph validate`, and the depth limit), post the start block `source: plan` as a keyed comment (key `graph`), and end: the remaining steps are skipped (`if:`), no agent runs, and the task leaves no Change (an optional result).
+2. **With a `graph` block:** the `graph-start` step (`factory graph start --source plan`) validates it (and the depth limit), posts the start block `source: plan` as a keyed comment (key `graph`), and the run ends: the remaining steps are skipped (`if:`), no agent runs, and the task leaves no Change (an optional result).
 3. **Without one:** the fix steps run as they do now, and `open-pr` opens the PR.
 
 So the rule stays one rule (`apply: open-pr`), and the path is decided by the plan, read once, at the moment of approval.
