@@ -321,7 +321,7 @@ The design separates **deciding** from **doing**:
 3. **Invalid** definition or params. Label the parent and report it in the status; create nothing.
 4. **Params changed** after start. The phase is `Blocked`; create nothing.
 5. **Repair.** Link marked children that aren't yet linked (§5.2), and close duplicates (§5.1).
-6. **Active child.** Re-apply missing labels and assignees to a child to be fixed (a plan or route label is a command its rule takes off, so it is not re-applied). Close the child as completed if a bot PR that references it has merged (§6.3); always on, with no per-step setting: a step that needs several PRs is a child with `then: plan` that breaks down into its own steps.
+6. **Active child.** Re-apply missing labels and assignees. Close the child as completed if a bot PR that references it has merged (§6.3); always on, with no per-step setting: a step that needs several PRs is a child with `then: plan` that breaks down into its own steps.
 7. **Checkpoints.** For each checkpoint step that is done and not yet recorded, add the stop label and/or `<trigger>/plan` to the parent, and record it (§4.8). A stop added here ends the pass: the graph is `Paused` from the next one.
 8. **Create.** For each ready step in definition order, while fewer than `maxActive` steps are active, create its child with the labels its `then` gives (§4.6).
 9. **Complete.** When every step, and the `finally` step if there is one, is done and the parent isn't marked complete, write the completion marker and close the parent as completed. No completion comment is posted; the final status comment shows the result. Completion is final; a parent reopened afterwards is left alone. A nested parent closing completes its step one level up (§4.7).
