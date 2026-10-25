@@ -194,6 +194,22 @@ func TestValidateTemplateParams(t *testing.T) {
 	}
 }
 
+// The plan recipe folds its Breakdown in <details>: the block inside is
+// found all the same, and the plan is graph-shaped.
+func TestPlanBlockFolded(t *testing.T) {
+	md := "## PR plan\n\n```mermaid\nflowchart LR\n  main --> a\n```\n\n## Breakdown\n\n<details>\n<summary>Breakdown</summary>\n\n" +
+		"```yaml graph\nsteps:\n  - {id: a, title: A, body: a}\n  - {id: b, title: B, body: b, after: [a]}\n```\n\n</details>\n"
+	s, err := ParsePlanBlock(md)
+	if err != nil || s == nil || len(s.Steps) != 2 || s.Steps[1].After[0] != "a" {
+		t.Fatalf("folded block: %+v, %v", s, err)
+	}
+	c := &githubv39.IssueComment{Body: githubv39.String(md + "\n<!-- factory:comment key=plan v=1 -->"),
+		User: &githubv39.User{Login: githubv39.String("hopper-coder-bot")}, AuthorAssociation: githubv39.String("NONE")}
+	if got := PlanShape([]*githubv39.IssueComment{c}, rules.Env{Pool: []string{"hopper-coder-bot"}}); got != ShapeGraph {
+		t.Errorf("PlanShape = %q, want graph", got)
+	}
+}
+
 // A plan whose graph block does not parse is still graph-shaped: the
 // graph's start reports what is wrong with it.
 func TestPlanShapeInvalidBlock(t *testing.T) {

@@ -21,10 +21,14 @@ default for `factory watch` (`triggerLabel` in `.factory.cfg`).
 
 A maintainer labels the issue `<t>/plan`. The `plan` rule runs the `plan`
 recipe in the issue's sandbox, as a coder bot: it reads the issue, its
-comments and the code, and writes the plan - Summary, Approach, Steps,
-Risks, Test plan - posted as **one comment** with a hidden key (`plan`).
-When the work is too big for one PR, the plan ends with a **Breakdown**
-(section 4). On success the watcher adds `<t>/planned`; the command label
+comments and the code, and writes the plan - Summary, Baseline (what
+the default branch has to build on), Approach, PR plan, Risks, Test plan -
+posted as **one comment** with a hidden key (`plan`). For one PR, the PR
+plan is its numbered steps. When the work is too big for one PR, the PR
+plan is a mermaid **dependency graph** of the PRs and a table of them
+(what each adds, its files, what it comes after, how to verify it), and
+the plan ends with a **Breakdown** (section 4), folded under `<details>`:
+it is the overseer's spec, and says the same as the PR plan. On success the watcher adds `<t>/planned`; the command label
 comes off when the task ends, whatever happened.
 
 To refine it, comment on the plan and apply `<t>/plan` again: the next run
@@ -115,7 +119,8 @@ The parent never opens a PR. `fix` and `workflow` leave it alone
 ## 4. The Breakdown
 
 The plan's Breakdown is one fenced block whose info string is exactly
-`yaml graph`:
+`yaml graph` (the plan recipe folds it in `<details>`; it is found
+anywhere in the comment):
 
 ````markdown
 ## Breakdown
