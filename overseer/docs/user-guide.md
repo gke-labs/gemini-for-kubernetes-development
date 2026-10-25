@@ -39,6 +39,11 @@ Because GitHub requires labels to exist in the repository before bots can attach
 | **Primary Trigger** | `overseer` | Maintainers / Bot | **Triggers automated issue fixing and PR tracking.** When applied to an issue, Overseer creates an `issue-fix` task and launches a worker sandbox to write and submit a pull request. |
 | **Review Opt-In** | `overseer/review` | Maintainers / Authors | **Opt-in for automated AI code review.** When added to a PR or its referenced parent issue, the Reviewer Bot (`reviewbot-robot`) automatically performs a structured code review once CI passes. |
 | **Ready for Human** | `overseer/ready-for-human` | Overseer (Automated) | **Signaling for human maintainers.** Applied automatically when all automated gates pass: CI checks are green, no merge conflicts, bot reviews completed and passed, all comments addressed. Automatically removed if new commits, failures, or comments appear. |
+| **Plan** | `overseer/plan` | Maintainers | **Plans an issue.** A coder bot posts an implementation plan as one comment; applying the label again revises it (v2, v3...). Optional: only for the [plan flow](../../factory/docs/plan-and-graph.md). |
+| **Planned** | `overseer/planned` | Overseer (Automated) | The issue has a plan; plain fixing leaves it alone until `overseer/implement`. |
+| **Implement** | `overseer/implement` | Maintainers | **Approves the plan.** One PR for a one-PR plan; for a plan with a Breakdown, a graph of sub-issues. |
+| **Graph** | `overseer/graph` | Overseer / Maintainers | The issue is an issue graph's parent: its steps become sub-issues as they are ready. |
+| **Route** | `overseer/route` | Overseer (Automated) | A graph step (`then: ask`) waits for a person to relabel it. |
 | **Stop / Pause** | `overseer/stop` | Maintainers / Overseer | **Circuit breaker and manual pause.** Halts and skips all automated processing on this issue or PR. Applied automatically if CI investigation retries exceed limits (3 attempts) or on inactivity. Maintainers can also manually apply it to freeze bot activity; remove it to resume. |
 
 > [!NOTE]
@@ -282,6 +287,7 @@ Maintainers can interact with and steer Overseer workflows directly in GitHub wi
 - **Trigger Issue Remediation**: Apply the `overseer` label (or assign a bot user) to an open issue to trigger Overseer to spawn a worker sandbox and author a PR.
 - **Request Automated Code Review**: Apply the `overseer/review` label to an open PR (or its parent issue) to trigger automated bot review once CI tests pass.
 - **Provide Custom Review Rules**: Add a `## Review Instructions` section to the PR or issue description to supply domain-specific guidelines or references (e.g. `.gemini/skills/my-check/SKILL.md`) for the reviewer bot.
+- **Plan, then Implement**: Apply `overseer/plan` to get an implementation plan as a comment; comment and apply it again to revise; apply `overseer/implement` to approve it - one PR, or a graph of sub-issues ([plans and issue graphs](../../factory/docs/plan-and-graph.md)).
 - **Pause Processing / Circuit Breaker**: Apply `overseer/stop` to an issue or PR to immediately freeze all bot activity on it.
 - **Resume Processing**: Remove `overseer/stop` from any paused issue or PR to clear retry counters and allow the bot to resume.
 - **Filter Ready Pull Requests**: Search repository PRs with `is:pr is:open label:overseer/ready-for-human` to locate PRs that have cleared all automated checks, passed bot review, and are awaiting human maintainer sign-off.

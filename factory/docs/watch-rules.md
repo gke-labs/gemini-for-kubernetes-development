@@ -436,7 +436,7 @@ predicates (`workflow: any` and `workflow: none`) keep them apart. The plan
 flow's command labels come between: `plan` (14), then `implement` (16),
 `implement-graph` (17) and `implement-unplanned` (18), kept apart by
 `plan: pr | graph | none`; `fix` leaves an issue being planned or planned
-alone. Like a PR, an issue gets
+alone ([plans and issue graphs](plan-and-graph.md)). Like a PR, an issue gets
 one task at a time: while its fix or a workflow step is queued or running,
 neither rule decides (an edited body naming a workflow waits for the fix). `ready`
 writes labels but takes the item: it must not hold beside a care rule, nor
