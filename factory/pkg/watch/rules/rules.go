@@ -173,6 +173,11 @@ type When struct {
 	// fanout label): the fan-out controller's, never fixed itself. Its
 	// children are ordinary issues, created when they are to be worked on.
 	Fanout *bool `yaml:"fanout,omitempty" json:"fanout,omitempty"`
+	// Graph is whether the issue is an issue graph's parent (it carries
+	// the graph label): the graph controller's, never fixed itself. Its
+	// children are ordinary issues, created when their steps are ready
+	// (design/issue-graph.md).
+	Graph *bool `yaml:"graph,omitempty" json:"graph,omitempty"`
 
 	// Pull requests.
 	Checks    string `yaml:"checks,omitempty" json:"checks,omitempty"` // failing | pending | green
@@ -391,7 +396,7 @@ func Parse(data []byte) (*Rule, error) {
 // predicates are the When fields each kind of rule may set, by YAML name.
 var predicates = map[string][]string{
 	"*":     {"any-of", "labels", "assignee", "author", "last-run"},
-	OnIssue: {"linked-pr", "connected-pr", "workflow", "opened-by", "fanout"},
+	OnIssue: {"linked-pr", "connected-pr", "workflow", "opened-by", "fanout", "graph"},
 	OnPR:    {"checks", "mergeable", "feedback", "closes", "reviewed-at-head", "changes-requested", "approved", "draft", "inactive-for"},
 }
 
@@ -413,6 +418,7 @@ func (w When) set() []string {
 	add("workflow", w.Workflow != "")
 	add("opened-by", w.OpenedBy != "")
 	add("fanout", w.Fanout != nil)
+	add("graph", w.Graph != nil)
 	add("checks", w.Checks != "")
 	add("mergeable", w.Mergeable != nil)
 	add("feedback", w.Feedback != "")

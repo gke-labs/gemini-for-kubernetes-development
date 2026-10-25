@@ -54,6 +54,7 @@ func (s *Scanner) issueItemOf(issue *githubv39.Issue) rules.Item {
 		UpdatedAt:         issue.GetUpdatedAt(),
 		Closed:            issue.GetState() == "closed",
 		FanoutParent:      conventions.HasFanoutLabel(issue.Labels, s.cfg.TriggerLabel),
+		GraphParent:       conventions.HasGraphLabel(issue.Labels, s.cfg.TriggerLabel),
 	}
 }
 

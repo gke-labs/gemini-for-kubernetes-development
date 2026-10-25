@@ -51,6 +51,7 @@ on: issue                    # the kind of item the rule looks at
 order: 20                    # its place among the issue rules; a recipe rule takes the item
 when:                        # the condition: every predicate set must hold
   fanout: false              #   not a fan-out's parent (the fan-out controller's)
+  graph: false               #   not an issue graph's parent (the graph controller's)
   linked-pr: none            #   no open PR says it closes it
   connected-pr: none         #   nor is one linked to it (its timeline, read only if needed)
   workflow: none             #   its body names no workflow (the workflow rule's)
@@ -188,6 +189,7 @@ the merge queue get nothing from any rule.
 | `workflow` | `none`, `any`, `missing` | the issue's body names no workflow definition; it names one it can load; it names one that cannot be loaded (missing, or not a workflow it can run) |
 | `opened-by` | `watcher` | the watcher's own login opened it |
 | `fanout` | `true`, `false` | it is a fan-out's parent (the fanout label): the fan-out controller's, never fixed itself. A child is an ordinary issue, created when it is to be worked on |
+| `graph` | `true`, `false` | it is an issue graph's parent (the graph label): the graph controller's, never fixed itself. A child is an ordinary issue, created when its step is ready ([issue graphs](../design/issue-graph.md)) |
 
 ### Pull requests
 
