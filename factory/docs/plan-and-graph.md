@@ -103,6 +103,11 @@ The parent never opens a PR. `fix` and `workflow` leave it alone
   `<t>/stop` on the parent, for a maintainer to look; `replan` puts
   `<t>/plan` on it, so the plan is revised (v+1) and the next pass reads
   the new Breakdown. A step whose child exists keeps it, by its id.
+- A replan - a checkpoint's, or a maintainer's `<t>/plan` on the parent -
+  reads the graph's status comment, the finished sub-issues and the PRs
+  that closed them, and revises only the steps not yet started: done and
+  active steps stay as they are, and "Changes since the previous version"
+  says what the finished steps showed.
 - A parent closed by a person cancels the graph; one closed by a commit
   ("Fixes #100" in a child's PR) is reopened until the graph is done.
 
@@ -187,7 +192,5 @@ Create them in the repository before using the flow:
 
 - Nothing acts on `<t>/route`: a `then: ask` child waits for a person to
   relabel it.
-- A replan does not yet read the graph's status or the finished children's
-  PRs.
 - An Overseer cannot turn the graph controller on yet: its resource has no
   field for it, and `WATCH_GRAPHS` is not passed to the watch.
