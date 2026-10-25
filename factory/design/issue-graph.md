@@ -144,7 +144,7 @@ spec:
 
 | Field | Meaning |
 | :--- | :--- |
-| `params[]` | Inputs from the parent issue. Each must have a `pattern` or an `enum`, so free text never reaches a template; a pattern-only param also needs an `example`. Values are strings in v1. |
+| `params[]` | Inputs from the parent issue. Each must have a `pattern` or an `enum`, so free text never reaches a template. Values are strings in v1. |
 | `params[].required` | Defaults to `true`. An optional param (`required: false`) may be left out of the parent's block. |
 | `params[].default` | Only allowed on optional params, and must satisfy the param's constraint. An omitted optional param takes its `default`, or the empty string if it has none, so templates can test it with `{{ if .Params.<name> }}`. |
 | `steps[].id` | Unique, stable identity. Children are matched to steps by `id`, never by position or title. |
