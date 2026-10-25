@@ -41,8 +41,10 @@ type Item struct {
 	WorkflowMissing bool
 	// WorkflowCooldown is that definition's cooldown, 0 for its default.
 	WorkflowCooldown time.Duration
-	// FanoutParent is whether the issue carries the fanout label.
+	// FanoutParent is whether the issue carries the fanout label;
+	// GraphParent, the graph label.
 	FanoutParent bool
+	GraphParent  bool `json:",omitempty"`
 
 	// PRs.
 	Head      string
@@ -264,6 +266,9 @@ func (w When) holds(r *Rule, it Item, env Env, runs []PastRun) bool {
 		return false
 	}
 	if w.Fanout != nil && it.FanoutParent != *w.Fanout {
+		return false
+	}
+	if w.Graph != nil && it.GraphParent != *w.Graph {
 		return false
 	}
 

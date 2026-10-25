@@ -359,6 +359,9 @@ func factsLine(it rules.Item) string {
 		if it.FanoutParent {
 			parts = append(parts, "fan-out parent")
 		}
+		if it.GraphParent {
+			parts = append(parts, "graph parent")
+		}
 	}
 	if it.TaskActive {
 		parts = append(parts, "a task active")

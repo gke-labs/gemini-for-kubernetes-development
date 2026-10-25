@@ -215,6 +215,8 @@ func factOf(predicate string, it Item, env Env, runs []PastRun) string {
 		return "workflow " + orNone(it.Workflow)
 	case "fanout":
 		return fmt.Sprintf("fanout %t", it.FanoutParent)
+	case "graph":
+		return fmt.Sprintf("graph %t", it.GraphParent)
 	case "checks":
 		if it.Checks == "" || it.unknown(FactChecks) {
 			return "checks not read"
