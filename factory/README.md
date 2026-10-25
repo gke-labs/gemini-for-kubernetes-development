@@ -56,7 +56,8 @@
 - **Issue rules**, in order:
   1. `workflow-missing`: an issue that names a workflow definition that cannot be loaded is stopped, with a comment saying which and why.
   2. `workflow`: an issue whose body names a workflow runs its next step (the `workflow` recipe).
-  3. `fix`: an issue the overseer is pointed at (the trigger label - `triggerLabel`, default `factory`; the Overseer image sets `overseer` - a pool assignee, or opened by the watcher) with no linked open PR is fixed with `recipe fix --apply --action open-pr --pr-labels --input draft=false`: the PR opens ready for review, labelled with the trigger label, the config's `additionalLabels` and the issue's labels.
+  3. The plan flow, by command label: `plan` (`<trigger>/plan`: the `plan` recipe writes or revises the issue's one plan comment), then on `<trigger>/implement` by the plan's shape - `implement` (one PR: `fix-with-plan`), `implement-graph` (a Breakdown: the graph label, for the graph controller), `implement-unplanned` (no plan: a comment).
+  4. `fix`: an issue the overseer is pointed at (the trigger label - `triggerLabel`, default `factory`; the Overseer image sets `overseer` - a pool assignee, or opened by the watcher) with no linked open PR, not in the plan flow, is fixed with `recipe fix --apply --action open-pr --pr-labels --input draft=false`: the PR opens ready for review, labelled with the trigger label, the config's `additionalLabels` and the issue's labels.
 
   An issue has one task at a time; after 3 failed fixes since a human spoke or the last pause, `fix` gives up with the stop label.
 - **PR rules**, in order, on the bot's PRs:

@@ -1,5 +1,4 @@
-# This repository's own rule (not one of factory's): overseer/implement on
-# an issue whose plan has a Breakdown (plan: graph - a `yaml graph` block in
+# overseer/implement on an issue whose plan has a Breakdown (plan: graph - a `yaml graph` block in
 # the plan comment by a pool bot or a maintainer) approves an issue graph,
 # not a PR. The watcher labels the issue {{trigger}}/graph and takes the
 # command label off: the graph controller (factory watch --graphs) starts

@@ -8,14 +8,14 @@
 # Run again, it revises the issue's plan comment (else the plan it finds
 # there), against the comments since and --feedback if given, and the
 # comment apply updates that one comment to the next version (comment key
-# plan): overseer/plan applied again (.agents/watch/plan.yaml) is the next
+# plan): overseer/plan applied again (the plan watch rule) is the next
 # version. The agent writes the plan to a file of its task, so after a
 # conversation in its session (Continue session) it rewrites the plan
 # when asked, and the task's result follows (taskoutput.Refresh).
 #
 # Work too big for one PR gets a Breakdown: a `yaml graph` block of steps,
 # one PR each. overseer/implement on such a plan starts an issue graph
-# instead of a fix (.agents/watch/implement-graph.yaml,
+# instead of a fix (the implement-graph watch rule,
 # design/issue-graph-plans.md); a revision keeps the steps' ids, which
 # name their sub-issues.
 name: plan

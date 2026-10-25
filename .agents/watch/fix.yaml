@@ -1,6 +1,3 @@
-# This repository's copy of factory's fix rule, with one difference: it
-# leaves an issue in the plan flow alone (labels.none below).
-#
 # Mirrors issues/scanner.go queueTask (with queueTasks) and issues/scan.go
 # scanAssigned / adoptCreatedIssues: an open issue the overseer is pointed
 # at - labelled with the trigger, assigned to the pool, or opened by the
@@ -35,7 +32,7 @@ when:
     - labels: {any: ["{{trigger}}"]}
     - assignee: pool
     - opened-by: watcher
-  # Not an issue in the plan flow (.agents/watch/plan.yaml): planning it,
+  # Not an issue in the plan flow (the plan rule): planning it,
   # or planned - only implement turns a planned issue into code, so the
   # trigger label applied early does not start a fix that ignores the
   # plan. Taking overseer/planned off makes it fix's again.

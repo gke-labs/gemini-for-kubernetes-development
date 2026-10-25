@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -20,35 +19,14 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/watch/rules"
 )
 
-// This repository's implement rules (.agents/watch), on an issue labelled
+// The plan flow's implement rules (built-in), on an issue labelled
 // implement, by the shape of its plan (the plan fact, read from its
 // comments only because a rule asks): a one-PR plan queues fix-with-plan;
 // a plan with a Breakdown gets the graph label, the implement label off
 // and a comment, and no task; no plan (or only an outsider's), the
 // implement label off and a comment, and no task.
 func TestQueueTasks_ImplementByPlanShape(t *testing.T) {
-	dir := filepath.Join("..", "..", "..", "..", "..", ".agents", "watch")
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	files := map[string][]byte{}
-	for _, e := range entries {
-		data, err := os.ReadFile(filepath.Join(dir, e.Name()))
-		if err != nil {
-			t.Fatal(err)
-		}
-		files[e.Name()] = data
-	}
-	repo, err := rules.LoadFiles(files)
-	if err != nil {
-		t.Fatal(err)
-	}
-	base, err := rules.Builtin()
-	if err != nil {
-		t.Fatal(err)
-	}
-	set, err := rules.Overlay(base, repo)
+	set, err := rules.Builtin()
 	if err != nil {
 		t.Fatal(err)
 	}

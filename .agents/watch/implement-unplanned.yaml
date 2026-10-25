@@ -1,5 +1,4 @@
-# This repository's own rule (not one of factory's): overseer/implement on
-# an issue with no plan comment by a pool bot or a maintainer (plan: none)
+# overseer/implement on an issue with no plan comment by a pool bot or a maintainer (plan: none)
 # has nothing to implement. The watcher says so and takes the command label
 # off, rather than run a task that would fail.
 name: implement-unplanned
