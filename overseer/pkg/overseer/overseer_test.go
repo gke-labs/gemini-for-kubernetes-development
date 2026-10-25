@@ -284,6 +284,18 @@ func TestBuildSandboxManifest_RulesRecord(t *testing.T) {
 	}
 }
 
+// spec.graphs reaches the watcher as WATCH_GRAPHS, and only when set.
+func TestBuildSandboxManifest_Graphs(t *testing.T) {
+	o := &overseerv1alpha1.Overseer{Spec: overseerv1alpha1.OverseerSpec{RepoURL: "https://github.com/owner/repo"}}
+	if _, ok := overseerEnv(t, o)["WATCH_GRAPHS"]; ok {
+		t.Error("WATCH_GRAPHS is set with graphs unset")
+	}
+	o.Spec.Graphs = true
+	if got := overseerEnv(t, o)["WATCH_GRAPHS"]; got != "true" {
+		t.Errorf("WATCH_GRAPHS = %v", got)
+	}
+}
+
 // spec.graphqlPRDetails reaches the watcher as WATCH_GRAPHQL_PR_DETAILS, and
 // only when set.
 func TestBuildSandboxManifest_GraphQLPRDetails(t *testing.T) {

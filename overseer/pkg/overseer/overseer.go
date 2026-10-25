@@ -368,6 +368,12 @@ func newOverseerSandboxFromOverseer(o *overseerv1alpha1.Overseer, name, namespac
 			"value": "/workspaces/.cache/factory-watch/decisions.jsonl",
 		})
 	}
+	if o.Spec.Graphs {
+		env = append(env, map[string]interface{}{
+			"name":  "WATCH_GRAPHS",
+			"value": "true",
+		})
+	}
 	if o.Spec.GraphQLPRDetails {
 		env = append(env, map[string]interface{}{
 			"name":  "WATCH_GRAPHQL_PR_DETAILS",
