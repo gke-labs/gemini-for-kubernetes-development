@@ -205,8 +205,87 @@ For a template file, the header reports the file path and template name
 (e.g., `.agents/graphs/kcc-greenfield.yaml: graph kcc-greenfield is valid`),
 followed by the same `maxActive` limit and step table layout.
 
-Once validated, `factory graph reconcile --url <issue> --dry-run` shows what
-a pass would do.
+### Reconciling a graph: `factory graph reconcile`
+
+Use `factory graph reconcile` to run one reconciliation pass over a graph's
+parent issue, exactly as the background watcher does during automated sweeps.
+
+A pass reads the parent's start block, resolves its step definitions (from its
+plan comment or a template file), and inspects observed sub-issues and their
+merged bot PRs. It then reconciles the graph state (`graph.Sync`):
+
+- **Evaluates DAG steps**: determines which steps are ready based on their
+  `after` dependencies and the `maxActive` concurrency limit.
+- **Creates ready sub-issues**: opens child issues for newly ready steps, setting
+  titles, bodies, assignees, and labels according to their `then` action
+  (`fix`, `plan`, or `ask`).
+- **Repairs linkages**: links existing sub-issues carrying the graph's marker and
+  closes duplicate sub-issues.
+- **Tracks completion**: closes child issues completed by merged bot PRs.
+- **Applies checkpoints**: adds checkpoint labels (such as `<t>/stop` or
+  `<t>/plan`) to the parent issue when designated steps finish.
+- **Closes completed graphs**: closes the parent issue once every step (and
+  `finally`, if present) has completed.
+- **Maintains the status comment**: writes or updates the pinned markdown status
+  comment on the parent issue.
+
+Runnable command invocations:
+
+```sh
+# Preview planned actions and rendered status comment without modifying GitHub
+factory graph reconcile --url https://github.com/owner/repo/issues/100 --dry-run
+
+# Run a live reconciliation pass against the parent issue
+factory graph reconcile --url https://github.com/owner/repo/issues/100
+```
+
+The command takes `--url <parent>` (required), `--dry-run` to preview actions
+without modifying GitHub, `--trigger-label` to override the trigger label prefix
+(defaults to `triggerLabel` from `.factory.cfg`, e.g., `factory` or `overseer`),
+and `--max-depth` for maximum graph nesting depth (default `3`).
+
+Representative terminal output for `--dry-run` (for the Breakdown above on issue #100):
+
+```
+would create step api's child "Add the Foo API", labelled factory, area/foo
+would write the status comment on #100 (Running)
+
+### Issue graph - Running · 0/5 done
+
+| Step | After | Then | Issue | State |
+|---|---|---|---|---|
+| api | - | fix | - | 🔄 Active |
+| controller | api | plan | - | ⏳ Pending |
+| docs | api | fix | - | ⏳ Pending |
+| storage | - | ask | - | ▶️ Ready |
+| finally | every step | fix | - | ⏳ Pending |
+
+<sub>steps: plan v1 · maxActive 1</sub>
+
+<!-- factory:graph-state {"params":"e3b0c44298fc"} -->
+<!-- factory:comment key=status v=1 -->
+```
+
+In `--dry-run` mode:
+- Planned actions are printed line-by-line with the `would ` prefix (e.g.,
+  `would create step api's child...`, `would write the status comment on #100 (Running)`).
+- Because `maxActive` is 1, only `api` is activated (`🔄 Active`); `storage` is
+  also ready but waits in `▶️ Ready` until an active step finishes.
+- The full rendered status comment is printed below the planned actions, showing
+  the overall progress, the step status table, and hidden state metadata blocks.
+- On subsequent passes, `--dry-run` details other planned actions as the graph
+  progresses (e.g., `would close #101 (step api) as completed by #105`,
+  `would link #101 (step api) as a sub-issue`,
+  `would label the parent #100 factory/plan (checkpoint controller)`, or
+  `would close the parent #100 as completed`).
+
+In live execution (without `--dry-run`), actions are written to GitHub and the
+resulting phase is output:
+
+```
+create step api's child "Add the Foo API", labelled factory, area/foo
+#100: Running
+```
 
 ## 5. Nesting
 
