@@ -256,6 +256,7 @@ factory sandbox chat factory-issue-917 -r latest  # resume the Gemini session
 | `recipe care-rebase` | Rebase a PR of yours onto the default branch, resolving conflicts; `--apply --action post-replies` posts the report |
 | `pr watch` | Follow up one PR with care until it merges or closes |
 | `pr adopt open\|close` | Re-home a third-party PR under the bot (`--strategy reuse\|reimplement`) |
+| `graph validate\|reconcile\|adopt\|start` | Validate, reconcile, adopt issues into, or start an issue graph; see [docs/plan-and-graph.md](docs/plan-and-graph.md) |
 | `agent create` | Run an `.agents/` (or `--local`) agent definition |
 | `watch` | The autonomous scan / dispatch / GC loop |
 | `sandbox list\|inspect\|logs\|exec\|cp\|connect\|chat\|suspend\|resume\|delete` | Manage individual sandboxes |
