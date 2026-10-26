@@ -24,6 +24,10 @@ run:
   apply: comment
   on-success:
     label: ["{{trigger}}/planned"]   # done: the watcher's own write
+    # A new version: whether it still asks is plan-asking's to say again
+    # (it relabels needs-human if so) - the label follows the latest
+    # version, however the questions were answered (ticked or in comments).
+    unlabel: ["{{trigger}}/needs-human"]
   on-failure:
     comment: "Planning failed; apply the plan label again to retry."
   on-end:
