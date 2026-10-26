@@ -337,6 +337,86 @@ In live execution:
 - On the next reconciliation pass, `factory graph reconcile` (or the background watcher)
   recognizes #104 as step `storage`'s child and tracks its status in the graph.
 
+### Starting a graph: `factory graph start`
+
+Use `factory graph start` to initialize an issue as a graph's parent.
+
+It checks the steps that define the graph—either from an approved plan comment
+(`--source plan`) or from a repository template and its parameters
+(`--graph <name> [--param <k>=<v>]...`)—and posts the start block as a keyed
+comment (`key=graph`). Because a bot cannot edit another account's issue body
+without write access, posting a keyed comment allows rules or maintainers to
+start a graph on an issue.
+
+The operation verifies that:
+- The issue does not already have a start block in its body or in an existing
+  comment. An issue that already has a start block is left as it is.
+- The graph nesting depth does not exceed `--max-depth` (default `3`).
+- The steps are valid: for `--source plan`, the issue must have an approved plan
+  comment containing a valid `yaml graph` Breakdown block; for `--graph`, the
+  template (`.agents/graphs/<name>.yaml`) must exist and validate with the given
+  parameters.
+
+Runnable command invocations:
+
+```sh
+# Preview starting a graph from an issue's approved plan
+factory graph start --url https://github.com/owner/repo/issues/100 --source plan --dry-run
+
+# Start a graph from an issue's approved plan
+factory graph start --url https://github.com/owner/repo/issues/100 --source plan
+
+# Preview starting a graph from a repository template
+factory graph start --url https://github.com/owner/repo/issues/124 --graph kcc-greenfield --param kind=SpannerInstanceConfig --dry-run
+
+# Start a graph from a repository template
+factory graph start --url https://github.com/owner/repo/issues/124 --graph kcc-greenfield --param kind=SpannerInstanceConfig
+```
+
+The command requires `--url <parent>` and either `--source plan` or `--graph <template>`
+(with repeatable `--param name=value` for template parameters). It supports `--dry-run`
+to preview the action without writing changes to GitHub, `--trigger-label` to override
+the trigger label prefix, and `--max-depth` to set the maximum allowed graph nesting depth.
+
+Representative terminal output:
+
+For `--dry-run`:
+
+```
+would start #100's graph from its plan
+```
+
+Or for a template:
+
+```
+would start #124's graph from its template `kcc-greenfield`
+```
+
+For live execution:
+
+```
+start #100's graph from its plan
+```
+
+Or for a template:
+
+```
+start #124's graph from its template `kcc-greenfield`
+```
+
+If the issue already has a start block:
+
+```
+#100 already has a start block (plan): nothing to do
+```
+
+In live execution:
+- Posts a keyed comment (`<!-- factory:comment key=graph v=1 -->`) containing the
+  `factory-graph` start block on the parent issue.
+- When the parent is labelled `<t>/graph` (or detected during watcher sweeps),
+  `factory graph reconcile` (or the background watcher) recognizes the start block,
+  evaluates dependencies, and begins creating sub-issues for ready steps.
+
 ## 5. Nesting
 
 A step with `then: plan` gets a child that is planned like any issue; if
