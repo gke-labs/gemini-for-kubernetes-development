@@ -287,6 +287,56 @@ create step api's child "Add the Foo API", labelled factory, area/foo
 #100: Running
 ```
 
+### Adopting an issue: `factory graph adopt`
+
+Use `factory graph adopt` to bind an existing GitHub issue to a step of a parent
+issue's graph.
+
+Instead of the reconciler opening a new child issue when a step becomes ready,
+adopting an issue injects the child metadata marker into the existing issue's
+body and links it as a GitHub sub-issue of the parent. The next reconciliation
+pass counts the adopted issue as that step's child.
+
+The operation verifies that:
+- The parent issue is an active graph parent with a valid start block and graph spec.
+- The specified `--step` exists in the parent's graph.
+- The target `--issue` is an issue (not a pull request) and does not already carry
+  a child marker from another step or parent.
+
+Runnable command invocations:
+
+```sh
+# Preview adopting an issue without modifying GitHub
+factory graph adopt --url https://github.com/owner/repo/issues/100 --step storage --issue 104 --dry-run
+
+# Bind an existing issue to a step of the parent graph
+factory graph adopt --url https://github.com/owner/repo/issues/100 --step storage --issue 104
+```
+
+The command requires `--url <parent>`, `--step <id>`, and `--issue <n>`, and supports
+`--dry-run` to preview the action without writing changes to GitHub.
+
+Representative terminal output:
+
+For `--dry-run`:
+
+```
+would adopt #104 as step storage of #100
+```
+
+For live execution:
+
+```
+adopt #104 as step storage of #100
+```
+
+In live execution:
+- The child issue's body is updated to append the child metadata marker
+  (e.g., `<!-- factory:graph-child parent=100 source=plan step=storage depth=1 params=e3b0c44298fc -->`).
+- The issue is linked as a GitHub sub-issue under the parent (#100).
+- On the next reconciliation pass, `factory graph reconcile` (or the background watcher)
+  recognizes #104 as step `storage`'s child and tracks its status in the graph.
+
 ## 5. Nesting
 
 A step with `then: plan` gets a child that is planned like any issue; if
