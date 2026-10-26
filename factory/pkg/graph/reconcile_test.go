@@ -159,13 +159,13 @@ func TestReconcileRoutesAndLabels(t *testing.T) {
 	if l := got["p"].Labels; !slices.Equal(l, []string{"overseer/plan"}) {
 		t.Errorf("plan labels %v", l)
 	}
-	if l := got["q"].Labels; !slices.Equal(l, []string{"overseer/needs-human"}) {
+	if l := got["q"].Labels; !slices.Equal(l, []string{"overseer/needs-human", "overseer/stop"}) {
 		t.Errorf("ask labels %v", l)
 	}
 	// An ask step's child says it waits for a person, and what they can do;
 	// it is assigned to the step's assignees. No other step's says so.
 	if b := got["q"].Body; !strings.HasPrefix(b, "q\n\n## Needs a person\n\nThis step of #100's plan") ||
-		!strings.Contains(b, "label it `overseer` to have it fixed") || !strings.Contains(b, "label it `overseer/plan` to have it planned first") {
+		!strings.Contains(b, "remove `overseer/stop` and label it `overseer` to have it fixed") || !strings.Contains(b, "remove `overseer/stop` and label it `overseer/plan` to have it planned first") {
 		t.Errorf("ask body %q", b)
 	}
 	if !slices.Equal(got["q"].Assignees, []string{"alice"}) || len(got["f"].Assignees) != 0 {

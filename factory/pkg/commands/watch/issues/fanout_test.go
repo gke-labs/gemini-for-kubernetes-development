@@ -13,6 +13,7 @@ import (
 	githubv39 "github.com/google/go-github/v39/github"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/graph"
 )
 
 func fanoutIssue(n int, body string, labels ...string) *githubv39.Issue {
@@ -85,5 +86,53 @@ func TestQueueTasks_SkipsFanoutParents(t *testing.T) {
 	slices.Sort(got)
 	if len(got) != 2 || got[0] != "task-issue-101-rule-fix.yaml" || got[1] != "task-issue-102-rule-fix.yaml" {
 		t.Errorf("queued %v, want both children, task-issue-101-rule-fix.yaml and task-issue-102-rule-fix.yaml", got)
+	}
+}
+
+// TestAdoptCreatedIssues_LeavesGraphChildrenAlone pins that an issue
+// graph's children, filed as the operator and labelled by their steps, are
+// not labelled or assigned by the adoption: a child to be planned keeps
+// only its plan label, and a child waiting for a person (needs-human, with
+// the stop label) is not even eligible. A plain issue is still adopted.
+func TestAdoptCreatedIssues_LeavesGraphChildrenAlone(t *testing.T) {
+	var written []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodPost && (strings.HasSuffix(r.URL.Path, "/labels") || strings.HasSuffix(r.URL.Path, "/assignees")) {
+			written = append(written, r.URL.Path)
+		}
+		_, _ = w.Write([]byte("{}"))
+	}))
+	t.Cleanup(server.Close)
+	gh := githubv39.NewClient(nil)
+	gh.BaseURL, _ = url.Parse(server.URL + "/")
+	s, _, _ := newScanner(t, Config{TriggerLabel: "factory", TargetAssignee: "watcher", BotUsers: []string{"watcher"}}, Deps{GitHub: github.ForRepo(gh, "o", "r")})
+
+	marker := func(step string) string {
+		return graph.ChildInfo{Parent: 100, Source: graph.SourcePlan, Step: step, Depth: 1}.Marker()
+	}
+	adopted := s.adoptCreatedIssues(context.Background(), []*githubv39.Issue{
+		fanoutIssue(101, "Plan it.\n\n"+marker("design"), "factory/plan"),
+		fanoutIssue(102, "Decide.\n\n"+marker("decide"), "factory/needs-human", "factory/stop"),
+		fanoutIssue(103, "please fix"),
+	})
+
+	var got []int
+	for _, issue := range adopted {
+		got = append(got, issue.GetNumber())
+	}
+	if !slices.Equal(got, []int{101, 103}) {
+		t.Errorf("adopted %v, want [101 103]: the plan child (unlabelled by the adoption) and the plain issue", got)
+	}
+	for _, p := range written {
+		if strings.Contains(p, "/issues/101/") || strings.Contains(p, "/issues/102/") {
+			t.Errorf("the adoption wrote to a graph child: %s", p)
+		}
+	}
+	if !slices.ContainsFunc(written, func(p string) bool { return strings.Contains(p, "/issues/103/labels") }) {
+		t.Errorf("the plain issue was not labelled: %v", written)
+	}
+	if l := adopted[0].Labels; len(l) != 1 || l[0].GetName() != "factory/plan" {
+		t.Errorf("plan child labels %v", l)
 	}
 }

@@ -413,7 +413,10 @@ func statuses(s *Spec, ids []string, canonical map[string]Child) []StepStatus {
 func done(state string) bool { return state == StepSucceeded || state == StepSkipped }
 
 // NeedsHumanLabel, under the trigger, marks the child of a then: ask step:
-// it waits for a person, and no bot works on it until one decides.
+// it waits for a person, and no bot works on it until one decides - the
+// child also carries the stop label, which every rule and the intake of the
+// watcher's own issues respect (the graph files its children as the
+// watcher).
 const NeedsHumanLabel = "needs-human"
 
 // needsHumanSection is what a then: ask step's child says under the step's
@@ -421,14 +424,14 @@ const NeedsHumanLabel = "needs-human"
 func needsHumanSection(parent int, trigger string) string {
 	return fmt.Sprintf(`## Needs a person
 
-This step of #%d's plan waits for a decision: no bot works on it until a person makes it. What it needs is described above. Then either:
+This step of #%d's plan waits for a decision: no bot works on it until a person makes it - it carries `+"`%s/stop`"+` until then. What it needs is described above. Then either:
 
-- label it `+"`%s`"+` to have it fixed (one PR),
-- label it `+"`%s/plan`"+` to have it planned first,
+- remove `+"`%s/stop`"+` and label it `+"`%s`"+` to have it fixed (one PR),
+- remove `+"`%s/stop`"+` and label it `+"`%s/plan`"+` to have it planned first,
 - do it yourself and close it as completed, or
 - close it as not planned to skip the step.
 
-The steps after it start once it is closed.`, parent, trigger, trigger)
+The steps after it start once it is closed.`, parent, trigger, trigger, trigger, trigger, trigger)
 }
 
 // childLabels are the labels a step's child is created with, by what it
@@ -440,7 +443,7 @@ func childLabels(s *Spec, st Step, trigger string) []string {
 	case ThenPlan:
 		return []string{trigger + "/plan"}
 	case ThenAsk:
-		return []string{trigger + "/" + NeedsHumanLabel}
+		return []string{trigger + "/" + NeedsHumanLabel, trigger + "/stop"}
 	}
 	labels := []string{trigger}
 	labels = append(labels, s.Defaults.Labels...)

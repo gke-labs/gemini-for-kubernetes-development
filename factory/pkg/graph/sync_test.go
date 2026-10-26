@@ -125,7 +125,7 @@ func TestSyncAskStep(t *testing.T) {
 				t.Fatal("no child for the ask step")
 			}
 			is := f.Issues[n]
-			if !slices.Equal(is.Labels, []string{"overseer/needs-human"}) || !strings.Contains(is.Body, "Spanner or Bigtable?\n\n## Needs a person") || !slices.Contains(f.Issues[100].SubIssues, n) {
+			if !slices.Equal(is.Labels, []string{"overseer/needs-human", "overseer/stop"}) || !strings.Contains(is.Body, "Spanner or Bigtable?\n\n## Needs a person") || !slices.Contains(f.Issues[100].SubIssues, n) {
 				t.Errorf("child = %+v", is)
 			}
 			if !slices.Equal(is.Assignees, tc.want) {
