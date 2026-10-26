@@ -248,14 +248,19 @@ start:
         change, in which files, and how to verify it (the PR table's row,
         in full). A step may set `then: plan` (its sub-issue is planned
         first, for a piece still too big or unclear) instead of the default,
-        fix. A step that needs a maintainer's answer before it can be done -
-        how big it really is (fix or plan first), whether it is needed at
-        all, or a choice only it depends on - sets `then: ask`: its body
-        holds the step's work as usual, then a `## Questions` section in the
-        format above (for size, options like "Fix it as one PR" / "Plan it
-        first"; for necessity, "Do it" / "Skip it"). Its sub-issue waits for
-        the answer on that same issue, and the agent that then takes it
-        reads the answer there. Never add a separate step that only asks;
+        fix. Most questions are this plan's (## Questions, above). But a
+        step that is plainly needed can defer details only its
+        implementation will settle - which of two library calls, how a field
+        is named, what a default should be: its body holds the work as
+        usual, then a `## Questions` section in the format above, and it
+        stays a fix step. Its sub-issue waits for the answers on that same
+        issue (labelled needs-human meanwhile), then the fix starts on its
+        own and follows them. A step whose route itself is the maintainer's
+        call - how big it really is (fix or plan first), or whether it is
+        needed at all - sets `then: ask` instead, with those questions in
+        its body: its sub-issue waits, stopped, for the maintainer to label
+        it to be fixed or planned, or to close it. Never add a separate step
+        that only asks;
         never make a step depend on another issue's answer. Do not name
         assignees: the sub-issue goes to the maintainer who approved the
         plan. `checkpoint: stop` pauses the graph

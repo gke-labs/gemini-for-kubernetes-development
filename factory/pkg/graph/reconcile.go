@@ -317,7 +317,9 @@ func Reconcile(o Observed) Result {
 			Kind: ActCreateChild, Step: ss.ID, Title: strings.TrimSpace(title), Body: body,
 			Labels:    childLabels(s, *st, o.Trigger),
 			Assignees: slices.Clone(st.Assignees),
-			AskPerson: st.ThenOrDefault() == ThenAsk,
+			// A child whose description asks (its own ## Questions) waits
+			// for an answer too: it goes to a person all the same.
+			AskPerson: st.ThenOrDefault() == ThenAsk || len(OpenQuestions(body)) > 0,
 			Child:     ChildInfo{Parent: o.Parent.Number, Source: o.Source, Step: ss.ID, Depth: o.Parent.Depth + 1, Params: hash},
 		})
 		r.Steps[i].State = StepActive

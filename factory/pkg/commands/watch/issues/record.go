@@ -10,6 +10,7 @@ import (
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/api"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/conventions"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/graph"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/watch/rules"
 )
 
@@ -55,6 +56,7 @@ func (s *Scanner) issueItemOf(issue *githubv39.Issue) rules.Item {
 		Closed:            issue.GetState() == "closed",
 		FanoutParent:      conventions.HasFanoutLabel(issue.Labels, s.cfg.TriggerLabel),
 		GraphParent:       conventions.HasGraphLabel(issue.Labels, s.cfg.TriggerLabel),
+		QuestionsOpen:     len(graph.OpenQuestions(issue.GetBody())) > 0,
 	}
 }
 

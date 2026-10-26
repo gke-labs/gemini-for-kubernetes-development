@@ -43,6 +43,11 @@ when:
   # (design/issue-graph.md).
   graph: false
   linked-pr: none
+  # Not while its description still asks: a question in its ## Questions
+  # section with no box ticked waits for an answer (issue-asking labels it
+  # needs-human meanwhile); the fix starts once each is answered, and the
+  # agent follows the answers.
+  questions: none
   # No open PR connected to it on its timeline either (a read of its own,
   # made only when the rest holds); a workflow's steps open PRs that do.
   connected-pr: none
