@@ -346,7 +346,11 @@ func apply(ctx context.Context, gh GitHub, opts Options, p *Pass) error {
 func applyOne(ctx context.Context, gh GitHub, opts Options, p *Pass, a Action) error {
 	switch a.Kind {
 	case ActCreateChild:
-		n, err := gh.CreateIssue(ctx, a.Title, strings.TrimRight(a.Body, "\n")+"\n\n"+a.Child.Marker(), a.Labels)
+		body := strings.TrimRight(a.Body, "\n")
+		if len(a.Decisions) > 0 {
+			body += "\n\n" + decisionsSection(ctx, gh, opts, a.Decisions)
+		}
+		n, err := gh.CreateIssue(ctx, a.Title, body+"\n\n"+a.Child.Marker(), a.Labels)
 		if err != nil {
 			return err
 		}
@@ -435,6 +439,57 @@ func describe(a Action, dryRun bool) string {
 		return fmt.Sprintf("%sclose the parent #%d as completed", would, a.Issue)
 	}
 	return would + a.Kind
+}
+
+// decisionsSection is what a step's child says about the decisions it
+// depends on: for each then: ask step upstream of it, its child and what
+// was answered there - the comments of the humans who decided (owner,
+// member, collaborator or a login the overseer trusts; not the pool's
+// bots, the watcher or an app), the last few, each cut short - or that it
+// was skipped. A child that cannot be read is pointed at, not quoted.
+func decisionsSection(ctx context.Context, gh GitHub, opts Options, decisions []Decision) string {
+	const keep, maxLen = 3, 1500
+	var b strings.Builder
+	b.WriteString("## Decisions this step depends on\n")
+	for _, d := range decisions {
+		fmt.Fprintf(&b, "\n### %s (#%d)\n\n", d.Title, d.Issue)
+		if d.Skipped {
+			b.WriteString("Skipped: closed as not planned. Decide what the step needs without it.\n")
+			continue
+		}
+		comments, err := gh.ListIssueComments(ctx, d.Issue)
+		if err != nil {
+			opts.logf("reading the decision on #%d (step %s): %v", d.Issue, d.Step, err)
+			fmt.Fprintf(&b, "See #%d for the decision.\n", d.Issue)
+			continue
+		}
+		var answers []*githubv39.IssueComment
+		for _, c := range comments {
+			login := c.GetUser().GetLogin()
+			if strings.EqualFold(login, opts.BotLogin) || strings.HasSuffix(login, "[bot]") {
+				continue
+			}
+			switch rules.AuthorKind(rules.Item{Author: login, AuthorAssociation: c.GetAuthorAssociation()}, opts.env()) {
+			case rules.AuthorOwner, rules.AuthorMember, rules.AuthorCollaborator:
+				answers = append(answers, c)
+			}
+		}
+		if len(answers) == 0 {
+			fmt.Fprintf(&b, "Closed without a recorded answer; see #%d.\n", d.Issue)
+			continue
+		}
+		if len(answers) > keep {
+			answers = answers[len(answers)-keep:]
+		}
+		for _, c := range answers {
+			text := strings.TrimSpace(c.GetBody())
+			if len(text) > maxLen {
+				text = text[:maxLen] + " …"
+			}
+			fmt.Fprintf(&b, "@%s:\n\n> %s\n\n", c.GetUser().GetLogin(), strings.ReplaceAll(text, "\n", "\n> "))
+		}
+	}
+	return strings.TrimRight(b.String(), "\n")
 }
 
 // askAssignees is who an ask step's child goes to when its step names no

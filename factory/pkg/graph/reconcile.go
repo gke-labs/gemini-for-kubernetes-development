@@ -137,11 +137,24 @@ type Action struct {
 	// whoever approved the graph (askAssignees).
 	Assignees []string
 	AskPerson bool
+	// Decisions are the then: ask steps the child's step waits for,
+	// directly or not, whose children are closed: their answers are added
+	// to its body when it is created (decisionsSection), so the agent
+	// that takes it sees what was decided.
+	Decisions []Decision
 	// Title, Body and Child are a child to create: the rendered title,
 	// body (without the marker) and what its marker says.
 	Title string
 	Body  string
 	Child ChildInfo
+}
+
+// Decision is a then: ask step a step waits for, decided: its child, and
+// whether it was skipped (closed as not planned).
+type Decision struct {
+	Step, Title string
+	Issue       int
+	Skipped     bool
 }
 
 // Reconcile decides one pass over a graph: from the steps, the params and
@@ -313,8 +326,22 @@ func Reconcile(o Observed) Result {
 		if st.ThenOrDefault() == ThenAsk {
 			body = strings.TrimRight(body, "\n") + "\n\n" + needsHumanSection(o.Parent.Number, o.Trigger)
 		}
+		var decisions []Decision
+		upstream := s.Upstream(ss.ID)
+		for _, id := range stepIDs(s) {
+			dep := s.Step(id)
+			c, ok := canonical[id]
+			if !upstream[id] || dep == nil || dep.ThenOrDefault() != ThenAsk || !ok || c.Open {
+				continue
+			}
+			depTitle, err := s.Render(id, dep.Title, o.Params, children)
+			if err != nil {
+				depTitle = dep.Title
+			}
+			decisions = append(decisions, Decision{Step: id, Title: strings.TrimSpace(depTitle), Issue: c.Number, Skipped: c.NotPlanned})
+		}
 		r.Actions = append(r.Actions, Action{
-			Kind: ActCreateChild, Step: ss.ID, Title: strings.TrimSpace(title), Body: body,
+			Kind: ActCreateChild, Step: ss.ID, Title: strings.TrimSpace(title), Body: body, Decisions: decisions,
 			Labels:    childLabels(s, *st, o.Trigger),
 			Assignees: slices.Clone(st.Assignees),
 			AskPerson: st.ThenOrDefault() == ThenAsk,
@@ -424,7 +451,7 @@ const NeedsHumanLabel = "needs-human"
 func needsHumanSection(parent int, trigger string) string {
 	return fmt.Sprintf(`## Needs a person
 
-This step of #%d's plan waits for a decision: no bot works on it until a person makes it - it carries `+"`%s/stop`"+` until then. What it needs is described above. Then either:
+This step of #%d's plan waits for a decision: no bot works on it until a person makes it - it carries `+"`%s/stop`"+` until then. What it needs is described above. Answer in a comment here: when this issue is closed, the steps that wait for it are created with your answer in their description. Then either:
 
 - remove `+"`%s/stop`"+` and label it `+"`%s`"+` to have it fixed (one PR),
 - remove `+"`%s/stop`"+` and label it `+"`%s/plan`"+` to have it planned first,

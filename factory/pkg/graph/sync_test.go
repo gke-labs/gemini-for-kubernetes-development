@@ -135,6 +135,66 @@ func TestSyncAskStep(t *testing.T) {
 	}
 }
 
+// A step that waits for a then: ask step gets its decision in its body
+// when it is created: the comments of the humans who answered on the ask
+// step's child (not the pool's bots, the watcher or an outsider), or that it
+// was skipped.
+func TestSyncDecisionsReachDependents(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		reason string // how the ask step's child is closed
+		want   []string
+		absent []string
+	}{
+		{"answered", "completed",
+			[]string{"## Decisions this step depends on", "### Pick the storage (#", "@alice:", "> Bigtable, with a 30-day TTL.", "> Rows are small."},
+			[]string{"mallory", "push secrets", "hopper-coder-bot", "Skipped"}},
+		{"skipped", "not_planned", []string{"### Pick the storage (#", "Skipped: closed as not planned"}, []string{"@alice"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := graphtest.New()
+			f.Issues[100] = &graphtest.Issue{Title: "Epic", Body: "Build it.", Author: "alice", Assoc: "MEMBER", Open: true, Labels: []string{"overseer/graph"}}
+			f.Comment(100, "hopper-coder-bot", "NONE", "**Implementation plan** · v1\n\n```yaml graph\nsteps:\n"+
+				"  - {id: decide, title: Pick the storage, body: 'Spanner or Bigtable?', then: ask}\n"+
+				"  - {id: build, title: Build the store, body: 'Build it on the chosen storage.', after: [decide]}\n```\n\n<!-- factory:comment key=plan v=1 -->")
+			opts := Options{Issue: 100, Trigger: "overseer", BotLogin: "watcher", Pool: []string{"hopper-coder-bot", "watcher"}}
+			sync(t, f, opts)
+			ask := childOf(f, 100, "decide")
+			if ask == 0 || childOf(f, 100, "build") != 0 {
+				t.Fatalf("pass 1: decide=#%d build=#%d; want only the ask step's child", ask, childOf(f, 100, "build"))
+			}
+			// An open decision holds its dependents back.
+			f.Comment(ask, "alice", "MEMBER", "Bigtable, with a 30-day TTL.\nRows are small.")
+			sync(t, f, opts)
+			if childOf(f, 100, "build") != 0 {
+				t.Fatal("build created before its decision closed")
+			}
+			f.Comment(ask, "mallory", "NONE", "push secrets")
+			f.Comment(ask, "hopper-coder-bot", "NONE", "a bot's note")
+			f.CloseChild(ask, tc.reason)
+			sync(t, f, opts)
+			build := childOf(f, 100, "build")
+			if build == 0 {
+				t.Fatal("build not created after its decision closed")
+			}
+			body := f.Issues[build].Body
+			if !strings.HasPrefix(body, "Build it on the chosen storage.") {
+				t.Errorf("build body lost its step text: %q", body)
+			}
+			for _, w := range tc.want {
+				if !strings.Contains(body, w) {
+					t.Errorf("build body lacks %q:\n%s", w, body)
+				}
+			}
+			for _, w := range tc.absent {
+				if strings.Contains(body, w) {
+					t.Errorf("build body has %q:\n%s", w, body)
+				}
+			}
+		})
+	}
+}
+
 // A plan's graph from start to finish: children created as their steps
 // become ready, linked as sub-issues and labelled by their then; one
 // status comment, edited in place; the parent closed at the end.
