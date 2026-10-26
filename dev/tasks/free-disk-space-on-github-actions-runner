@@ -51,7 +51,15 @@ sudo apt-get remove -y '^llvm-.*' '^libllvm.*' '^libclang.*' || true
 sudo apt-get remove -y '^openjdk.*' '^temurin-.*' ca-certificates-java || true
 sudo apt-get remove -y 'php.*' || true
 sudo apt-get remove -y '^ruby.*' || true
-sudo apt-get remove -y microsoft-edge-stable google-chrome-stable firefox powershell mercurial-common
+# Only those installed: apt-get remove fails on a package it does not know,
+# and runner images drop packages (powershell is gone from newer ones).
+for pkg in microsoft-edge-stable google-chrome-stable firefox powershell mercurial-common; do
+  if dpkg-query -W -f='${Status}' "${pkg}" 2>/dev/null | grep -q "install ok installed"; then
+    sudo apt-get remove -y "${pkg}"
+  else
+    echo "${pkg} is not installed; skipping"
+  fi
+done
 sudo apt-get autoremove -y
 sudo apt-get clean
 
