@@ -1,3 +1,17 @@
+// Copyright 2026 The Kubernetes Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /*
 Copyright 2026.
 
@@ -20,6 +34,7 @@ import (
 	"archive/tar"
 	"bufio"
 	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -30,6 +45,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -52,55 +68,6 @@ import (
 //	  task.json.gz, inputs.json.gz, recipe.source.yaml.gz, …
 //	  steps/<NN-step>.log.gz
 //	  session/stream.ndjson.gz
-
-// TaskRecord is the index entry of one archived task, and its folder's
-// manifest.json. Key is "<sandbox>/<task>"; a newer harvest of the same
-// task replaces it.
-type TaskRecord struct {
-	Key      string `json:"key"`
-	Repo     string `json:"repo,omitempty"`
-	Sandbox  string `json:"sandbox"`
-	Task     string `json:"task"`
-	TaskType string `json:"taskType,omitempty"`
-	Issue    int    `json:"issue,omitempty"`
-	PR       int    `json:"pr,omitempty"`
-
-	// From the task's own files: task.json, status.json, push.json and
-	// task-output.applied. Empty when the task has none.
-	Recipe       string `json:"recipe,omitempty"`
-	RunName      string `json:"runName,omitempty"`
-	URL          string `json:"url,omitempty"`
-	State        string `json:"state,omitempty"`
-	ExitCode     string `json:"exitCode,omitempty"`
-	StartedAt    string `json:"startedAt,omitempty"`
-	EndedAt      string `json:"endedAt,omitempty"`
-	PushedBranch string `json:"pushedBranch,omitempty"`
-	PushedHead   string `json:"pushedHead,omitempty"`
-	Applied      string `json:"applied,omitempty"`
-
-	// Files are the task's files as archived: after redaction, before
-	// compression.
-	Files []TaskFile `json:"files"`
-	// Folder is the task's folder in the archive, under the prefix.
-	Folder     string `json:"folder,omitempty"`
-	ArchivedAt string `json:"archivedAt,omitempty"`
-}
-
-// TaskFile is one archived file of a task, by its name in the task
-// directory ("push.json", "session/stream.ndjson").
-type TaskFile struct {
-	Name   string `json:"name"`
-	Bytes  int64  `json:"bytes"`
-	SHA256 string `json:"sha256"`
-}
-
-// TaskFilter selects task records. Zero values mean "no filter".
-type TaskFilter struct {
-	Repo    string
-	Issue   int
-	PR      int
-	Sandbox string
-}
 
 // logTasks is the index log's name. It is not "tasks", where the tasks'
 // folders are: startup lists the log's segments by prefix.
@@ -327,6 +294,484 @@ func describeTask(rec *TaskRecord, dir string) {
 	if data, err := os.ReadFile(filepath.Join(dir, "task-output.applied")); err == nil {
 		rec.Applied = strings.TrimSpace(string(data))
 	}
+	if inst := computeInstructions(rec, dir); inst != nil {
+		rec.Instructions = inst
+	}
+}
+
+func computeInstructions(rec *TaskRecord, dir string) *Instructions {
+	inst := &Instructions{Repo: rec.Repo}
+
+	var taskData map[string]any
+	readJSON(filepath.Join(dir, "task.json"), &taskData)
+	var inputsData map[string]any
+	readJSON(filepath.Join(dir, "inputs.json"), &inputsData)
+
+	if inst.Repo == "" {
+		if r, ok := inputsData["repo"].(string); ok && r != "" {
+			inst.Repo = r
+		} else if owner, ok := inputsData["repo_owner"].(string); ok && owner != "" {
+			if name, ok := inputsData["repo_name"].(string); ok && name != "" {
+				inst.Repo = owner + "/" + name
+			}
+		} else if r, ok := taskData["repo"].(string); ok && r != "" {
+			inst.Repo = r
+		}
+	}
+
+	for _, key := range []string{"commit", "commit_sha", "sha", "base_commit", "head_commit", "default_branch_commit"} {
+		if val, ok := inputsData[key].(string); ok && val != "" {
+			inst.Commit = val
+			break
+		}
+		if val, ok := taskData[key].(string); ok && val != "" {
+			inst.Commit = val
+			break
+		}
+	}
+
+	var wfName, wfPath string
+	if wfVal, ok := inputsData["workflow"]; ok {
+		switch v := wfVal.(type) {
+		case string:
+			wfName = v
+		case map[string]any:
+			if n, ok := v["name"].(string); ok {
+				wfName = n
+			}
+			if p, ok := v["path"].(string); ok {
+				wfPath = p
+			}
+		}
+	}
+	if wfVal, ok := taskData["workflow"]; ok && wfName == "" && wfPath == "" {
+		switch v := wfVal.(type) {
+		case string:
+			wfName = v
+		case map[string]any:
+			if n, ok := v["name"].(string); ok {
+				wfName = n
+			}
+			if p, ok := v["path"].(string); ok {
+				wfPath = p
+			}
+		}
+	}
+	if wfName == "" {
+		for _, key := range []string{"agent_name", "workflow_name"} {
+			if val, ok := inputsData[key].(string); ok && val != "" {
+				wfName = val
+				break
+			}
+			if val, ok := taskData[key].(string); ok && val != "" {
+				wfName = val
+				break
+			}
+		}
+	}
+	if wfPath == "" {
+		for _, key := range []string{"agent_file", "workflow_path"} {
+			if val, ok := inputsData[key].(string); ok && val != "" {
+				wfPath = val
+				break
+			}
+			if val, ok := taskData[key].(string); ok && val != "" {
+				wfPath = val
+				break
+			}
+		}
+	}
+	if wfName == "" && wfPath != "" {
+		wfName = strings.TrimSuffix(filepath.Base(wfPath), filepath.Ext(wfPath))
+	} else if wfPath == "" && strings.HasPrefix(wfName, ".agents/") {
+		wfPath = wfName
+		wfName = strings.TrimSuffix(filepath.Base(wfPath), filepath.Ext(wfPath))
+	}
+	if wfName != "" || wfPath != "" {
+		inst.Workflow = &WorkflowRef{Name: wfName, Path: wfPath}
+	}
+
+	recipeName := rec.Recipe
+	if recipeName == "" {
+		if r, ok := taskData["recipe"].(string); ok {
+			recipeName = r
+		} else if r, ok := inputsData["recipe"].(string); ok {
+			recipeName = r
+		} else if rMap, ok := inputsData["recipe"].(map[string]any); ok {
+			if n, ok := rMap["name"].(string); ok {
+				recipeName = n
+			}
+		}
+	}
+	var recipeHash string
+	if srcBytes, err := os.ReadFile(filepath.Join(dir, "recipe.source.yaml")); err == nil {
+		h := sha256.Sum256(srcBytes)
+		recipeHash = "sha256:" + hex.EncodeToString(h[:])
+	} else if yamlBytes, err := os.ReadFile(filepath.Join(dir, "recipe.yaml")); err == nil {
+		h := sha256.Sum256(yamlBytes)
+		recipeHash = "sha256:" + hex.EncodeToString(h[:])
+	} else if rMap, ok := inputsData["recipe"].(map[string]any); ok {
+		if h, ok := rMap["hash"].(string); ok {
+			recipeHash = h
+		}
+	}
+	if recipeName != "" || recipeHash != "" {
+		inst.Recipe = &RecipeRef{Name: recipeName, Hash: recipeHash}
+	}
+
+	if ctxVal, ok := inputsData["context"]; ok {
+		inst.Context = toStringSlice(ctxVal)
+	} else if ctxVal, ok := taskData["context"]; ok {
+		inst.Context = toStringSlice(ctxVal)
+	}
+
+	sessionPath := filepath.Join(dir, "session", "session.json")
+	if _, err := os.Stat(sessionPath); err != nil {
+		sessionPath = filepath.Join(dir, "session.json")
+	}
+	var sessionRec struct {
+		Engine string `json:"engine"`
+		Model  string `json:"model"`
+	}
+	if readJSON(sessionPath, &sessionRec) {
+		inst.Engine = sessionRec.Engine
+		inst.Model = sessionRec.Model
+	}
+	if inst.Engine == "" {
+		if eng, ok := inputsData["engine"].(string); ok {
+			inst.Engine = eng
+		} else if eng, ok := taskData["engine"].(string); ok {
+			inst.Engine = eng
+		}
+	}
+	if inst.Model == "" {
+		if mdl, ok := inputsData["model"].(string); ok {
+			inst.Model = mdl
+		} else if mdl, ok := taskData["model"].(string); ok {
+			inst.Model = mdl
+		}
+	}
+
+	inst.Skills = parseSkillsFromStream(dir)
+
+	if inst.isEmpty() {
+		return nil
+	}
+	return inst
+}
+
+func (in *Instructions) isEmpty() bool {
+	if in == nil {
+		return true
+	}
+	return in.Repo == "" && in.Commit == "" && in.Workflow == nil && in.Recipe == nil &&
+		in.Engine == "" && in.Model == "" && len(in.Context) == 0 && len(in.Skills) == 0
+}
+
+func toStringSlice(v any) []string {
+	switch val := v.(type) {
+	case []string:
+		return val
+	case []any:
+		var res []string
+		for _, item := range val {
+			if s, ok := item.(string); ok && s != "" {
+				res = append(res, s)
+			}
+		}
+		return res
+	case string:
+		if val != "" {
+			return []string{val}
+		}
+	}
+	return nil
+}
+
+var skillTitleRe = regexp.MustCompile(`(?i)(?:activate_skill|Activate skill)[\s(:]+(?:name[=:]\s*)?["']?([A-Za-z0-9_.-]+)`)
+
+type toolCallSub struct {
+	ID        string          `json:"id"`
+	Name      string          `json:"name"`
+	RawInput  json.RawMessage `json:"rawInput"`
+	Input     json.RawMessage `json:"input"`
+	Args      json.RawMessage `json:"args"`
+	Arguments json.RawMessage `json:"arguments"`
+}
+
+func parseSkillsFromStream(dir string) []SkillRef {
+	skillsDirs := []string{".gemini/skills", ".agents/skills"}
+	knownSkills := make(map[string]string)
+
+	if data, err := os.ReadFile(filepath.Join(dir, ".agents", "skills.json")); err == nil {
+		var list []string
+		if json.Unmarshal(data, &list) == nil {
+			for _, d := range list {
+				d = filepath.ToSlash(filepath.Clean(strings.TrimSpace(d)))
+				if d != "" && !slices.Contains(skillsDirs, d) {
+					skillsDirs = append(skillsDirs, d)
+				}
+			}
+		} else {
+			var obj map[string]any
+			if json.Unmarshal(data, &obj) == nil {
+				if dirs, ok := obj["directories"].([]any); ok {
+					for _, d := range dirs {
+						if s, ok := d.(string); ok {
+							s = filepath.ToSlash(filepath.Clean(strings.TrimSpace(s)))
+							if s != "" && !slices.Contains(skillsDirs, s) {
+								skillsDirs = append(skillsDirs, s)
+							}
+						}
+					}
+				}
+				for k, v := range obj {
+					if s, ok := v.(string); ok && k != "directories" {
+						knownSkills[k] = filepath.ToSlash(filepath.Clean(s))
+					}
+				}
+			}
+		}
+	}
+
+	streamPath := filepath.Join(dir, "session", "stream.ndjson")
+	if _, err := os.Stat(streamPath); err != nil {
+		streamPath = filepath.Join(dir, "stream.ndjson")
+	}
+	f, err := os.Open(streamPath)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+
+	skillMap := make(map[string]*SkillRef)
+	toolCallSkills := make(map[string]string)
+
+	br := bufio.NewReader(f)
+	var lineSeq int64
+	for {
+		line, err := br.ReadBytes('\n')
+		if len(line) > 0 {
+			lineSeq++
+			processStreamLine(line, lineSeq, skillsDirs, knownSkills, skillMap, toolCallSkills)
+		}
+		if err != nil {
+			break
+		}
+	}
+
+	if len(skillMap) == 0 {
+		return nil
+	}
+	skills := make([]SkillRef, 0, len(skillMap))
+	for _, s := range skillMap {
+		skills = append(skills, *s)
+	}
+	sort.Slice(skills, func(i, j int) bool {
+		if skills[i].FirstSeq != skills[j].FirstSeq {
+			return skills[i].FirstSeq < skills[j].FirstSeq
+		}
+		return skills[i].Name < skills[j].Name
+	})
+	return skills
+}
+
+func processStreamLine(line []byte, fallbackSeq int64, skillsDirs []string, knownSkills map[string]string,
+	skillMap map[string]*SkillRef, toolCallSkills map[string]string) {
+	var ev struct {
+		Seq  int64           `json:"seq"`
+		Kind string          `json:"kind"`
+		Data json.RawMessage `json:"data"`
+	}
+	if err := json.Unmarshal(line, &ev); err != nil {
+		return
+	}
+	seq := ev.Seq
+	if seq == 0 {
+		seq = fallbackSeq
+	}
+
+	var data struct {
+		SessionUpdate string          `json:"sessionUpdate"`
+		ToolCallID    string          `json:"toolCallId"`
+		Title         string          `json:"title"`
+		Kind          string          `json:"kind"`
+		Status        string          `json:"status"`
+		Name          string          `json:"name"`
+		Tool          string          `json:"tool"`
+		RawInput      json.RawMessage `json:"rawInput"`
+		Input         json.RawMessage `json:"input"`
+		Args          json.RawMessage `json:"args"`
+		Arguments     json.RawMessage `json:"arguments"`
+		ToolCalls     []toolCallSub   `json:"toolCalls"`
+	}
+	if len(ev.Data) > 0 {
+		_ = json.Unmarshal(ev.Data, &data)
+	}
+
+	if data.ToolCallID != "" {
+		if sName, ok := toolCallSkills[data.ToolCallID]; ok {
+			if sk, ok := skillMap[sName]; ok {
+				if seq > sk.LastSeq {
+					sk.LastSeq = seq
+				}
+			}
+		}
+	}
+
+	toolName := data.Name
+	if toolName == "" {
+		toolName = data.Tool
+	}
+	handleToolInvocation(seq, data.ToolCallID, data.Kind, toolName, data.Title,
+		data.RawInput, data.Input, data.Args, data.Arguments,
+		skillsDirs, knownSkills, skillMap, toolCallSkills)
+
+	for _, tc := range data.ToolCalls {
+		handleToolInvocation(seq, tc.ID, "", tc.Name, "",
+			tc.RawInput, tc.Input, tc.Args, tc.Arguments,
+			skillsDirs, knownSkills, skillMap, toolCallSkills)
+	}
+}
+
+func handleToolInvocation(seq int64, toolCallID, toolKind, toolName, title string,
+	rawInput, input, args, arguments json.RawMessage,
+	skillsDirs []string, knownSkills map[string]string,
+	skillMap map[string]*SkillRef, toolCallSkills map[string]string) {
+	argsMap := parseArgs(rawInput, input, args, arguments)
+
+	isActivateSkill := toolName == "activate_skill" ||
+		strings.Contains(toolName, "activate_skill") ||
+		strings.HasPrefix(toolCallID, "activate_skill") ||
+		strings.Contains(title, "activate_skill") ||
+		strings.HasPrefix(title, "Activate skill")
+
+	if isActivateSkill {
+		skillName := ""
+		for _, k := range []string{"name", "skill", "skill_name"} {
+			if s, ok := argsMap[k].(string); ok && s != "" {
+				skillName = s
+				break
+			}
+		}
+		if skillName == "" {
+			if m := skillTitleRe.FindStringSubmatch(title); len(m) > 1 {
+				skillName = m[1]
+			}
+		}
+		if skillName != "" {
+			skillPath := ""
+			if p, ok := knownSkills[skillName]; ok {
+				skillPath = p
+			} else if p, ok := argsMap["path"].(string); ok && p != "" {
+				skillPath = p
+			} else {
+				prefix := ".gemini/skills"
+				if len(skillsDirs) > 0 {
+					prefix = skillsDirs[0]
+				}
+				skillPath = prefix + "/" + skillName
+			}
+			recordSkill(skillName, skillPath, "activated", seq, toolCallID, skillMap, toolCallSkills)
+			return
+		}
+	}
+
+	candPath := ""
+	for _, k := range []string{"file_path", "path", "filename", "file", "target", "uri"} {
+		if s, ok := argsMap[k].(string); ok && s != "" {
+			candPath = s
+			break
+		}
+	}
+	if candPath == "" && title != "" {
+		candPath = title
+	}
+	cand := filepath.ToSlash(filepath.Clean(strings.Trim(candPath, " \"'`:")))
+	cand = strings.TrimPrefix(cand, "./")
+	cand = strings.TrimPrefix(cand, "/")
+
+	if cand != "" {
+		for sName, sPath := range knownSkills {
+			cleanSPath := strings.TrimPrefix(filepath.ToSlash(filepath.Clean(sPath)), "./")
+			cleanSPath = strings.TrimPrefix(cleanSPath, "/")
+			if cand == cleanSPath || strings.HasPrefix(cand, cleanSPath+"/") {
+				recordSkill(sName, sPath, "read", seq, toolCallID, skillMap, toolCallSkills)
+				return
+			}
+		}
+
+		for _, d := range skillsDirs {
+			cleanDir := strings.TrimPrefix(filepath.ToSlash(filepath.Clean(d)), "./")
+			cleanDir = strings.TrimPrefix(cleanDir, "/")
+			prefix := cleanDir + "/"
+			if strings.HasPrefix(cand, prefix) {
+				rest := strings.TrimPrefix(cand, prefix)
+				parts := strings.Split(rest, "/")
+				sName := parts[0]
+				if sName != "" && pathPart.MatchString(sName) {
+					sPath := cleanDir + "/" + sName
+					recordSkill(sName, sPath, "read", seq, toolCallID, skillMap, toolCallSkills)
+					return
+				}
+			}
+		}
+	}
+}
+
+func recordSkill(name, path, how string, seq int64, toolCallID string,
+	skillMap map[string]*SkillRef, toolCallSkills map[string]string) {
+	if existing, ok := skillMap[name]; ok {
+		if seq < existing.FirstSeq {
+			existing.FirstSeq = seq
+		}
+		if seq > existing.LastSeq {
+			existing.LastSeq = seq
+		}
+		if how == "activated" {
+			existing.How = "activated"
+		}
+		if existing.Path == "" {
+			existing.Path = path
+		}
+	} else {
+		skillMap[name] = &SkillRef{
+			Name:     name,
+			Path:     path,
+			How:      how,
+			FirstSeq: seq,
+			LastSeq:  seq,
+		}
+	}
+	if toolCallID != "" {
+		toolCallSkills[toolCallID] = name
+	}
+}
+
+func parseArgs(blobs ...json.RawMessage) map[string]any {
+	out := make(map[string]any)
+	for _, b := range blobs {
+		if len(b) == 0 {
+			continue
+		}
+		var m map[string]any
+		if json.Unmarshal(b, &m) == nil {
+			for k, v := range m {
+				out[k] = v
+			}
+		} else {
+			var s string
+			if json.Unmarshal(b, &s) == nil {
+				var inner map[string]any
+				if json.Unmarshal([]byte(s), &inner) == nil {
+					for k, v := range inner {
+						out[k] = v
+					}
+				}
+			}
+		}
+	}
+	return out
 }
 
 func readJSON(path string, v any) bool {
@@ -519,4 +964,62 @@ func TarFiles(files map[string][]byte) ([]byte, error) {
 		return nil, err
 	}
 	return buf.Bytes(), nil
+}
+
+// ReadTaskFile reads an archived task's file from the archive, decompressing
+// it if stored gzipped.
+func (s *Store) ReadTaskFile(ctx context.Context, sandbox, task, name string) (io.ReadCloser, error) {
+	s.mu.Lock()
+	if s.archive == nil {
+		s.mu.Unlock()
+		return nil, ErrNoArchive
+	}
+	key := sandbox + "/" + task
+	rec, ok := s.tasks[key]
+	s.mu.Unlock()
+	if !ok {
+		return nil, ErrNotFound
+	}
+	folder := rec.Folder
+	if folder == "" {
+		folder = taskFolder(rec)
+	}
+
+	var data []byte
+	var readErr error
+	if !strings.HasSuffix(name, ".gz") {
+		data, readErr = s.archive.Read(ctx, folder+name+".gz")
+		if errors.Is(readErr, ErrNotFound) {
+			data, readErr = s.archive.Read(ctx, folder+name)
+		}
+	} else {
+		data, readErr = s.archive.Read(ctx, folder+name)
+	}
+	if readErr != nil {
+		return nil, readErr
+	}
+
+	if len(data) >= 2 && data[0] == 0x1f && data[1] == 0x8b {
+		zr, err := gzip.NewReader(bytes.NewReader(data))
+		if err != nil {
+			return nil, fmt.Errorf("decompressing %s: %w", name, err)
+		}
+		return zr, nil
+	}
+	return io.NopCloser(bytes.NewReader(data)), nil
+}
+
+// validTaskFilePath reports whether name is a valid file path within an archived
+// task. It refuses leading slashes, "..", empty parts, and invalid characters.
+func validTaskFilePath(name string) bool {
+	if name == "" || strings.HasPrefix(name, "/") || strings.HasSuffix(name, "/") {
+		return false
+	}
+	parts := strings.Split(name, "/")
+	for _, p := range parts {
+		if p == "" || p == "." || p == ".." || !pathPart.MatchString(p) {
+			return false
+		}
+	}
+	return true
 }
