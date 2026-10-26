@@ -1,6 +1,7 @@
 package graph
 
 import (
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -207,6 +208,46 @@ func TestPlanBlockFolded(t *testing.T) {
 		User: &githubv39.User{Login: githubv39.String("hopper-coder-bot")}, AuthorAssociation: githubv39.String("NONE")}
 	if got := PlanShape([]*githubv39.IssueComment{c}, rules.Env{Pool: []string{"hopper-coder-bot"}}); got != ShapeGraph {
 		t.Errorf("PlanShape = %q, want graph", got)
+	}
+}
+
+// A plan's ## Questions section: a question no box of which is ticked is
+// open, and makes the plan questions-shaped, Breakdown or not; one with a
+// ticked box (Other included) is answered.
+func TestOpenQuestions(t *testing.T) {
+	q := func(retention, access string) string {
+		return "## Summary\nWhat I understood.\n\n## Questions\n\n<!-- factory:question id=retention -->\n**How long are task folders kept?**\n" +
+			"- [" + retention + "] 180 days (recommended)\n- [ ] Indefinitely\n- [ ] Other: answered in a comment\n\n" +
+			"<!-- factory:question id=access -->\n**How do members read traces?**\n- [" + access + "] Collector endpoint\n* [ ] Signed URLs\n"
+	}
+	for _, tc := range []struct {
+		name, md string
+		want     []string
+	}{
+		{"both open", q(" ", " "), []string{"How long are task folders kept?", "How do members read traces?"}},
+		{"one answered", q("x", " "), []string{"How do members read traces?"}},
+		{"all answered", q("x", "X"), nil},
+		{"Other ticked", strings.Replace(q(" ", "x"), "- [ ] Other", "- [x] Other", 1), nil},
+		{"no section", "## Summary\nDo it.\n\n## Steps\n- [ ] a task list elsewhere\n", nil},
+		{"section then more", q(" ", "x") + "\n## Approach\n- [ ] not a question\n", []string{"How long are task folders kept?"}},
+	} {
+		if got := OpenQuestions(tc.md); !slices.Equal(got, tc.want) {
+			t.Errorf("%s: open %q, want %q", tc.name, got, tc.want)
+		}
+	}
+	env := rules.Env{Pool: []string{"hopper-coder-bot"}}
+	comment := func(body string) []*githubv39.IssueComment {
+		return []*githubv39.IssueComment{{Body: githubv39.String(body + "\n<!-- factory:comment key=plan v=1 -->"),
+			User: &githubv39.User{Login: githubv39.String("hopper-coder-bot")}, AuthorAssociation: githubv39.String("NONE")}}
+	}
+	if got := PlanShape(comment(q(" ", "x")+"\n```yaml graph\nsteps: [{id: a, title: A, body: a}]\n```\n"), env); got != ShapeAsking {
+		t.Errorf("open question with a Breakdown: shape %q, want asking", got)
+	}
+	if got := PlanShape(comment(q("x", "x")), env); got != ShapeReplanning {
+		t.Errorf("all answered, the section still there: shape %q, want replanning", got)
+	}
+	if got := PlanShape(comment("## Summary\nDo it.\n\n## Changes since the previous version\n- retention: 180 days (@alice)\n"), env); got != ShapePR {
+		t.Errorf("rewritten without the section: shape %q, want pr", got)
 	}
 }
 

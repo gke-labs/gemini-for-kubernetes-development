@@ -1,0 +1,17 @@
+# Every question of a plan answered (plan: replanning - a box ticked in each,
+# the ## Questions section still there because the plan is yet to be
+# written): the watcher takes {{trigger}}/needs-human off and applies the
+# plan label, so the plan rule writes the plan with the answers. A
+# maintainer ticks the last box; nothing else is needed.
+name: plan-answered
+description: Plan an issue again once its plan's questions are all answered
+on: issue
+order: 13
+when:
+  labels:
+    any: ["{{trigger}}/planned"]
+    none: ["{{trigger}}/plan"]
+  plan: replanning
+run:
+  unlabel: ["{{trigger}}/needs-human"]
+  label: ["{{trigger}}/plan"]

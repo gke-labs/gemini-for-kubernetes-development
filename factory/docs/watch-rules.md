@@ -190,7 +190,7 @@ the merge queue get nothing from any rule.
 | `opened-by` | `watcher` | the watcher's own login opened it |
 | `fanout` | `true`, `false` | it is a fan-out's parent (the fanout label): the fan-out controller's, never fixed itself. A child is an ordinary issue, created when it is to be worked on |
 | `graph` | `true`, `false` | it is an issue graph's parent (the graph label): the graph controller's, never fixed itself. A child is an ordinary issue, created when its step is ready ([issue graphs](../design/issue-graph.md)) |
-| `plan` | `none`, `pr`, `graph` | the shape of the issue's plan: its plan comment (key `plan`, the plan recipe's) by a pool bot or a maintainer - none; one without a Breakdown (one PR); one with a `yaml graph` block (an issue graph, [plans](../design/issue-graph-plans.md)). Read from the issue's comments, so only when a rule that could otherwise step asks for it. A graph-labelled issue whose plan has a Breakdown is started from its plan |
+| `plan` | `none`, `pr`, `graph`, `asking`, `replanning` | the shape of the issue's plan: its plan comment (key `plan`, the plan recipe's) by a pool bot or a maintainer - none; one without a Breakdown (one PR); one with a `yaml graph` block (an issue graph, [plans](../design/issue-graph-plans.md)); one still asking - its `## Questions` section has a question with no box ticked - is `asking`, whatever else it holds; one whose questions are all ticked but still carries the section (the plan is being rewritten with the answers) is `replanning`. Read from the issue's comments, so only when a rule that could otherwise step asks for it. A graph-labelled issue whose plan has a Breakdown is started from its plan |
 
 ### Pull requests
 
@@ -434,8 +434,8 @@ On issues, `workflow-missing` (5) stops an issue whose workflow cannot be
 loaded, which ends the walk; `workflow` (10) and `fix` (20) both take the item; their
 predicates (`workflow: any` and `workflow: none`) keep them apart. The plan
 flow's command labels come between: `plan` (14), then `implement` (16),
-`implement-graph` (17) and `implement-unplanned` (18), kept apart by
-`plan: pr | graph | none`; `fix` leaves an issue being planned or planned
+`implement-graph` (17), `implement-unplanned` (18) and `implement-not-ready` (19), kept apart by
+`plan: none | asking | replanning | pr | graph`, after `plan-asking` (12) and `plan-answered` (13); `fix` leaves an issue being planned or planned
 alone ([plans and issue graphs](plan-and-graph.md)). Like a PR, an issue gets
 one task at a time: while its fix or a workflow step is queued or running,
 neither rule decides (an edited body naming a workflow waits for the fix). `ready`
@@ -691,6 +691,9 @@ the suite CI runs.
 | `implement` | issue | `<trigger>/implement` on a one-PR plan (`plan: pr`): fix-with-plan opens the PR |
 | `implement-graph` | issue | `<trigger>/implement` on a plan with a Breakdown (`plan: graph`): the graph label, for the graph controller (`--graphs`) to start from the plan; no task |
 | `implement-unplanned` | issue | `<trigger>/implement` with no plan: a comment, the label off |
+| `implement-not-ready` | issue | `<trigger>/implement` on a plan still asking or not yet rewritten (`plan: asking`/`replanning`): a comment, the label off |
+| `plan-asking` | issue | a planned issue whose plan asks questions: `<trigger>/needs-human` |
+| `plan-answered` | issue | a planned issue whose plan's questions are all ticked: `needs-human` off, `<trigger>/plan` on, so the plan is written with the answers |
 | `inherit-labels` | pr | copies the closing issues' labels onto the PR, ahead of the rules that take it |
 | `inactive` | pr | (no timeout by default, so it never holds) pauses a PR nobody looked at |
 | `comments` ... `ready-unreview` | pr | PR care, in [order](#order) |

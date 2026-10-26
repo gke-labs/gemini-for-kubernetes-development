@@ -1,0 +1,16 @@
+# A plan that asks before it plans (plan: asking - its ## Questions
+# section has a question with no box ticked) waits for a maintainer: the
+# watcher labels the issue {{trigger}}/needs-human, so the wait shows in
+# the issue list. plan-answered takes the label off once every question is
+# answered.
+name: plan-asking
+description: Label a planned issue needs-human while its plan asks questions
+on: issue
+order: 12
+when:
+  labels:
+    any: ["{{trigger}}/planned"]
+    none: ["{{trigger}}/needs-human"]
+  plan: asking
+run:
+  label: ["{{trigger}}/needs-human"]

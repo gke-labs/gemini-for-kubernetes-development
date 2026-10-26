@@ -101,6 +101,9 @@ start:
            reference other issues or PRs, read those too (`gh issue view
            <n>`, `gh pr view <n>`): there are often important details
            there, and patterns to follow.
+           If the issue has a `## Questions` section, the boxes a
+           maintainer ticked there, and the answers given in these
+           comments, are decisions: follow them.
 
            <issue_comments>
            {{ file "comments.md" }}

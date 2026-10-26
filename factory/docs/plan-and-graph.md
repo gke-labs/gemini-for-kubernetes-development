@@ -31,6 +31,8 @@ the plan ends with a **Breakdown** (section 4), folded under `<details>`:
 it is the overseer's spec, and says the same as the PR plan. On success the watcher adds `<t>/planned`; the command label
 comes off when the task ends, whatever happened.
 
+**Questions are asked first, where the answer is needed.** When the plan depends on something only a maintainer can decide, the first version asks before it plans: only a short summary of what it understood and a `## Questions` section - each question a task list, the recommended option first, and "Other: answered in a comment" last. While a question is open the issue is labelled `<t>/needs-human` (`plan-asking`). Tick a box (or tick Other and reply) in each question: once every question is answered, the watcher takes `needs-human` off and applies `<t>/plan` itself (`plan-answered`), and the next version is the plan, with the answers folded in. Until that plan is written - the shape is `asking`, then `replanning` - `<t>/implement` gets a comment saying so (`implement-not-ready`): no sandbox, no graph. You can also apply `<t>/plan` yourself at any point - after answering in comments without ticking, say: the next version folds in whatever has been answered and asks the rest again. Each successful plan run takes `needs-human` off, and `plan-asking` puts it back if the new version still asks, so the label always follows the latest version. A question only one step needs is asked in that step's own sub-issue, not here (section 3).
+
 To refine it, comment on the plan and apply `<t>/plan` again: the next run
 revises the same comment (v2, v3...) against the comments posted since,
 says what changed, and keeps the ids of the Breakdown's steps.
@@ -55,6 +57,7 @@ plan comment when the label is there (`plan: none | pr | graph` in the
 |---|---|---|
 | one PR (no Breakdown) | `implement` | `fix-with-plan` implements the plan - not the issue's text - and opens the PR, ready, saying which plan version it implements and `Fixes #<issue>`. |
 | a Breakdown | `implement-graph` | No task. The watcher labels the issue `<t>/graph`, takes `<t>/implement` off and comments; the graph controller starts the graph (section 3). |
+| still asking, or answered but not yet rewritten (`## Questions` present) | `implement-not-ready` | A comment ("answer the questions first"), the label off. |
 | none | `implement-unplanned` | A comment ("plan it first"), the label off. |
 
 The plan as it is when the label goes on is the one implemented. Apply
@@ -92,7 +95,7 @@ The parent never opens a PR. `fix` and `workflow` leave it alone
 |---|---|---|
 | `fix` (default) | `<t>`, the graph's default labels, the step's labels, `<t>/review` with review instructions | the `fix` rule: a coder bot fixes the child from its body and opens a PR `Fixes #<child>`; PR care follows (review, CI, comments, ready-for-human) |
 | `plan` | `<t>/plan` | the `plan` rule plans the child; a maintainer applies `<t>/implement` - one PR, or a graph of its own (section 5) |
-| `ask` | `<t>/needs-human` and `<t>/stop` | waits for a person: the stop label keeps every bot off it (the graph files its children as the watcher, whose own issues are otherwise picked up). Its body says, under the step's text, what the person can do - remove `<t>/stop` and label it `<t>` (fix) or `<t>/plan`, do it and close it, or close it as not planned to skip the step. It is assigned, so GitHub notifies them: to the step's `assignees` if the plan names any, else the parent's human assignees, else whoever approved the graph (the last person to label the parent `<t>/implement` or `<t>/graph`) |
+| `ask` | `<t>/needs-human` and `<t>/stop` | the step needs a maintainer's answer first: how big it is (fix it, or plan it first), whether it is needed, or a choice only it depends on. Its body holds the step's work and a `## Questions` checklist; the stop label keeps every bot off it until then. Answer on that issue (tick a box, or reply), then remove `<t>/stop` and label it `<t>` (fix) or `<t>/plan` - the agent reads the answer there - or close it as not planned to skip it. The step's `assignees`, else the parent's humans, else whoever approved the graph, are assigned |
 
 ### Progress, pauses and checkpoints
 

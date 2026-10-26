@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"slices"
 	"strconv"
+	"strings"
 
 	githubv39 "github.com/google/go-github/v39/github"
 
@@ -73,6 +74,14 @@ func trustedPlanComment(comments []*githubv39.IssueComment, env rules.Env) (*git
 const (
 	ShapePR    = "pr"
 	ShapeGraph = "graph"
+	// ShapeAsking is a plan still asking: its ## Questions section has
+	// a question no box of which is ticked. It is not ready to implement,
+	// whatever else it holds.
+	ShapeAsking = "asking"
+	// ShapeReplanning is a plan whose questions are all answered but that
+	// still carries its ## Questions section: the plan is yet to be
+	// written with the answers. Not ready to implement either.
+	ShapeReplanning = "replanning"
 )
 
 // PlanShape is the shape of an issue's plan, the rules' plan fact: graph
@@ -84,11 +93,84 @@ func PlanShape(comments []*githubv39.IssueComment, env rules.Env) string {
 	switch {
 	case found == nil:
 		return ""
+	case len(OpenQuestions(found.GetBody())) > 0:
+		return ShapeAsking
+	case countQuestions(found.GetBody()) > 0:
+		return ShapeReplanning
 	case HasPlanBlock(found.GetBody()):
 		return ShapeGraph
 	}
 	return ShapePR
 }
+
+// OpenQuestions are the questions of markdown's ## Questions section that
+// no one has answered: each question is a task list (a maintainer ticks
+// one box, or ticks "Other" and replies), and one with no box ticked is
+// open. A question is named by the text line before its task list.
+func OpenQuestions(markdown string) []string {
+	open, _ := questions(markdown)
+	return open
+}
+
+// countQuestions is how many questions markdown's ## Questions section
+// asks, answered or not.
+func countQuestions(markdown string) int {
+	_, n := questions(markdown)
+	return n
+}
+
+// questions reads markdown's ## Questions section: the open questions'
+// names, and how many it asks.
+func questions(markdown string) ([]string, int) {
+	var open []string
+	total := 0
+	in, title := false, ""
+	ticked, boxes := false, 0
+	flush := func() {
+		if boxes > 0 {
+			total++
+		}
+		if boxes > 0 && !ticked {
+			if title == "" {
+				title = "a question"
+			}
+			open = append(open, title)
+		}
+		ticked, boxes = false, 0
+	}
+	for _, line := range strings.Split(markdown, "\n") {
+		trimmed := strings.TrimSpace(strings.TrimRight(line, "\r"))
+		if strings.HasPrefix(trimmed, "## ") || strings.HasPrefix(trimmed, "# ") {
+			if in {
+				flush()
+			}
+			in = strings.EqualFold(strings.TrimSpace(strings.TrimLeft(trimmed, "#")), "Questions")
+			title = ""
+			continue
+		}
+		if !in {
+			continue
+		}
+		if m := taskBoxRE.FindStringSubmatch(trimmed); m != nil {
+			boxes++
+			ticked = ticked || m[1] != " "
+			continue
+		}
+		if boxes > 0 {
+			flush()
+		}
+		if trimmed != "" && !strings.HasPrefix(trimmed, "<!--") {
+			title = strings.TrimSpace(strings.Trim(trimmed, "*"))
+		}
+	}
+	if in {
+		flush()
+	}
+	return open, total
+}
+
+// taskBoxRE is a task list item: "- [ ]", "- [x]", "* [X]".
+var taskBoxRE = regexp.MustCompile(`^[-*] \[( |x|X)\]`)
 
 // HasPlanBlock is whether markdown has a `yaml graph` block.
 func HasPlanBlock(markdown string) bool {
