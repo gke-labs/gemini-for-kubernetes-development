@@ -8,9 +8,12 @@ Status: proposed. Step 1, archiving each task, is **built** (#2031, #2035, #2038
 - a **skill**: `<skills dir>/<name>/SKILL.md` and its files, from the directories the repository lists in `.agents/skills.json` (KCC: `.gemini/skills/`);
 - a **workflow**: `.agents/workflows/<name>`;
 - an **agent or chore definition**: `.agents/<name>.md`;
-- the repository's context files, `AGENTS.md` / `GEMINI.md`, for what no single skill owns.
+- the repository's context files, `AGENTS.md` / `GEMINI.md`, for what no single skill owns;
+- the **review instructions**: what the automated reviewer is told to check. They reach it as `{{review-instructions}}`, collected from the `## Review Instructions` sections of the PR and the issues it closes (`watch/prs/handlers.go`). Those sections are written by the workflows and graph steps (`review:`) that file the issues, and by the people filing them. The reviewer also follows the repository's review skills and, when it has one, its own `review` recipe.
 
 Each proposal names the PRs behind it, and the moments in their agent traces where the instruction failed. It arrives as a PR, and a human merges it or doesn't.
+
+The richest signal is what the humans said on the PRs (§4). A reviewer's comment on an agent's PR is a lesson for two sets of instructions at once. The **coding skills** let the agent write it, and the **review instructions** let the automated reviewer pass it.
 
 What isn't an instruction goes elsewhere. A broken test environment, a factory bug, or a recipe problem becomes an issue on the repository that owns it, not a skill edit. The KCC envtest mismatch (#1975, KCC #14022 and #14023) was that kind.
 
@@ -57,7 +60,7 @@ Training a model of our own is out of scope. Most failures are environment and m
 
 What changed from the first proposal, and what the retro does about it:
 - **No `traceURL`:** a task's place is its index record's `folder`. Outcome records (§3) carry it.
-- **The collector never serves a task's files**; readers go to the bucket. The retro's staging (§5) needs a reader.
+- **The collector never serves a task's files**; readers go to the bucket. The retro's staging (§6) needs a reader.
 - **The engine's own chat history** (gemini-cli's `.gemini/tmp/*/chats/*.jsonl`, outside the task directory) is not archived. acpd's `stream.ndjson` already has every prompt, message and tool call of the task, which is what the retro reads. Those chat files are the engine's resumable state, and one shared across many runs grows without bound: a KCC care conversation reached 745MB and looped (PR 14181, 2026-10-26).
 
 ### 2. Map a run to its instructions
@@ -99,6 +102,7 @@ When a PR the agents opened is merged or closed, factory writes one **outcome re
   "state": "merged | closed", "openedAt": "...", "closedAt": "...", "closedBy": "login",
   "tasks": [{"sandbox": "...", "task": "...", "folder": "tasks/owner/name/<sandbox>/<task>", "instructions": {…}}],
   "carePasses": 3, "reviewComments": 7, "changesRequested": 1,
+  "feedback": {"items": 9, "humans": 2, "afterBotReview": 3, "folder": "prs/owner/name/101"},
   "agentHead": "<sha of the agent's last push>",
   "humanEdit": {"files": 2, "added": 14, "deleted": 3, "paths": ["pkg/controller/foo.go"]},
   "ciRedAfterPush": 1, "requiresHuman": false,
@@ -110,7 +114,35 @@ When a PR the agents opened is merged or closed, factory writes one **outcome re
 - **`humanEdit`:** how much the PR's change moved between the agent's last push and the final head. Each is compared against its own merge base, so a rebase onto a moved base branch doesn't count. `paths` lets the retro line a human's edit up with the stretch of the trace that wrote that file.
 - **Rollups per instruction:** `GET /v1/outcomes/rollup?repo=&since=&by=skill|workflow` gives, for each skill and workflow, the PRs that used it, how many merged, care passes, human edits and cost per merged PR. That is the scoreboard the KCC plan asks for (docs/kcc-code-emergency-scaling-plan.md, 6.1: which step fails most).
 
-### 4. Asking why a PR was closed
+### 4. Human feedback on the PR
+
+What the humans said on an agent's PR is captured whole, not just counted. It's the most direct statement of what the agent got wrong, and of what the automated review should have caught.
+
+**What is captured**, for each PR the agents opened, from the PR's reviews, inline review comments and conversation comments:
+- comments by a **human of a trusted kind** (owner, member, collaborator, or a login the overseer trusts). Pool bots, the watcher and apps are left out, as the care rules leave them out of `feedback`.
+- each item records:
+  - `author`, `kind` (`review`, `inline`, `comment`), the review `state` (`CHANGES_REQUESTED`, `APPROVED`, `COMMENTED`), `path` and `line` for an inline comment, `at`, `inReplyTo`, and the `body`;
+  - the PR `head` it was made on;
+  - `afterBotReview`: true when the automated reviewer had reviewed that head without raising the point. That's a review miss candidate.
+  - `answeredBy`: the care task whose `comments.jsonl` (archived, §1) holds the item, and what came of it - a push after it (`fixed`), a reply only (`replied`), or nothing.
+- the automated reviewer's own comments that a human **dismissed or disagreed with**: resolved without a change, or answered with "not needed" or "won't fix". These are review false positives.
+
+**When and where:** the closed-PR sweep reads them with the cached GitHub client when the PR closes, after the harvest of its tasks. It writes them to the archive through the collector as one file per PR, `<prefix>/prs/<owner>/<repo>/<n>/feedback.jsonl`, redacted like task files (`PUT /v1/prs/{owner}/{repo}/{n}/feedback`). The outcome record (§3) keeps the counts and the folder. Feedback on a PR that is still open is already in its care tasks' `comments.jsonl`, so nothing more is read while it's open.
+
+**What the retro does with it** (§6): it puts every item in one of these classes:
+
+| Class | When | What it proposes |
+|---|---|---|
+| **coding** | the agent's change was wrong or incomplete | an edit to the coding skill in play where the agent wrote that `path`: the manifest's skill stretch (§2) around the transcript position that edited the file, as for `humanEdit` |
+| **review miss** | `afterBotReview`: the automated review saw that head and didn't raise it | an edit to the review instructions: the review skill, or the `## Review Instructions` source (the workflow or graph step that writes it), or the repository's `review` recipe |
+| **review noise** | a human dismissed the bot reviewer's point | the same targets, to drop or narrow an instruction |
+| **repository knowledge** | a fact about the code base no skill owns | a line in `AGENTS.md` / `GEMINI.md`, or a new skill |
+| **scope or plan** | the issue or the plan was the problem | nothing to the instructions; noted in the digest |
+| **taste** | a one-off preference | nothing, unless several PRs show it |
+
+A point that recurs across PRs, or across reviewers, is a lesson; a single comment is evidence. Coding and review lessons from the same feedback item are proposed together: fix the skill that let the agent write it, and the review instruction that let it through.
+
+### 5. Asking why a PR was closed
 
 When a bot PR is closed unmerged by someone other than the bot, the watch comments once, mentioning the closer:
 
@@ -120,46 +152,47 @@ When a bot PR is closed unmerged by someone other than the bot, the watch commen
 - For 7 days, the watch reads new comments on the PRs it asked about, with the cached GitHub client. The first reply from the closer or a member becomes `closeReason`. A `<trigger>/closed-<reason>` label counts as an answer too.
 - A PR the bot closed itself gets no comment: factory records its own reason.
 
-### 5. The retro recipe
+### 6. The retro recipe
 
 A built-in recipe, **`retro`**, on a repository (`on: [repo]`), run weekly per overseer from the chores scheduler. The scheduler learns to run a recipe: a chore definition with `recipe: retro`, `inputs:` and `schedule: "@weekly"`.
 
 **Inputs, staged by the watch before the task starts:**
 - the week's outcome records and the per-skill rollup;
-- for every PR worth a look, its archived tasks' transcripts and logs: closed unmerged, 3 or more care passes, or human edits above a threshold;
-- the PR's review threads and `closeReason`.
+- for every PR worth a look, its archived tasks' transcripts and logs: closed unmerged, 3 or more care passes, human feedback (§4), or human edits above a threshold;
+- the PR's human feedback (`feedback.jsonl`, §4) and `closeReason`.
 
 The staged files go into the task's directory, so the agent needs no GCP credentials. The recipe runs with `credentials: clone`.
 
 Reading the archive is the one new piece: today nothing reads `tasks/` back, and the collector never serves a task's files. The collector already holds the bucket's credentials, so it gets a read endpoint, `GET /v1/tasks/{sandbox}/{task}/files/{name}`, that streams one archived file (unzipped) from the bucket; the watch stages through it and needs no GCS access of its own.
 
 **The agent:**
-1. For each PR, finds what went wrong. It lines up the review comments and the human edits (by path) with the trace, and with the skill in play at that point (the manifest's `firstSeq`–`lastSeq`).
-2. Classifies it: the skill was wrong, the skill was missing a step, the skill was ignored, there was no skill for this, the workflow's order was wrong, environment or tooling, bad issue, or fine.
+1. For each PR, finds what went wrong. It lines up the human feedback (§4) and the human edits (by path) with the trace, and with the skill in play at that point (the manifest's `firstSeq`–`lastSeq`). It also lines them up with the automated review of the same head.
+2. Classifies each finding, using §4's classes for feedback: the coding skill was wrong, missed a step, was ignored, or there was none; the review instructions missed it or were noise; the workflow's order was wrong; environment or tooling; bad issue; or fine.
 3. Groups across PRs: one lesson that three PRs show beats three anecdotes.
-4. Proposes edits to the skill or workflow responsible, at the default branch's current version, citing PRs and trace positions. A lesson with no skill to own it becomes a new skill or a line in `AGENTS.md`. Environment and factory problems become issues instead.
+4. Proposes edits to the skill, workflow or review instructions responsible, at the default branch's current version, citing PRs, feedback items and trace positions. A lesson with no skill to own it becomes a new skill or a line in `AGENTS.md`. Environment and factory problems become issues instead.
 
 **Results:**
-- **a `Change`**: the edits to skills and workflows, opened as one PR by the existing `open-pr` action. Its body is a table of `skill → lesson → PRs (trace links)`.
-- **a `Digest`** (a new task-output kind): the week's scoreboard (per skill and per workflow, compared with last week), the classified PRs, and the issues to file. The new `open-issue` action posts it, labelled `<trigger>/retro`.
+- **a `Change`**: the edits to skills, workflows and review instructions, opened as one PR by the existing `open-pr` action. Its body is a table of `instruction → lesson → PRs (feedback and trace links)`.
+- **a `Digest`** (a new task-output kind): the week's scoreboard (per skill and per workflow, compared with last week, plus the automated review's misses and noise), the classified PRs, and the issues to file. The new `open-issue` action posts it, labelled `<trigger>/retro`.
 
 Nothing is applied automatically. The next retro reads the previous digest and reports, for each skill edited last week, whether its numbers moved. A proposal the humans rejected isn't made again unless new PRs back it.
 
 A repository can carry its own retro in `.agents/recipes/retro.yaml` if the built-in doesn't suit it.
 
-### 6. Evaluating a change before making it (later)
+### 7. Evaluating a change before making it (later)
 
-Archived traces and outcome records are also what an offline evaluation needs. The idea: a replay set of about 30 past KCC issues with known merged fixes, run against a candidate skill version, and live A/B by engine. That's a separate design. Steps 1–5 don't depend on it.
+Archived traces and outcome records are also what an offline evaluation needs. The idea: a replay set of about 30 past KCC issues with known merged fixes, run against a candidate skill version, and live A/B by engine. That's a separate design. Steps 1–6 don't depend on it.
 
 ## Steps
 
 1. **Archive traces - done** (#2031, #2035, #2038): the collector archives every task's directory, transcript included, at task end, before an idle suspend and before each delete, redacted, indexed in `task-index` and listed by `GET /v1/tasks`. Not done, by decision: a lifecycle rule, `traceURL` (the index's `folder` instead), a per-overseer bucket setting.
 2. **Instructions:** skill detection from the archived transcript (skill-tool calls, reads under `.agents/skills.json` dirs), the workflow, recipe, engine, model and the instruction commit - an `instructions` object in the index record, computed by the collector at spool time. Plus the collector's read endpoint for archived files (§5).
 3. **Outcome records and rollups:** the record from the closed-PR sweep, `humanEdit`, the collector's endpoints including `by=skill|workflow`.
-4. **Why closed:** the comment and the reply harvest.
-5. **The retro recipe:** chores that run a recipe, staging traces as inputs, the `Digest` kind and `open-issue` action, the recipe. Run it by hand on KCC first (`factory recipe retro --url <repo>`), then weekly on overseer-kcc.
+4. **Human feedback:** the closed-PR sweep captures the PR's human reviews and comments (with `afterBotReview` and `answeredBy`) into `prs/.../feedback.jsonl` through the collector, with counts on the outcome record.
+5. **Why closed:** the comment and the reply harvest.
+6. **The retro recipe:** chores that run a recipe, staging traces as inputs, the `Digest` kind and `open-issue` action, the recipe. Run it by hand on KCC first (`factory recipe retro --url <repo>`), then weekly on overseer-kcc.
 
-Steps 1 and 2 are worth having on their own: an archived trace already answers "what did the agent do?" for any PR after its sandbox is gone - today by reading the bucket directly.
+Steps 1, 2 and 4 are worth having on their own: an archived trace already answers "what did the agent do?" for any PR after its sandbox is gone - today by reading the bucket directly.
 
 ## Open questions
 
