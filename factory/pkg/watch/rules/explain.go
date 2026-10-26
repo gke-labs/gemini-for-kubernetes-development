@@ -208,6 +208,11 @@ func factOf(predicate string, it Item, env Env, runs []PastRun) string {
 			return "connected-pr not read"
 		}
 		return "connected-pr " + orNone(it.ConnectedPR)
+	case "questions":
+		if it.QuestionsOpen {
+			return "questions open"
+		}
+		return "questions none"
 	case "plan":
 		if it.unknown(FactPlan) {
 			return "plan not read"

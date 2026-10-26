@@ -34,7 +34,7 @@ func TestWatchRulesTable(t *testing.T) {
 		names = append(names, strings.Fields(l)[0])
 	}
 	// Issues, then PRs, each in the order the engine walks them, then the rest.
-	want := "workflow-missing workflow plan-asking plan-answered plan implement implement-graph implement-unplanned implement-not-ready fix inherit-labels inactive comments conflict ci review ready ready-unreview"
+	want := "workflow-missing workflow plan-asking plan-answered plan implement implement-graph implement-unplanned implement-not-ready fix issue-asking issue-answered inherit-labels inactive comments conflict ci review ready ready-unreview"
 	if strings.Join(names, " ") != want {
 		t.Errorf("rows = %v, want %s", names, want)
 	}
@@ -59,7 +59,7 @@ func TestWatchRulesYAMLAndJSON(t *testing.T) {
 	if err := json.Unmarshal([]byte(runWatchRules(t, "-o", "json", "--url", "https://github.com/o/r")), &fromJSON); err != nil {
 		t.Fatal(err)
 	}
-	if len(fromYAML) != 18 || len(fromJSON) != 18 {
+	if len(fromYAML) != 20 || len(fromJSON) != 20 {
 		t.Fatalf("yaml %d rules, json %d", len(fromYAML), len(fromJSON))
 	}
 	if fromYAML[9]["name"] != "fix" || fromJSON[9]["name"] != "fix" {

@@ -1,0 +1,15 @@
+# Every question of an issue's description answered (questions: none) on an
+# issue issue-asking labelled: the watcher takes {{trigger}}/needs-human
+# off. Not on a stopped issue - a graph step that asks (then: ask) carries
+# needs-human and the stop label until a maintainer routes it by hand.
+name: issue-answered
+description: Take needs-human off an issue whose description's questions are answered
+on: issue
+order: 22
+when:
+  labels:
+    all: ["{{trigger}}", "{{trigger}}/needs-human"]
+    none: ["{{trigger}}/stop", "{{trigger}}/planned"]
+  questions: none
+run:
+  unlabel: ["{{trigger}}/needs-human"]

@@ -320,3 +320,26 @@ func TestStateBlock(t *testing.T) {
 		t.Error("the params hash depends on order")
 	}
 }
+
+// A fix step whose body asks deferred questions stays a fix step - its
+// child is labelled to be fixed and waits on its questions in the watch -
+// but goes to a person, as an ask step's does; one without questions
+// doesn't.
+func TestReconcileDeferredQuestions(t *testing.T) {
+	s, err := ParsePlanBlock("```yaml graph\nmaxActive: 2\nsteps:\n" +
+		"  - {id: q, title: Q, body: \"Do it.\\n\\n## Questions\\n\\n**Which call?**\\n- [ ] a\\n- [ ] b\\n\"}\n" +
+		"  - {id: p, title: P, body: plain}\n```\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]Action{}
+	for _, a := range Reconcile(observed(s, nil, State{})).Actions {
+		got[a.Step] = a
+	}
+	if a := got["q"]; !a.AskPerson || !slices.Equal(a.Labels, []string{"overseer"}) || !strings.Contains(a.Body, "**Which call?**") {
+		t.Errorf("q: ask %v labels %v body %q", a.AskPerson, a.Labels, a.Body)
+	}
+	if got["p"].AskPerson {
+		t.Error("p: a step without questions goes to a person")
+	}
+}

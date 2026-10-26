@@ -1,0 +1,17 @@
+# An issue the overseer is pointed at whose description still asks (its
+# ## Questions section has a question with no box ticked - a deferred
+# question, like a graph step's details left to its own sub-issue) waits
+# for an answer: fix leaves it alone (questions: none), and the watcher
+# labels it {{trigger}}/needs-human so the wait shows. issue-answered takes
+# the label off once every question is answered, and fix starts.
+name: issue-asking
+description: Label an issue needs-human while its description asks questions
+on: issue
+order: 21
+when:
+  labels:
+    any: ["{{trigger}}"]
+    none: ["{{trigger}}/needs-human", "{{trigger}}/stop"]
+  questions: open
+run:
+  label: ["{{trigger}}/needs-human"]

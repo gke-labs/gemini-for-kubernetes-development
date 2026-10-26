@@ -183,6 +183,11 @@ type When struct {
 	// a `yaml graph` block: design/issue-graph-plans.md). A read of its
 	// own, made only for a rule that asks (Set.Needs).
 	Plan string `yaml:"plan,omitempty" json:"plan,omitempty"` // none | asking | replanning (answered, being rewritten) | pr | graph
+	// Questions is whether the issue's own description still asks: its
+	// ## Questions section has a question no box of which is ticked
+	// (open), or not (none). From the issue's body, which the listing
+	// carries: no read of its own.
+	Questions string `yaml:"questions,omitempty" json:"questions,omitempty"` // none | open
 
 	// Pull requests.
 	Checks    string `yaml:"checks,omitempty" json:"checks,omitempty"` // failing | pending | green
@@ -401,7 +406,7 @@ func Parse(data []byte) (*Rule, error) {
 // predicates are the When fields each kind of rule may set, by YAML name.
 var predicates = map[string][]string{
 	"*":     {"any-of", "labels", "assignee", "author", "last-run"},
-	OnIssue: {"linked-pr", "connected-pr", "workflow", "opened-by", "fanout", "graph", "plan"},
+	OnIssue: {"linked-pr", "connected-pr", "workflow", "opened-by", "fanout", "graph", "plan", "questions"},
 	OnPR:    {"checks", "mergeable", "feedback", "closes", "reviewed-at-head", "changes-requested", "approved", "draft", "inactive-for"},
 }
 
@@ -425,6 +430,7 @@ func (w When) set() []string {
 	add("fanout", w.Fanout != nil)
 	add("graph", w.Graph != nil)
 	add("plan", w.Plan != "")
+	add("questions", w.Questions != "")
 	add("checks", w.Checks != "")
 	add("mergeable", w.Mergeable != nil)
 	add("feedback", w.Feedback != "")
@@ -444,6 +450,7 @@ var enums = map[string][]string{
 	"linked-pr":    {"none", "open"},
 	"connected-pr": {"none", "open"},
 	"plan":         {"none", "pr", "graph", "asking", "replanning"},
+	"questions":    {"none", "open"},
 	"workflow":     {"none", "any", "missing"},
 	"opened-by":    {"watcher"},
 	"checks":       {"failing", "pending", "green"},
@@ -484,7 +491,7 @@ func (w When) validate(on string, nested bool) error {
 	}
 	for field, value := range map[string]string{
 		"assignee": w.Assignee, "linked-pr": w.LinkedPR, "connected-pr": w.ConnectedPR,
-		"workflow": w.Workflow, "opened-by": w.OpenedBy, "plan": w.Plan,
+		"workflow": w.Workflow, "opened-by": w.OpenedBy, "plan": w.Plan, "questions": w.Questions,
 		"checks": w.Checks, "feedback": w.Feedback, "last-run": w.LastRun,
 	} {
 		if err := checkEnum(field, value); err != nil {

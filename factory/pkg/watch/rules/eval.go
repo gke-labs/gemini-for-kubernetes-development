@@ -48,6 +48,9 @@ type Item struct {
 	// Plan is the shape of the issue's plan comment (When.Plan): pr or
 	// graph, "" for none (a read of its own, FactPlan).
 	Plan string `json:",omitempty"`
+	// QuestionsOpen is that the issue's description still asks
+	// (When.Questions).
+	QuestionsOpen bool `json:",omitempty"`
 
 	// PRs.
 	Head      string
@@ -247,6 +250,9 @@ func (w When) holds(r *Rule, it Item, env Env, runs []PastRun) bool {
 		case w.ConnectedPR != orNone(it.ConnectedPR):
 			return false
 		}
+	}
+	if w.Questions != "" && (w.Questions == "open") != it.QuestionsOpen {
+		return false
 	}
 	if w.Plan != "" && !it.could(FactPlan) && (it.notRead(FactPlan) || w.Plan != orNone(it.Plan)) {
 		return false

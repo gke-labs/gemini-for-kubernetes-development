@@ -190,6 +190,7 @@ the merge queue get nothing from any rule.
 | `opened-by` | `watcher` | the watcher's own login opened it |
 | `fanout` | `true`, `false` | it is a fan-out's parent (the fanout label): the fan-out controller's, never fixed itself. A child is an ordinary issue, created when it is to be worked on |
 | `graph` | `true`, `false` | it is an issue graph's parent (the graph label): the graph controller's, never fixed itself. A child is an ordinary issue, created when its step is ready ([issue graphs](../design/issue-graph.md)) |
+| `questions` | `none`, `open` | the issue's own description still asks: its `## Questions` section has a question with no box ticked (open), or not. From the issue's body, no read of its own. The prebaked `fix` says `none`: an issue waits on its questions, then is fixed |
 | `plan` | `none`, `pr`, `graph`, `asking`, `replanning` | the shape of the issue's plan: its plan comment (key `plan`, the plan recipe's) by a pool bot or a maintainer - none; one without a Breakdown (one PR); one with a `yaml graph` block (an issue graph, [plans](../design/issue-graph-plans.md)); one still asking - its `## Questions` section has a question with no box ticked - is `asking`, whatever else it holds; one whose questions are all ticked but still carries the section (the plan is being rewritten with the answers) is `replanning`. Read from the issue's comments, so only when a rule that could otherwise step asks for it. A graph-labelled issue whose plan has a Breakdown is started from its plan |
 
 ### Pull requests
@@ -692,6 +693,8 @@ the suite CI runs.
 | `implement-graph` | issue | `<trigger>/implement` on a plan with a Breakdown (`plan: graph`): the graph label, for the graph controller (`--graphs`) to start from the plan; no task |
 | `implement-unplanned` | issue | `<trigger>/implement` with no plan: a comment, the label off |
 | `implement-not-ready` | issue | `<trigger>/implement` on a plan still asking or not yet rewritten (`plan: asking`/`replanning`): a comment, the label off |
+| `issue-asking` | issue | an issue pointed at whose description asks (`questions: open`): `<trigger>/needs-human` while it waits |
+| `issue-answered` | issue | its questions answered (`questions: none`), not stopped: `needs-human` off (fix starts in the same pass) |
 | `plan-asking` | issue | a planned issue whose plan asks questions: `<trigger>/needs-human` |
 | `plan-answered` | issue | a planned issue whose plan's questions are all ticked: `needs-human` off, `<trigger>/plan` on, so the plan is written with the answers |
 | `inherit-labels` | pr | copies the closing issues' labels onto the PR, ahead of the rules that take it |
