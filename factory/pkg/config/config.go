@@ -62,6 +62,10 @@ type FactoryConfig struct {
 	// {sandbox} and {task} in it, filled in with the run's sandbox and the
 	// task whose conversation it is. Unset, nothing is linked.
 	SessionURL string `yaml:"sessionURL"`
+	// AskWhyClosed opts in to asking why an agent PR was closed unmerged
+	// (design/retro.md §5). Off unless set.
+	AskWhyClosed bool `yaml:"askWhyClosed"`
+	WhyClosed    bool `yaml:"whyClosed"`
 }
 
 // WarmWorkspaceConfig is how often the workspace is warmed, how many
@@ -176,4 +180,13 @@ func (c *FactoryConfig) TrustedLogins() []string {
 	out = append(out, c.AllowlistedBots...)
 	out = append(out, c.Roles["reviewer"].Users...)
 	return out
+}
+
+// ShouldAskWhyClosed reports whether asking why an agent PR was closed unmerged
+// is enabled.
+func (c *FactoryConfig) ShouldAskWhyClosed() bool {
+	if c == nil {
+		return false
+	}
+	return c.AskWhyClosed || c.WhyClosed
 }

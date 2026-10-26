@@ -66,6 +66,13 @@ type LinkedWork interface {
 	NudgeLinkedWorkflows(ctx context.Context, closed *githubv39.Issue)
 }
 
+// WhyClosed is told about each unmerged closed PR during closed PR sandbox cleanup,
+// and polls recent unmerged closed PRs during garbage collection.
+type WhyClosed interface {
+	OnClosedPR(ctx context.Context, pr *githubv39.PullRequest)
+	Poll(ctx context.Context)
+}
+
 // Config holds the tuning knobs of a Reconciler.
 type Config struct {
 	// Interval is the delay between sandbox state reconcile cycles.
@@ -105,6 +112,8 @@ type Deps struct {
 	// the issue closed, and every issue closed by a merged PR whose sandbox is
 	// collected. A nil LinkedWork is told nothing.
 	LinkedWork LinkedWork
+	// WhyClosed is told about unmerged closed PRs and polls for reasons.
+	WhyClosed WhyClosed
 }
 
 // Reconciler keeps cluster sandbox state in sync with reality and reclaims
@@ -122,6 +131,7 @@ type Reconciler struct {
 	entities  EntityState
 	paused    func() bool
 	linked    LinkedWork
+	whyClosed WhyClosed
 }
 
 // New constructs a Reconciler from its configuration and dependencies.
@@ -139,6 +149,7 @@ func New(cfg Config, deps Deps) *Reconciler {
 		entities:  deps.Entities,
 		paused:    deps.Paused,
 		linked:    deps.LinkedWork,
+		whyClosed: deps.WhyClosed,
 	}
 }
 
@@ -220,6 +231,9 @@ func (r *Reconciler) CollectGarbage(ctx context.Context) {
 		r.cleanupClosedPRSandboxes(ctx, items, collected)
 	} else {
 		klog.V(2).Infof("Skipping closed PR sandbox collection until the open pull request cache is populated.")
+	}
+	if r.whyClosed != nil {
+		r.whyClosed.Poll(ctx)
 	}
 	if r.entities == nil || r.entities.HasOpenIssues() {
 		r.cleanupClosedIssueSandboxes(ctx, items, collected)
@@ -406,6 +420,9 @@ func (r *Reconciler) deleteClosedPRSandbox(ctx context.Context, item *unstructur
 
 	// Before the delete, and in a dry run too, as for a closed issue.
 	r.nudgeIssuesClosedBy(ctx, pr)
+	if r.whyClosed != nil && !pr.GetMerged() {
+		r.whyClosed.OnClosedPR(ctx, pr)
+	}
 
 	klog.Infof("Pull Request #%d is closed/merged. Deleting corresponding sandbox '%s'...", num, name)
 	if r.cfg.DryRun {
