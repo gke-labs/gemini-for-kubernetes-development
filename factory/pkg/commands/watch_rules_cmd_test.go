@@ -34,7 +34,7 @@ func TestWatchRulesTable(t *testing.T) {
 		names = append(names, strings.Fields(l)[0])
 	}
 	// Issues, then PRs, each in the order the engine walks them, then the rest.
-	want := "workflow-missing workflow plan-asking plan-answered plan implement implement-graph implement-unplanned implement-unanswered fix inherit-labels inactive comments conflict ci review ready ready-unreview"
+	want := "workflow-missing workflow plan-asking plan-answered plan implement implement-graph implement-unplanned implement-not-ready fix inherit-labels inactive comments conflict ci review ready ready-unreview"
 	if strings.Join(names, " ") != want {
 		t.Errorf("rows = %v, want %s", names, want)
 	}

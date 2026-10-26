@@ -240,11 +240,11 @@ func TestOpenQuestions(t *testing.T) {
 		return []*githubv39.IssueComment{{Body: githubv39.String(body + "\n<!-- factory:comment key=plan v=1 -->"),
 			User: &githubv39.User{Login: githubv39.String("hopper-coder-bot")}, AuthorAssociation: githubv39.String("NONE")}}
 	}
-	if got := PlanShape(comment(q(" ", "x")+"\n```yaml graph\nsteps: [{id: a, title: A, body: a}]\n```\n"), env); got != ShapeQuestions {
-		t.Errorf("open question with a Breakdown: shape %q, want questions", got)
+	if got := PlanShape(comment(q(" ", "x")+"\n```yaml graph\nsteps: [{id: a, title: A, body: a}]\n```\n"), env); got != ShapeAsking {
+		t.Errorf("open question with a Breakdown: shape %q, want asking", got)
 	}
-	if got := PlanShape(comment(q("x", "x")), env); got != ShapeAnswered {
-		t.Errorf("all answered, the section still there: shape %q, want answered", got)
+	if got := PlanShape(comment(q("x", "x")), env); got != ShapeReplanning {
+		t.Errorf("all answered, the section still there: shape %q, want replanning", got)
 	}
 	if got := PlanShape(comment("## Summary\nDo it.\n\n## Changes since the previous version\n- retention: 180 days (@alice)\n"), env); got != ShapePR {
 		t.Errorf("rewritten without the section: shape %q, want pr", got)

@@ -52,11 +52,11 @@ func TestQueueTasks_ImplementByPlanShape(t *testing.T) {
 		{"a one-PR plan", []comment{{"bot1", "NONE", onePR}}, "task-issue-7-rule-implement.yaml", nil, false, ""},
 		{"a plan with a Breakdown", []comment{{"bot1", "NONE", breakdown}}, "", []string{"factory/graph"}, true, "as an issue graph"},
 		{"no plan", nil, "", nil, true, "no plan to implement"},
-		// planned and still asking: implement-unanswered takes the label
+		// planned and still asking: implement-not-ready takes the label
 		// off, and plan-asking labels it needs-human.
 		{"a plan still asking", []comment{{"bot1", "NONE", asking}}, "", []string{"factory/needs-human"}, true, "still asking questions"},
 		// planned and every question ticked: plan-answered asks for the
-		// plan again (and implement-unanswered still refuses implement).
+		// plan again (and implement-not-ready still refuses implement).
 		{"a plan answered, not yet rewritten", []comment{{"bot1", "NONE", answered}}, "task-issue-7-rule-plan.yaml", []string{"factory/plan"}, true, "still asking questions"},
 		{"only an outsider's plan", []comment{{"mallory", "NONE", breakdown}}, "", nil, true, "no plan to implement"},
 	} {

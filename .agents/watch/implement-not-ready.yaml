@@ -1,18 +1,18 @@
-# overseer/implement on an issue whose plan still asks (plan: questions -
+# overseer/implement on an issue whose plan still asks (plan: asking -
 # its ## Questions section has a question with no box ticked) or is
-# answered but not yet rewritten (plan: answered) has nothing ready to
+# answered but not yet rewritten (plan: replanning) has nothing ready to
 # implement: the plan is written once its questions are answered.
 # The watcher says so and takes the command label off, rather than start a
 # sandbox or a graph on a plan that is not one yet.
-name: implement-unanswered
-description: Say that an issue labelled overseer/implement has a plan still asking questions
+name: implement-not-ready
+description: Say that an issue labelled overseer/implement has no plan ready yet (still asking, or being rewritten with the answers)
 on: issue
 order: 19
 when:
   labels: {any: ["{{trigger}}/implement"]}
   any-of:
-    - plan: questions
-    - plan: answered
+    - plan: asking
+    - plan: replanning
 run:
   unlabel: ["{{trigger}}/implement"]
   comment: "This issue's plan is still asking questions, or is waiting to be rewritten with their answers, so there is nothing to implement yet. Answer the questions in the plan comment (tick an option, or tick Other and reply); the plan is then written with the answers, and the implement label can be applied to that."

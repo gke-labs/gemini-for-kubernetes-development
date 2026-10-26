@@ -74,14 +74,14 @@ func trustedPlanComment(comments []*githubv39.IssueComment, env rules.Env) (*git
 const (
 	ShapePR    = "pr"
 	ShapeGraph = "graph"
-	// ShapeQuestions is a plan still asking: its ## Questions section has
+	// ShapeAsking is a plan still asking: its ## Questions section has
 	// a question no box of which is ticked. It is not ready to implement,
 	// whatever else it holds.
-	ShapeQuestions = "questions"
-	// ShapeAnswered is a plan whose questions are all answered but that
+	ShapeAsking = "asking"
+	// ShapeReplanning is a plan whose questions are all answered but that
 	// still carries its ## Questions section: the plan is yet to be
 	// written with the answers. Not ready to implement either.
-	ShapeAnswered = "answered"
+	ShapeReplanning = "replanning"
 )
 
 // PlanShape is the shape of an issue's plan, the rules' plan fact: graph
@@ -94,9 +94,9 @@ func PlanShape(comments []*githubv39.IssueComment, env rules.Env) string {
 	case found == nil:
 		return ""
 	case len(OpenQuestions(found.GetBody())) > 0:
-		return ShapeQuestions
+		return ShapeAsking
 	case countQuestions(found.GetBody()) > 0:
-		return ShapeAnswered
+		return ShapeReplanning
 	case HasPlanBlock(found.GetBody()):
 		return ShapeGraph
 	}
