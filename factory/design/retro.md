@@ -1,6 +1,6 @@
 # A weekly retro that improves the repository's skills and workflows
 
-Status: proposed.
+Status: proposed. Step 1, archiving each task, is **built** (#2031, #2035, #2038: design/token-usage-collection.md §9), not as first proposed here; §1 describes what was built. Steps 2-5 are proposed.
 
 ## Goal
 
@@ -14,13 +14,13 @@ Each proposal names the PRs behind it, and the moments in their agent traces whe
 
 What isn't an instruction goes elsewhere. A broken test environment, a factory bug, or a recipe problem becomes an issue on the repository that owns it, not a skill edit. The KCC envtest mismatch (#1975, KCC #14022 and #14023) was that kind.
 
-To say which skill to change, we need to know which skills a PR used and what the agent did with them. Both are in the agent's trace, and today the trace is deleted with the sandbox.
+To say which skill to change, we need to know which skills a PR used and what the agent did with them. Both are in the agent's trace, which is now archived before its sandbox goes (§1).
 
 Training a model of our own is out of scope. Most failures are environment and missing repository knowledge, and we have hundreds of PRs, not the thousands of labelled outcomes a model would need.
 
 ## Today
 
-- **The trace exists, then disappears.** acpd writes every session as NDJSON in `/workspaces/.acpd/sessions/<id>/stream.ndjson`: prompts, agent messages, every tool call with its arguments and output, turn ends with usage. "A transcript does not outlive its sandbox, by design" (`acpd/transcript.go`). The closed-PR and idle sweeps in `watch/sandbox/reconciler.go` harvest token usage and then delete the sandbox, transcripts included.
+- **The trace is archived (built).** acpd writes each task's session as NDJSON, `session/stream.ndjson` in the task's directory: prompts, agent messages, every tool call with its arguments and output, turn ends with usage. The token-usage collector archives every task's directory, that transcript included, to a GCS bucket before the sandbox can lose it (§1). Nothing reads the archive back yet.
 - **Which skills ran is in the trace, nowhere else.** A skill reaches the agent in one of two ways:
   - the engine's skill tool (gemini-cli's `activate_skill`), a `tool_call` naming the skill;
   - a file read of a `SKILL.md` or the files beside it.
@@ -31,31 +31,38 @@ Training a model of our own is out of scope. Most failures are environment and m
 
 ## Proposal
 
-### 1. Keep the trace: archive it before the sandbox goes
+### 1. Keep the trace: archive it before the sandbox goes (built)
 
-Each task's trace is copied to a **GCS bucket per overseer**, written by `factory watch`:
+**Built in #2031, #2035 and #2038**, described in design/token-usage-collection.md §9. It differs from what this section first proposed (an upload by `factory watch` to a `traces/` folder per issue or PR): the archive belongs to the token-usage collector, which already had a bucket.
 
-```
-gs://<bucket>/traces/<owner>/<repo>/<issue-N|pr-N>/<sandbox>/<task>/
-  stream.ndjson.gz      the acpd transcript of each of the task's sessions
-  record.json           acpd's session record (engine, model, mode)
-  task/                 recipe.source.yaml, the prompts, task-output.yaml, result.json
-  manifest.json         the instructions the task used (§2)
-```
+- **What:** every file of the task's directory and one directory down, as the task server lists them (`GET /v1/tasks/{id}/files?subdirs=1`): `task.json`, `status.json`, `inputs.json`, `push.json`, `recipe.source.yaml`, `task-output.yaml`, `change.yaml`, `comments.jsonl`, `execution.log`, `steps/<NN-step>.log`, `session/stream.ndjson` (the transcript, always tried) and `session/session.json` (the session record). Left out: `recipe.yaml` and `steps/uses.sh` (generated from `recipe.source.yaml`), `pid`, `lease`, empty files, and the env and secrets files, which the task server never serves.
+- **Who and how:** the harvest (`usagereport.HarvestTask` / `HarvestSandbox`, in the recipe runner and the watch's sweeps) reads the files through the sandbox's task server and sends them with the task's usage, as one tar stream, to the collector (`PUT /v1/tasks/{sandbox}/{task}?repo=&issue=&pr=&taskType=`). The collector spools the task on its PVC and its flusher uploads it every `FLUSH_INTERVAL` (5m). Nothing runs in the sandbox for it, the engine never holds bucket credentials, and the collector writes with Workload Identity (its own KSA, `roles/storage.objectAdmin` on the bucket).
+- **When:** at task end; before an idle sandbox is suspended (bounded to 3 minutes, so a later delete need not wake it); and before each delete (the closed-PR, closed-issue and stale sweeps). A pass that got everything in sets `sandbox.gemini.google.com/harvested-at`, and a suspended sandbox harvested since its last activity is not woken again. A later harvest of the same task replaces its record, so a session that grew after its task ended (Continue session) ends up archived whole.
+- **Layout:**
 
-- **When:** at task end, and again in the sweeps, right where usage is harvested today, just before the sandbox is deleted. A session can grow after its task ends (Continue session, care's shared conversation), so the sweep's copy is the final one. Writes overwrite: one object per task, last copy wins.
-- **How:** read through the sandbox's task server, as the usage harvest does, and streamed to GCS, gzipped. Nothing new runs in the sandbox, and the engine never holds the bucket's credentials. The watch uses Workload Identity.
-- **Redaction:** before upload, known token shapes are masked (`ghp_`, `github_pat_`, `ghs_`, `AIza…`, `ya29.`). Tokens are kept out of the engine's environment already (#1695, #1696), so this is a backstop.
-- **Retention:** a bucket lifecycle rule, 90 days. Access is the overseer's namespace and the project's owners, as for the cluster itself.
-- **A pointer** in the collector: the usage record gets `traceURL`, so the dashboard and the session link can find an archived trace once the sandbox is gone.
+  ```
+  gs://<bucket>/<prefix>/tasks/<owner>/<repo>/<sandbox>/<task>/
+    manifest.json                  the index record, written last (a folder without it did not finish)
+    <file>.gz                      one gzipped object per file, named as in the sandbox
+    steps/<NN-step>.log.gz
+    session/stream.ndjson.gz  session/session.json.gz
+  gs://<bucket>/<prefix>/task-index/   the index log (segments and snapshots)
+  ```
 
-Archiving is off unless the overseer sets `traceBucket`. A failed upload logs a warning and never blocks a deletion: the sweep that deletes doesn't wait on GCS.
+  By sandbox, not by issue or PR: a fix sandbox serves its issue and then its PR, and its tasks stay together. The index answers by issue or PR: `GET /v1/tasks?repo=&issue=&pr=&sandbox=` on the collector lists each task's record - `folder`, `recipe`, `runName`, `url`, `state`, `exitCode`, `startedAt`/`endedAt`, `pushedBranch`/`pushedHead`, `applied`, and `files` with size and sha256. A file whose content the archive already holds is not uploaded again.
+- **Redaction:** the collector masks credential shapes line by line on the way in (`gh[pousr]_…`, `github_pat_…`, `AIza…`, `ya29.…`, `sk-ant-…`), a backstop to keeping tokens out of the engine (#1695, #1696).
+- **Limits:** 256MiB per task, 512MiB for the spool (the harvest tries again on its next pass).
+- **Configuration:** the collector's `GCS_BUCKET` / `GCS_PREFIX`, from the `token-usage` ConfigMap (`gcs-bucket`, `gcs-prefix`). Without a bucket the collector answers 501 and keeps nothing, and the harvest moves on: off unless set. There is no per-overseer setting.
+- **Retention:** no lifecycle rule. The collector's prefix is the only full copy of its records, so none was added; a rule for `tasks/` alone is an open question (below).
 
-A GCS bucket rather than the collector's PVC because of size: KCC care conversations reach megabytes per task, and a bucket has lifecycle rules without our writing any.
+What changed from the first proposal, and what the retro does about it:
+- **No `traceURL`:** a task's place is its index record's `folder`. Outcome records (§3) carry it.
+- **The collector never serves a task's files**; readers go to the bucket. The retro's staging (§5) needs a reader.
+- **The engine's own chat history** (gemini-cli's `.gemini/tmp/*/chats/*.jsonl`, outside the task directory) is not archived. acpd's `stream.ndjson` already has every prompt, message and tool call of the task, which is what the retro reads. Those chat files are the engine's resumable state, and one shared across many runs grows without bound: a KCC care conversation reached 745MB and looped (PR 14181, 2026-10-26).
 
-### 2. Map a run to its instructions: the manifest
+### 2. Map a run to its instructions
 
-From the trace and the run, factory writes `manifest.json` per task:
+The archive's `manifest.json` is the task's index record (§1): what ran and how it ended, but not which instructions it ran on. This step adds an `instructions` object to that record, computed by the collector when it spools the task, from the files it already has (`session/stream.ndjson`, `session/session.json`, `task.json`, `inputs.json`):
 
 ```json
 {
@@ -77,7 +84,9 @@ From the trace and the run, factory writes `manifest.json` per task:
 - **`firstSeq` / `lastSeq`** place the skill in the transcript: the stretch of the conversation where it was in play. The retro uses them to find what the agent did while following that skill.
 - **`commit`** pins the version of every instruction, so a lesson is checked against the skill as it was, and a later edit can be compared before and after.
 
-The manifest is small, so a copy also goes in the PR's outcome record (§3). That makes per-skill rollups cheap without reading the bucket.
+- **`engine` and `model`** come from `session/session.json`; the workflow and the recipe from `task.json` and `inputs.json`.
+
+The `instructions` object is small and is part of the index record, so `GET /v1/tasks` returns it, and the PR's outcome record (§3) carries a copy. That makes per-skill rollups cheap without reading the bucket.
 
 ### 3. An outcome record per PR
 
@@ -88,7 +97,7 @@ When a PR the agents opened is merged or closed, factory writes one **outcome re
   "key": "outcome:owner/name#101",
   "repo": "owner/name", "pr": 101, "issues": [42],
   "state": "merged | closed", "openedAt": "...", "closedAt": "...", "closedBy": "login",
-  "tasks": [{"sandbox": "...", "task": "...", "traceURL": "gs://…", "manifest": {…}}],
+  "tasks": [{"sandbox": "...", "task": "...", "folder": "tasks/owner/name/<sandbox>/<task>", "instructions": {…}}],
   "carePasses": 3, "reviewComments": 7, "changesRequested": 1,
   "agentHead": "<sha of the agent's last push>",
   "humanEdit": {"files": 2, "added": 14, "deleted": 3, "paths": ["pkg/controller/foo.go"]},
@@ -97,7 +106,7 @@ When a PR the agents opened is merged or closed, factory writes one **outcome re
 }
 ```
 
-- **Where:** the closed-PR sweep writes it, after archiving the traces. A PR merged after its sandbox is gone is caught by the overseer's closed-PR scan.
+- **Where:** the closed-PR sweep writes it, after the harvest that archives the PR's tasks; it lists them from the collector's index by PR. A PR merged after its sandbox is gone is caught by the overseer's closed-PR scan.
 - **`humanEdit`:** how much the PR's change moved between the agent's last push and the final head. Each is compared against its own merge base, so a rebase onto a moved base branch doesn't count. `paths` lets the retro line a human's edit up with the stretch of the trace that wrote that file.
 - **Rollups per instruction:** `GET /v1/outcomes/rollup?repo=&since=&by=skill|workflow` gives, for each skill and workflow, the PRs that used it, how many merged, care passes, human edits and cost per merged PR. That is the scoreboard the KCC plan asks for (docs/kcc-code-emergency-scaling-plan.md, 6.1: which step fails most).
 
@@ -117,10 +126,12 @@ A built-in recipe, **`retro`**, on a repository (`on: [repo]`), run weekly per o
 
 **Inputs, staged by the watch before the task starts:**
 - the week's outcome records and the per-skill rollup;
-- for every PR worth a look, its traces from the bucket: closed unmerged, 3 or more care passes, or human edits above a threshold;
+- for every PR worth a look, its archived tasks' transcripts and logs: closed unmerged, 3 or more care passes, or human edits above a threshold;
 - the PR's review threads and `closeReason`.
 
 The staged files go into the task's directory, so the agent needs no GCP credentials. The recipe runs with `credentials: clone`.
+
+Reading the archive is the one new piece: today nothing reads `tasks/` back, and the collector never serves a task's files. The collector already holds the bucket's credentials, so it gets a read endpoint, `GET /v1/tasks/{sandbox}/{task}/files/{name}`, that streams one archived file (unzipped) from the bucket; the watch stages through it and needs no GCS access of its own.
 
 **The agent:**
 1. For each PR, finds what went wrong. It lines up the review comments and the human edits (by path) with the trace, and with the skill in play at that point (the manifest's `firstSeq`–`lastSeq`).
@@ -142,17 +153,18 @@ Archived traces and outcome records are also what an offline evaluation needs. T
 
 ## Steps
 
-1. **Archive traces:** the bucket layout, upload at task end and in the sweeps, redaction, `traceURL` on usage records, the overseer's `traceBucket`. factory and overseer manifests.
-2. **Manifests:** skill detection from the trace (skill-tool calls, reads under `.agents/skills.json` dirs), the workflow and the instruction commit; written beside the trace.
+1. **Archive traces - done** (#2031, #2035, #2038): the collector archives every task's directory, transcript included, at task end, before an idle suspend and before each delete, redacted, indexed in `task-index` and listed by `GET /v1/tasks`. Not done, by decision: a lifecycle rule, `traceURL` (the index's `folder` instead), a per-overseer bucket setting.
+2. **Instructions:** skill detection from the archived transcript (skill-tool calls, reads under `.agents/skills.json` dirs), the workflow, recipe, engine, model and the instruction commit - an `instructions` object in the index record, computed by the collector at spool time. Plus the collector's read endpoint for archived files (§5).
 3. **Outcome records and rollups:** the record from the closed-PR sweep, `humanEdit`, the collector's endpoints including `by=skill|workflow`.
 4. **Why closed:** the comment and the reply harvest.
 5. **The retro recipe:** chores that run a recipe, staging traces as inputs, the `Digest` kind and `open-issue` action, the recipe. Run it by hand on KCC first (`factory recipe retro --url <repo>`), then weekly on overseer-kcc.
 
-Steps 1 and 2 are worth having on their own: an archived trace answers "what did the agent do?" for any PR after its sandbox is gone.
+Steps 1 and 2 are worth having on their own: an archived trace already answers "what did the agent do?" for any PR after its sandbox is gone - today by reading the bucket directly.
 
 ## Open questions
 
 - **Which PRs count as the agents'?** Proposed: the PRs the overseer or a board opened (a bot author, or the factory session link in the body). PRs a member opened and the agent only cared for are archived and recorded, but left out of acceptance rates.
 - **Skills outside the repository** (user-level or engine-bundled): recorded in the manifest by name, but the retro proposes no edits to them.
-- **Trace access:** whether members who can see the board should read archived traces through repo-agent (a signed URL), or only through the bucket.
+- **Trace access:** whether members who can see the board should read archived traces through repo-agent (through the collector's read endpoint, or a signed URL), or only through the bucket.
+- **Retention of `tasks/`:** the collector's prefix has no lifecycle rule, as it is the only copy of the usage records. Task folders are the bulk (KCC transcripts reach megabytes per task); a rule on `<prefix>/tasks/` alone (e.g. 180 days, after the retro has read them) would bound the cost without touching the records.
 - **Repositories the bot can't push to:** the digest carries the diffs inline instead of a PR.
