@@ -9,6 +9,7 @@ import (
 	"k8s.io/klog/v2"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/conventions"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/graph"
 )
 
 // scanLabelled lists every open issue carrying the trigger label, following
@@ -193,6 +194,15 @@ func (s *Scanner) adoptCreatedIssues(ctx context.Context, created []*githubv39.I
 		// a window at a time; adopting them all would start every one at once.
 		if why := s.fanoutWork(issue); why != "" {
 			klog.V(2).Infof("Not adopting issue #%d: %s", num, why)
+			continue
+		}
+		// So does the graph controller, labelling each child by what its step
+		// does first (graph.childLabels): a child to be fixed has the trigger
+		// label already, one to be planned or decided must not get it. Still
+		// eligible for queueing, as the rules decide on its own labels.
+		if _, ok := graph.ParseChildMarker(issue.GetBody()); ok {
+			klog.V(2).Infof("Not adopting issue #%d: an issue graph's child, labelled by its step", num)
+			adopted = append(adopted, issue)
 			continue
 		}
 
