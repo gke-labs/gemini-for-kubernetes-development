@@ -850,3 +850,38 @@ func TestPRNumberFromSandbox(t *testing.T) {
 		})
 	}
 }
+
+type recordingWhyClosed struct {
+	closedPRs []int
+	polled    int
+}
+
+func (w *recordingWhyClosed) OnClosedPR(_ context.Context, pr *githubv39.PullRequest) {
+	w.closedPRs = append(w.closedPRs, pr.GetNumber())
+}
+
+func (w *recordingWhyClosed) Poll(_ context.Context) {
+	w.polled++
+}
+
+func TestCollectGarbageNotifiesWhyClosedOnUnmergedPR(t *testing.T) {
+	why := &recordingWhyClosed{}
+	r := New(Config{}, Deps{
+		Sandboxes: NewService(ServiceConfig{Namespace: testNamespace, Owner: "test-owner", Repo: "test-repo"}, ServiceDeps{
+			Kube:   newFakeKubeClient(t, newSandbox("factory-pr-test-repo-7", map[string]interface{}{annotationLastTaskState: "Completed"})),
+			GitHub: newClosedEntityGitHub(t),
+		}),
+		Locks:     concurrency.NewSandboxLockRegistry(),
+		Entities:  warmCache(),
+		WhyClosed: why,
+	})
+
+	r.CollectGarbage(context.Background())
+
+	if len(why.closedPRs) != 1 || why.closedPRs[0] != 7 {
+		t.Errorf("expected OnClosedPR for PR #7, got %v", why.closedPRs)
+	}
+	if why.polled != 1 {
+		t.Errorf("expected Poll to be called once, got %d", why.polled)
+	}
+}

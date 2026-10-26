@@ -20,6 +20,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/sandbox"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/scan"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/warmworkspace"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/whyclosed"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/config"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/watch/rules"
@@ -166,6 +167,7 @@ type Watcher struct {
 	fanouts       *fanouts.Controller
 	graphs        *graphs.Controller
 	warmWorkspace *warmworkspace.Controller
+	whyClosed     *whyclosed.Tracker
 	timeoutChan   <-chan time.Time
 }
 
@@ -209,6 +211,7 @@ func (w *Watcher) initComponents() {
 	w.fanouts = w.newFanoutController()
 	w.graphs = w.newGraphController()
 	w.warmWorkspace = w.newWarmWorkspaceController()
+	w.whyClosed = w.newWhyClosed()
 	w.reconciler = w.newReconciler()
 	w.chores = w.newChoreScheduler()
 	w.repoRecipes = w.loadRepoRecipes()

@@ -26,3 +26,25 @@ func TestTrustedLogins(t *testing.T) {
 		t.Errorf("TrustedLogins() = %v, want %v", got, want)
 	}
 }
+
+func TestShouldAskWhyClosed(t *testing.T) {
+	var nilCfg *FactoryConfig
+	if nilCfg.ShouldAskWhyClosed() {
+		t.Error("nilCfg.ShouldAskWhyClosed() = true, want false")
+	}
+
+	emptyCfg := &FactoryConfig{}
+	if emptyCfg.ShouldAskWhyClosed() {
+		t.Error("emptyCfg.ShouldAskWhyClosed() = true, want false")
+	}
+
+	askCfg := &FactoryConfig{AskWhyClosed: true}
+	if !askCfg.ShouldAskWhyClosed() {
+		t.Error("askCfg.ShouldAskWhyClosed() = false, want true")
+	}
+
+	whyCfg := &FactoryConfig{WhyClosed: true}
+	if !whyCfg.ShouldAskWhyClosed() {
+		t.Error("whyCfg.ShouldAskWhyClosed() = false, want true")
+	}
+}

@@ -26,6 +26,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/sandbox"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/scan"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/warmworkspace"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/whyclosed"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/recipe"
 	factorysandbox "github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/sandbox"
@@ -67,7 +68,41 @@ func (w *Watcher) newReconciler() *sandbox.Reconciler {
 		Entities:   w.entityCache,
 		Paused:     w.draining,
 		LinkedWork: w.newLinkedWork(),
+		WhyClosed:  w.whyClosed,
 	})
+}
+
+// newWhyClosed constructs the why-closed tracker, which prompts for why PRs were
+// closed and harvests replies and labels.
+func (w *Watcher) newWhyClosed() *whyclosed.Tracker {
+	var trustedLogins []string
+	if w.cfg != nil {
+		trustedLogins = w.cfg.TrustedLogins()
+	}
+	return whyclosed.New(whyclosed.Config{
+		Enabled:       w.cfg.ShouldAskWhyClosed(),
+		TriggerLabel:  w.triggerLabel,
+		GitHubLogin:   w.githubLogin,
+		BotUsers:      w.allBotUsers,
+		TrustedLogins: trustedLogins,
+		StateDir:      w.QueueDir,
+		DryRun:        w.DryRun,
+	}, whyclosed.Deps{
+		GitHub: w.repoClient,
+	})
+}
+
+// WhyClosedReason returns the recorded close reason for a pull request, if any.
+func (w *Watcher) WhyClosedReason(prNum int) (string, bool) {
+	if w.whyClosed == nil {
+		return "", false
+	}
+	return w.whyClosed.CloseReason(prNum)
+}
+
+// WhyClosedTracker returns the why-closed tracker, if initialized.
+func (w *Watcher) WhyClosedTracker() *whyclosed.Tracker {
+	return w.whyClosed
 }
 
 // newLinkedWork constructs what the reconciler tells about the issues it finds
