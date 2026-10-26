@@ -257,6 +257,7 @@ factory sandbox chat factory-issue-917 -r latest  # resume the Gemini session
 | `pr watch` | Follow up one PR with care until it merges or closes |
 | `pr adopt open\|close` | Re-home a third-party PR under the bot (`--strategy reuse\|reimplement`) |
 | `agent create` | Run an `.agents/` (or `--local`) agent definition |
+| `graph validate\|reconcile\|adopt\|start` | Validate, reconcile, adopt or start an issue graph under a parent issue; see [plans and issue graphs](docs/plan-and-graph.md) |
 | `watch` | The autonomous scan / dispatch / GC loop |
 | `sandbox list\|inspect\|logs\|exec\|cp\|connect\|chat\|suspend\|resume\|delete` | Manage individual sandboxes |
 | `cleanup` | Delete sandboxes older than `--older-than` (default 24h) |
