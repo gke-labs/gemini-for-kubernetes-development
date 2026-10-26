@@ -140,6 +140,28 @@ start:
         2-3 sentences: what the issue asks for and the shape of the change -
         one pull request, or several (how many, and why split).
 
+        ## Questions
+        Only if the plan depends on answers only a maintainer can give - a
+        product or policy choice, an access, a cost trade-off - and the code
+        and the issue cannot settle it; otherwise leave this section out.
+        Questions are asked where the answer is needed: a question whose
+        answer shapes this plan goes here, on this issue; a question only
+        one step needs goes in that step's own body (Breakdown, below). Never
+        make a step whose only job is to ask. Write each question exactly
+        like this, the recommended option first:
+
+        <!-- factory:question id=retention -->
+        **How long are archived task folders kept?**
+        - [ ] 180 days, then deleted (recommended: bounds the cost, the retro reads recent weeks)
+        - [ ] Kept indefinitely
+        - [ ] Moved to coldline after 90 days
+        - [ ] Other: answered in a comment
+
+        A maintainer answers by ticking one box, or by ticking Other and
+        replying. While any question here is open, leave the Breakdown out
+        and write the PR plan with the recommended options, saying so: the
+        plan is not ready to implement until it is answered.
+
         ## Baseline
         What the default branch already has that this builds on, as a table:
         | Area | Files | What exists today |. A few rows; for a small change,
@@ -168,7 +190,7 @@ start:
         node per Breakdown step, labelled with its id and a short title, an
         edge for each `after`, steps with no `after` coming from `main`.
         Mark a `then: plan` step "(planned first)" and a `then: ask` step
-        "(decision)".
+        "(asks first)".
 
         ### PRs
         A table, in the Breakdown's order:
@@ -223,20 +245,30 @@ start:
         the step's body alone, so a body must stand on its own: what to
         change, in which files, and how to verify it (the PR table's row,
         in full). A step may set `then: plan` (its sub-issue is planned
-        first, for a piece still too big or unclear) or `then: ask` (a
-        person decides, and no bot works on it until then), instead of the
-        default, fix. Use `then: ask` only for what an agent cannot settle -
-        a design choice, an access or a judgment that is a maintainer's -
-        and make its body say exactly what must be decided and the options
-        you see, nothing about how to proceed: its sub-issue lists what the
-        person can do and goes to the maintainer who approved the plan; do
-        not name assignees yourself. `checkpoint: stop` pauses the graph
+        first, for a piece still too big or unclear) instead of the default,
+        fix. A step that needs a maintainer's answer before it can be done -
+        how big it really is (fix or plan first), whether it is needed at
+        all, or a choice only it depends on - sets `then: ask`: its body
+        holds the step's work as usual, then a `## Questions` section in the
+        format above (for size, options like "Fix it as one PR" / "Plan it
+        first"; for necessity, "Do it" / "Skip it"). Its sub-issue waits for
+        the answer on that same issue, and the agent that then takes it
+        reads the answer there. Never add a separate step that only asks;
+        never make a step depend on another issue's answer. Do not name
+        assignees: the sub-issue goes to the maintainer who approved the
+        plan. `checkpoint: stop` pauses the graph
         when the step is done, for a maintainer to look; `replan` has this
         plan revised then. Do not use the id `finally`.
         {{ if file "prior-plan.md" }}
         ## Changes since the previous version
         A short bullet list of what changed from the previous plan and why
         (whose feedback), so a reader sees what moved.
+
+        A question in the previous plan is answered when one of its boxes is
+        ticked, or a maintainer answered it in a comment since: fold each
+        answer into the plan (approach, PR plan, Breakdown), drop it from
+        `## Questions`, and list it here as "<question>: <answer> (@who)".
+        Keep the questions still open; once none are, write the Breakdown.
 
         If the previous plan had a Breakdown, keep each step's id when you
         keep the step - the id names its sub-issue, which may already be

@@ -31,6 +31,8 @@ the plan ends with a **Breakdown** (section 4), folded under `<details>`:
 it is the overseer's spec, and says the same as the PR plan. On success the watcher adds `<t>/planned`; the command label
 comes off when the task ends, whatever happened.
 
+**Questions are asked where the answer is needed.** When the plan depends on something only a maintainer can decide, it has a `## Questions` section: each question a task list, the recommended option first, and "Other: answered in a comment" last. Tick a box (or tick Other and reply), then apply `<t>/plan` again: the next version folds the answers in and drops them from the section. While a question is open the plan has no Breakdown, and `<t>/implement` on it posts which questions are open instead of implementing. A question only one step needs is asked in that step's own sub-issue, not here (section 3).
+
 To refine it, comment on the plan and apply `<t>/plan` again: the next run
 revises the same comment (v2, v3...) against the comments posted since,
 says what changed, and keeps the ids of the Breakdown's steps.
@@ -92,7 +94,7 @@ The parent never opens a PR. `fix` and `workflow` leave it alone
 |---|---|---|
 | `fix` (default) | `<t>`, the graph's default labels, the step's labels, `<t>/review` with review instructions | the `fix` rule: a coder bot fixes the child from its body and opens a PR `Fixes #<child>`; PR care follows (review, CI, comments, ready-for-human) |
 | `plan` | `<t>/plan` | the `plan` rule plans the child; a maintainer applies `<t>/implement` - one PR, or a graph of its own (section 5) |
-| `ask` | `<t>/needs-human` and `<t>/stop` | waits for a person: the stop label keeps every bot off it (the graph files its children as the watcher, whose own issues are otherwise picked up). Its body says, under the step's text, what the person can do - remove `<t>/stop` and label it `<t>` (fix) or `<t>/plan`, do it and close it, or close it as not planned to skip the step. It is assigned, so GitHub notifies them: to the step's `assignees` if the plan names any, else the parent's human assignees, else whoever approved the graph (the last person to label the parent `<t>/implement` or `<t>/graph`) |
+| `ask` | `<t>/needs-human` and `<t>/stop` | the step needs a maintainer's answer first: how big it is (fix it, or plan it first), whether it is needed, or a choice only it depends on. Its body holds the step's work and a `## Questions` checklist; the stop label keeps every bot off it until then. Answer on that issue (tick a box, or reply), then remove `<t>/stop` and label it `<t>` (fix) or `<t>/plan` - the agent reads the answer there - or close it as not planned to skip it. The step's `assignees`, else the parent's humans, else whoever approved the graph, are assigned |
 
 ### Progress, pauses and checkpoints
 
