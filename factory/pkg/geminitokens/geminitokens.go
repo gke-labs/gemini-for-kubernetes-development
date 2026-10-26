@@ -435,16 +435,38 @@ const (
 )
 
 var (
-	retryBackoffMarkerBytes = []byte(retryBackoffMarker)
-	status429Marker         = []byte("status: 429")
+	retryBackoffMarkerBytes     = []byte(retryBackoffMarker)
+	status429Marker             = []byte("status: 429")
+	persistentRetryRegexp       = regexp.MustCompile(`(?i)Attempt\s+([3-9]|\d{2,})\s+failed`)
+	dailyQuotaExhaustionMarkers = [][]byte{
+		[]byte("requests per day"),
+		[]byte("Generate requests per day"),
+	}
 )
+
+// IsDailyQuotaExhaustionError checks if the output indicates account-level daily request exhaustion.
+func IsDailyQuotaExhaustionError(data []byte) bool {
+	for _, marker := range dailyQuotaExhaustionMarkers {
+		if bytes.Contains(data, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+// IsPersistentRetryQuotaError checks whether the stream chunk indicates
+// that repeated backoff retries (attempt 3 or higher) have failed with quota errors.
+func IsPersistentRetryQuotaError(data []byte) bool {
+	return persistentRetryRegexp.Match(data) && HasAmbiguousQuotaError(data)
+}
 
 // IsUnambiguousFatalQuotaError checks for fatal quota or key suspension errors
 // that are unrecoverable regardless of whether the CLI attempts a backoff retry.
 // Note: Generic 429 messages from generativelanguage.googleapis.com ("You exceeded your
 // current quota, please check your plan and billing details") are returned on transient
 // RPM/TPM rate limits as well, so they are classified as ambiguous and deferred when
-// accompanied by "Retrying with backoff".
+// accompanied by "Retrying with backoff", unless backoff retries have persisted across
+// multiple attempts (attempt 3 or higher).
 func IsUnambiguousFatalQuotaError(data []byte) bool {
 	if IsSuspendedKeyError(data) {
 		return true
@@ -455,7 +477,7 @@ func IsUnambiguousFatalQuotaError(data []byte) bool {
 			return true
 		}
 	}
-	return false
+	return IsPersistentRetryQuotaError(data)
 }
 
 // HasAmbiguousQuotaError checks for HTTP 429 or RESOURCE_EXHAUSTED indicators
