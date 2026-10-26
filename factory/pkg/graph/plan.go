@@ -78,6 +78,10 @@ const (
 	// a question no box of which is ticked. It is not ready to implement,
 	// whatever else it holds.
 	ShapeQuestions = "questions"
+	// ShapeAnswered is a plan whose questions are all answered but that
+	// still carries its ## Questions section: the plan is yet to be
+	// written with the answers. Not ready to implement either.
+	ShapeAnswered = "answered"
 )
 
 // PlanShape is the shape of an issue's plan, the rules' plan fact: graph
@@ -91,6 +95,8 @@ func PlanShape(comments []*githubv39.IssueComment, env rules.Env) string {
 		return ""
 	case len(OpenQuestions(found.GetBody())) > 0:
 		return ShapeQuestions
+	case countQuestions(found.GetBody()) > 0:
+		return ShapeAnswered
 	case HasPlanBlock(found.GetBody()):
 		return ShapeGraph
 	}
@@ -102,10 +108,28 @@ func PlanShape(comments []*githubv39.IssueComment, env rules.Env) string {
 // one box, or ticks "Other" and replies), and one with no box ticked is
 // open. A question is named by the text line before its task list.
 func OpenQuestions(markdown string) []string {
+	open, _ := questions(markdown)
+	return open
+}
+
+// countQuestions is how many questions markdown's ## Questions section
+// asks, answered or not.
+func countQuestions(markdown string) int {
+	_, n := questions(markdown)
+	return n
+}
+
+// questions reads markdown's ## Questions section: the open questions'
+// names, and how many it asks.
+func questions(markdown string) ([]string, int) {
 	var open []string
+	total := 0
 	in, title := false, ""
 	ticked, boxes := false, 0
 	flush := func() {
+		if boxes > 0 {
+			total++
+		}
 		if boxes > 0 && !ticked {
 			if title == "" {
 				title = "a question"
@@ -142,7 +166,7 @@ func OpenQuestions(markdown string) []string {
 	if in {
 		flush()
 	}
-	return open
+	return open, total
 }
 
 // taskBoxRE is a task list item: "- [ ]", "- [x]", "* [X]".

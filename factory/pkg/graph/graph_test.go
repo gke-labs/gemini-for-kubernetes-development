@@ -243,8 +243,11 @@ func TestOpenQuestions(t *testing.T) {
 	if got := PlanShape(comment(q(" ", "x")+"\n```yaml graph\nsteps: [{id: a, title: A, body: a}]\n```\n"), env); got != ShapeQuestions {
 		t.Errorf("open question with a Breakdown: shape %q, want questions", got)
 	}
-	if got := PlanShape(comment(q("x", "x")), env); got != ShapePR {
-		t.Errorf("all answered, no Breakdown: shape %q, want pr", got)
+	if got := PlanShape(comment(q("x", "x")), env); got != ShapeAnswered {
+		t.Errorf("all answered, the section still there: shape %q, want answered", got)
+	}
+	if got := PlanShape(comment("## Summary\nDo it.\n\n## Changes since the previous version\n- retention: 180 days (@alice)\n"), env); got != ShapePR {
+		t.Errorf("rewritten without the section: shape %q, want pr", got)
 	}
 }
 

@@ -31,7 +31,7 @@ the plan ends with a **Breakdown** (section 4), folded under `<details>`:
 it is the overseer's spec, and says the same as the PR plan. On success the watcher adds `<t>/planned`; the command label
 comes off when the task ends, whatever happened.
 
-**Questions are asked first, where the answer is needed.** When the plan depends on something only a maintainer can decide, the first version asks before it plans: only a short summary of what it understood and a `## Questions` section - each question a task list, the recommended option first, and "Other: answered in a comment" last. Tick a box (or tick Other and reply), then apply `<t>/plan` again: the next version is the plan, with the answers folded in. While a question is open the plan's shape is `questions`, and `<t>/implement` on it gets a comment saying so (`implement-unanswered`) - no sandbox, no graph. A question only one step needs is asked in that step's own sub-issue, not here (section 3).
+**Questions are asked first, where the answer is needed.** When the plan depends on something only a maintainer can decide, the first version asks before it plans: only a short summary of what it understood and a `## Questions` section - each question a task list, the recommended option first, and "Other: answered in a comment" last. While a question is open the issue is labelled `<t>/needs-human` (`plan-asking`). Tick a box (or tick Other and reply) in each question: once every question is answered, the watcher takes `needs-human` off and applies `<t>/plan` itself (`plan-answered`), and the next version is the plan, with the answers folded in. Until that plan is written - the shape is `questions`, then `answered` - `<t>/implement` gets a comment saying so (`implement-unanswered`): no sandbox, no graph. A question only one step needs is asked in that step's own sub-issue, not here (section 3).
 
 To refine it, comment on the plan and apply `<t>/plan` again: the next run
 revises the same comment (v2, v3...) against the comments posted since,
@@ -57,7 +57,7 @@ plan comment when the label is there (`plan: none | pr | graph` in the
 |---|---|---|
 | one PR (no Breakdown) | `implement` | `fix-with-plan` implements the plan - not the issue's text - and opens the PR, ready, saying which plan version it implements and `Fixes #<issue>`. |
 | a Breakdown | `implement-graph` | No task. The watcher labels the issue `<t>/graph`, takes `<t>/implement` off and comments; the graph controller starts the graph (section 3). |
-| still asking (`## Questions` with an unticked question) | `implement-unanswered` | A comment ("answer the questions first"), the label off. |
+| still asking, or answered but not yet rewritten (`## Questions` present) | `implement-unanswered` | A comment ("answer the questions first"), the label off. |
 | none | `implement-unplanned` | A comment ("plan it first"), the label off. |
 
 The plan as it is when the label goes on is the one implemented. Apply

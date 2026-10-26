@@ -34,7 +34,7 @@ func TestWatchRulesTable(t *testing.T) {
 		names = append(names, strings.Fields(l)[0])
 	}
 	// Issues, then PRs, each in the order the engine walks them, then the rest.
-	want := "workflow-missing workflow plan implement implement-graph implement-unplanned implement-unanswered fix inherit-labels inactive comments conflict ci review ready ready-unreview"
+	want := "workflow-missing workflow plan-asking plan-answered plan implement implement-graph implement-unplanned implement-unanswered fix inherit-labels inactive comments conflict ci review ready ready-unreview"
 	if strings.Join(names, " ") != want {
 		t.Errorf("rows = %v, want %s", names, want)
 	}
@@ -59,16 +59,16 @@ func TestWatchRulesYAMLAndJSON(t *testing.T) {
 	if err := json.Unmarshal([]byte(runWatchRules(t, "-o", "json", "--url", "https://github.com/o/r")), &fromJSON); err != nil {
 		t.Fatal(err)
 	}
-	if len(fromYAML) != 16 || len(fromJSON) != 16 {
+	if len(fromYAML) != 18 || len(fromJSON) != 18 {
 		t.Fatalf("yaml %d rules, json %d", len(fromYAML), len(fromJSON))
 	}
-	if fromYAML[7]["name"] != "fix" || fromJSON[7]["name"] != "fix" {
-		t.Errorf("eighth rule = %v / %v", fromYAML[7]["name"], fromJSON[7]["name"])
+	if fromYAML[9]["name"] != "fix" || fromJSON[9]["name"] != "fix" {
+		t.Errorf("tenth rule = %v / %v", fromYAML[9]["name"], fromJSON[9]["name"])
 	}
-	if fromJSON[7]["order"] != float64(20) {
-		t.Errorf("fix order = %v", fromJSON[7]["order"])
+	if fromJSON[9]["order"] != float64(20) {
+		t.Errorf("fix order = %v", fromJSON[9]["order"])
 	}
-	policy := fromJSON[7]["policy"].(map[string]any)
+	policy := fromJSON[9]["policy"].(map[string]any)
 	if cd := policy["cooldown"].(map[string]any); cd["success"] != "10m" {
 		t.Errorf("cooldown = %v", cd)
 	}

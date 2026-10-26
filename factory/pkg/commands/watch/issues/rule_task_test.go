@@ -158,7 +158,7 @@ func TestQueueTasks_CommandLabelRule(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := set.ListingLabels(rules.OnIssue, rules.Env{Trigger: "factory", Prefixes: []string{"overseer", "factory"}}); !slices.Equal(got, []string{"factory/implement", "factory/plan", "factory/triage"}) {
+	if got := set.ListingLabels(rules.OnIssue, rules.Env{Trigger: "factory", Prefixes: []string{"overseer", "factory"}}); !slices.Equal(got, []string{"factory/implement", "factory/plan", "factory/planned", "factory/triage"}) {
 		t.Errorf("issues listed by %v, want the built-in plan flow's and triage's", got)
 	}
 	control, err := rules.NewControl(nil, set)

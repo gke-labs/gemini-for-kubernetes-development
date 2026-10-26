@@ -38,6 +38,7 @@ func TestQueueTasks_ImplementByPlanShape(t *testing.T) {
 	const marker = "\n<!-- factory:comment key=plan v=2 -->"
 	onePR := "**Implementation plan** · v2\n\n## Steps\n1. Do it." + marker
 	breakdown := "**Implementation plan** · v2\n\n## Breakdown\n```yaml graph\nsteps:\n  - {id: a, title: A, body: a}\n```" + marker
+	answered := "**Implementation plan** · v1\n\n## Summary\nWhat I understood.\n\n## Questions\n\n**Keep task folders how long?**\n- [x] 180 days\n- [ ] Forever\n" + marker
 	asking := "**Implementation plan** · v1\n\n## Summary\nWhat I understood.\n\n## Questions\n\n**Keep task folders how long?**\n- [ ] 180 days\n- [ ] Forever\n" + marker
 	type comment struct{ login, assoc, body string }
 	for _, tc := range []struct {
@@ -51,7 +52,12 @@ func TestQueueTasks_ImplementByPlanShape(t *testing.T) {
 		{"a one-PR plan", []comment{{"bot1", "NONE", onePR}}, "task-issue-7-rule-implement.yaml", nil, false, ""},
 		{"a plan with a Breakdown", []comment{{"bot1", "NONE", breakdown}}, "", []string{"factory/graph"}, true, "as an issue graph"},
 		{"no plan", nil, "", nil, true, "no plan to implement"},
-		{"a plan still asking", []comment{{"bot1", "NONE", asking}}, "", nil, true, "still has open questions"},
+		// planned and still asking: implement-unanswered takes the label
+		// off, and plan-asking labels it needs-human.
+		{"a plan still asking", []comment{{"bot1", "NONE", asking}}, "", []string{"factory/needs-human"}, true, "still asking questions"},
+		// planned and every question ticked: plan-answered asks for the
+		// plan again (and implement-unanswered still refuses implement).
+		{"a plan answered, not yet rewritten", []comment{{"bot1", "NONE", answered}}, "task-issue-7-rule-plan.yaml", []string{"factory/plan"}, true, "still asking questions"},
 		{"only an outsider's plan", []comment{{"mallory", "NONE", breakdown}}, "", nil, true, "no plan to implement"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -116,7 +122,8 @@ func TestQueueTasks_ImplementByPlanShape(t *testing.T) {
 				t.Fatalf("queued %v, want %q", queued, tc.task)
 			}
 			if tc.task != "" {
-				if task := queue.enqueued[tc.task]; task.Recipe != "fix-with-plan" || task.Apply != "open-pr" {
+				want := map[string]string{"task-issue-7-rule-implement.yaml": "fix-with-plan", "task-issue-7-rule-plan.yaml": "plan"}[tc.task]
+				if task := queue.enqueued[tc.task]; task.Recipe != want {
 					t.Errorf("task = %+v", task)
 				}
 			}
