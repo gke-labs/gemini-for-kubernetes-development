@@ -38,6 +38,7 @@ func TestQueueTasks_ImplementByPlanShape(t *testing.T) {
 	const marker = "\n<!-- factory:comment key=plan v=2 -->"
 	onePR := "**Implementation plan** · v2\n\n## Steps\n1. Do it." + marker
 	breakdown := "**Implementation plan** · v2\n\n## Breakdown\n```yaml graph\nsteps:\n  - {id: a, title: A, body: a}\n```" + marker
+	asking := "**Implementation plan** · v1\n\n## Summary\nWhat I understood.\n\n## Questions\n\n**Keep task folders how long?**\n- [ ] 180 days\n- [ ] Forever\n" + marker
 	type comment struct{ login, assoc, body string }
 	for _, tc := range []struct {
 		name      string
@@ -50,6 +51,7 @@ func TestQueueTasks_ImplementByPlanShape(t *testing.T) {
 		{"a one-PR plan", []comment{{"bot1", "NONE", onePR}}, "task-issue-7-rule-implement.yaml", nil, false, ""},
 		{"a plan with a Breakdown", []comment{{"bot1", "NONE", breakdown}}, "", []string{"factory/graph"}, true, "as an issue graph"},
 		{"no plan", nil, "", nil, true, "no plan to implement"},
+		{"a plan still asking", []comment{{"bot1", "NONE", asking}}, "", nil, true, "still has open questions"},
 		{"only an outsider's plan", []comment{{"mallory", "NONE", breakdown}}, "", nil, true, "no plan to implement"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

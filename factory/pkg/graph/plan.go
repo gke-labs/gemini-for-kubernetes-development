@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"slices"
 	"strconv"
+	"strings"
 
 	githubv39 "github.com/google/go-github/v39/github"
 
@@ -73,6 +74,10 @@ func trustedPlanComment(comments []*githubv39.IssueComment, env rules.Env) (*git
 const (
 	ShapePR    = "pr"
 	ShapeGraph = "graph"
+	// ShapeQuestions is a plan still asking: its ## Questions section has
+	// a question no box of which is ticked. It is not ready to implement,
+	// whatever else it holds.
+	ShapeQuestions = "questions"
 )
 
 // PlanShape is the shape of an issue's plan, the rules' plan fact: graph
@@ -84,11 +89,64 @@ func PlanShape(comments []*githubv39.IssueComment, env rules.Env) string {
 	switch {
 	case found == nil:
 		return ""
+	case len(OpenQuestions(found.GetBody())) > 0:
+		return ShapeQuestions
 	case HasPlanBlock(found.GetBody()):
 		return ShapeGraph
 	}
 	return ShapePR
 }
+
+// OpenQuestions are the questions of markdown's ## Questions section that
+// no one has answered: each question is a task list (a maintainer ticks
+// one box, or ticks "Other" and replies), and one with no box ticked is
+// open. A question is named by the text line before its task list.
+func OpenQuestions(markdown string) []string {
+	var open []string
+	in, title := false, ""
+	ticked, boxes := false, 0
+	flush := func() {
+		if boxes > 0 && !ticked {
+			if title == "" {
+				title = "a question"
+			}
+			open = append(open, title)
+		}
+		ticked, boxes = false, 0
+	}
+	for _, line := range strings.Split(markdown, "\n") {
+		trimmed := strings.TrimSpace(strings.TrimRight(line, "\r"))
+		if strings.HasPrefix(trimmed, "## ") || strings.HasPrefix(trimmed, "# ") {
+			if in {
+				flush()
+			}
+			in = strings.EqualFold(strings.TrimSpace(strings.TrimLeft(trimmed, "#")), "Questions")
+			title = ""
+			continue
+		}
+		if !in {
+			continue
+		}
+		if m := taskBoxRE.FindStringSubmatch(trimmed); m != nil {
+			boxes++
+			ticked = ticked || m[1] != " "
+			continue
+		}
+		if boxes > 0 {
+			flush()
+		}
+		if trimmed != "" && !strings.HasPrefix(trimmed, "<!--") {
+			title = strings.TrimSpace(strings.Trim(trimmed, "*"))
+		}
+	}
+	if in {
+		flush()
+	}
+	return open
+}
+
+// taskBoxRE is a task list item: "- [ ]", "- [x]", "* [X]".
+var taskBoxRE = regexp.MustCompile(`^[-*] \[( |x|X)\]`)
 
 // HasPlanBlock is whether markdown has a `yaml graph` block.
 func HasPlanBlock(markdown string) bool {

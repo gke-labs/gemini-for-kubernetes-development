@@ -14,7 +14,7 @@ func TestBuiltinRulesParseAndValidate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Builtin: %v", err)
 	}
-	want := []string{"ci", "comments", "conflict", "fix", "implement", "implement-graph", "implement-unplanned", "inactive",
+	want := []string{"ci", "comments", "conflict", "fix", "implement", "implement-graph", "implement-unanswered", "implement-unplanned", "inactive",
 		"inherit-labels", "plan", "ready", "ready-unreview", "review", "workflow", "workflow-missing"}
 	var got []string
 	for _, r := range set {
@@ -25,7 +25,7 @@ func TestBuiltinRulesParseAndValidate(t *testing.T) {
 	}
 	// Each file says what code it mirrors; the plan flow's, which mirror
 	// none (they were born rules), say what they do.
-	native := []string{"plan.yaml", "implement.yaml", "implement-graph.yaml", "implement-unplanned.yaml"}
+	native := []string{"plan.yaml", "implement.yaml", "implement-graph.yaml", "implement-unplanned.yaml", "implement-unanswered.yaml"}
 	entries, _ := builtinFS.ReadDir(".")
 	for _, e := range entries {
 		data, _ := builtinFS.ReadFile(e.Name())

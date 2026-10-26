@@ -182,7 +182,7 @@ type When struct {
 	// by a trusted author kind - none, pr (one PR) or graph (a Breakdown,
 	// a `yaml graph` block: design/issue-graph-plans.md). A read of its
 	// own, made only for a rule that asks (Set.Needs).
-	Plan string `yaml:"plan,omitempty" json:"plan,omitempty"` // none | pr | graph
+	Plan string `yaml:"plan,omitempty" json:"plan,omitempty"` // none | pr | graph | questions (still asking)
 
 	// Pull requests.
 	Checks    string `yaml:"checks,omitempty" json:"checks,omitempty"` // failing | pending | green
@@ -443,7 +443,7 @@ var enums = map[string][]string{
 	"author":       {AuthorPool, AuthorOwner, AuthorMember, AuthorCollaborator, AuthorExternal},
 	"linked-pr":    {"none", "open"},
 	"connected-pr": {"none", "open"},
-	"plan":         {"none", "pr", "graph"},
+	"plan":         {"none", "pr", "graph", "questions"},
 	"workflow":     {"none", "any", "missing"},
 	"opened-by":    {"watcher"},
 	"checks":       {"failing", "pending", "green"},

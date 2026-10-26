@@ -65,39 +65,8 @@ start:
         key: plan
         authors: pool, owner, member, collaborator
         to: plan.md
-    # A plan with an open question (its ## Questions section: a task list
-    # with no box ticked) is not ready: no agent runs, and the Change is a
-    # comment naming the questions to answer before implementing.
-    - run: |
-        python3 - "$TASK_DIR/plan.md" "$TASK_DIR" <<'PY'
-        import json, os, re, sys
-        text = open(sys.argv[1]).read()
-        m = re.search(r"^## Questions[ \t]*\n(.*?)(?=^## |\Z)", text, re.M | re.S)
-        groups, title, opts = [], "", []
-        for line in (m.group(1).splitlines() if m else []) + [""]:
-            box = re.match(r"\s*[-*] \[( |x|X)\]", line)
-            if box:
-                opts.append(box.group(1) != " ")
-                continue
-            if opts:
-                groups.append((title, any(opts)))
-                opts = []
-            if line.strip():
-                title = line.strip().strip("*").strip()
-        open_qs = [t or "a question" for t, answered in groups if not answered]
-        if open_qs:
-            body = ("This plan still has open questions, so it was not implemented:\n\n"
-                    + "\n".join("- " + q for q in open_qs)
-                    + "\n\nAnswer them in the plan comment (tick an option, or tick Other and reply), "
-                    "apply the plan label to fold the answers in, then apply the implement label again.")
-            open(os.path.join(sys.argv[2], "change.yaml"), "w").write("change:\n  comment: " + json.dumps(body) + "\n")
-            open(os.path.join(sys.argv[2], "plan-open"), "w").write("open")
-        else:
-            open(os.path.join(sys.argv[2], "plan-open"), "w").write("")
-        PY
 
-    - if: '{{ eq (file "plan-open") "" }}'
-      ask: |
+    - ask: |
         Implement the approved plan for this GitHub issue, and commit it.
 
         <issue_url>{{ .Inputs.issue_url }}</issue_url>
@@ -164,8 +133,7 @@ start:
         rationale behind your changes, and the alternatives you
         considered. This summary is for the human reviewer.
 
-    - if: '{{ eq (file "plan-open") "" }}'
-      ask: |
+    - ask: |
         Now write the pull request's title and description to the file
         {{ output "change.yaml" }}, as YAML in EXACTLY this structure, with
         nothing else in the file:
@@ -211,8 +179,7 @@ start:
         written.
       expects: change.yaml
 
-    - if: '{{ eq (file "plan-open") "" }}'
-      uses: push
+    - uses: push
 
 outputs:
   - change.yaml
