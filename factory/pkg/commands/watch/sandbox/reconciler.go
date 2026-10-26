@@ -1,15 +1,22 @@
 package sandbox
 
 import (
+	"bufio"
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/common"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/concurrency"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/conventions"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
 	factorysandbox "github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/sandbox"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/tokenusage"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/usagereport"
 	githubv39 "github.com/google/go-github/v39/github"
 	corev1 "k8s.io/api/core/v1"
@@ -88,6 +95,11 @@ type Config struct {
 	IdleTimeout time.Duration
 	// DryRun reports what would be cleaned up without mutating the cluster.
 	DryRun bool
+	// TrustedLogins are additional GitHub logins to treat as trusted authors
+	// for human feedback capture.
+	TrustedLogins []string
+	// ReviewerLogins are the accounts configured in the reviewer role.
+	ReviewerLogins []string
 }
 
 // Deps holds the collaborators of a Reconciler.
@@ -435,6 +447,7 @@ func (r *Reconciler) deleteClosedPRSandbox(ctx context.Context, item *unstructur
 	meta.Issues = common.ReferencedIssueList(pr)
 	usagereport.HarvestSandbox(ctx, r.sandboxes.namespace, name, meta)
 	usagereport.ReportPRSubject(ctx, r.repoSlug(), pr)
+	r.captureAndUploadFeedback(ctx, pr, name, num)
 	if err := r.sandboxes.Delete(ctx, name); err != nil {
 		klog.Errorf("Failed to delete sandbox '%s' for closed PR #%d: %v", name, num, err)
 		return false
@@ -745,4 +758,349 @@ func ParseEvictionAge(ageStr string) (time.Duration, error) {
 	}
 
 	return time.ParseDuration(ageStr)
+}
+
+func (r *Reconciler) captureAndUploadFeedback(ctx context.Context, pr *githubv39.PullRequest, sandboxName string, num int) {
+	items := r.captureFeedback(ctx, pr, sandboxName, num)
+	if len(items) == 0 {
+		return
+	}
+
+	var buf bytes.Buffer
+	for _, item := range items {
+		data, err := json.Marshal(item)
+		if err != nil {
+			continue
+		}
+		buf.Write(data)
+		buf.WriteByte('\n')
+	}
+
+	if err := usagereport.ReportPRFeedback(ctx, r.sandboxes.owner, r.sandboxes.repo, num, buf.Bytes()); err != nil {
+		klog.Warningf("reconciler: uploading feedback for PR #%d: %v", num, err)
+	}
+}
+
+func (r *Reconciler) captureFeedback(ctx context.Context, pr *githubv39.PullRequest, sandboxName string, num int) []tokenusage.FeedbackItem {
+	gh := r.sandboxes.gh
+	if gh == nil {
+		return nil
+	}
+	client := github.ForRepo(gh, r.sandboxes.owner, r.sandboxes.repo)
+
+	reviews, err := client.ListReviews(ctx, num)
+	if err != nil {
+		klog.Warningf("reconciler: listing reviews for PR #%d feedback: %v", num, err)
+	}
+	inlineComments, err := client.ListAllReviewComments(ctx, num)
+	if err != nil {
+		klog.Warningf("reconciler: listing review comments for PR #%d feedback: %v", num, err)
+	}
+	issueComments, err := client.ListIssueComments(ctx, num)
+	if err != nil {
+		klog.Warningf("reconciler: listing issue comments for PR #%d feedback: %v", num, err)
+	}
+	commits, err := client.ListCommits(ctx, num)
+	if err != nil {
+		klog.V(2).Infof("reconciler: listing commits for PR #%d feedback: %v", num, err)
+	}
+
+	type botReviewInfo struct {
+		head        string
+		submittedAt time.Time
+		raised      map[string]bool
+	}
+	var botReviews []botReviewInfo
+	for _, rev := range reviews {
+		if !conventions.IsReviewerBot(rev.GetUser(), r.cfg.ReviewerLogins) {
+			continue
+		}
+		subAt := rev.GetSubmittedAt()
+		bHead := rev.GetCommitID()
+		if bHead == "" {
+			bHead = headAt(commits, subAt, pr.GetHead().GetSHA())
+		}
+		info := botReviewInfo{
+			head:        bHead,
+			submittedAt: subAt,
+			raised:      make(map[string]bool),
+		}
+		for _, ic := range inlineComments {
+			if conventions.IsReviewerBot(ic.GetUser(), r.cfg.ReviewerLogins) &&
+				(ic.GetCommitID() == bHead || ic.GetPullRequestReviewID() == rev.GetID()) {
+				p := ic.GetPath()
+				l := ic.GetLine()
+				if l == 0 {
+					l = ic.GetOriginalLine()
+				}
+				info.raised[p] = true
+				if l > 0 {
+					info.raised[fmt.Sprintf("%s:%d", p, l)] = true
+				}
+			}
+		}
+		botReviews = append(botReviews, info)
+	}
+
+	isAfterBotReview := func(head, path string, line int, at time.Time, isInline bool) bool {
+		var reviewed bool
+		for _, br := range botReviews {
+			if br.head == head && !br.submittedAt.After(at) {
+				reviewed = true
+				if isInline && path != "" {
+					key := fmt.Sprintf("%s:%d", path, line)
+					if br.raised[key] || (line == 0 && br.raised[path]) {
+						return false
+					}
+				}
+			}
+		}
+		return reviewed
+	}
+
+	var items []tokenusage.FeedbackItem
+
+	for _, rev := range reviews {
+		if !isTrustedHuman(rev.GetUser(), rev.GetAuthorAssociation(), r.cfg.TrustedLogins) {
+			continue
+		}
+		if rev.GetBody() == "" && rev.GetState() == "COMMENTED" {
+			continue
+		}
+		t := rev.GetSubmittedAt()
+		head := rev.GetCommitID()
+		if head == "" {
+			head = headAt(commits, t, pr.GetHead().GetSHA())
+		}
+		items = append(items, tokenusage.FeedbackItem{
+			Author:         rev.GetUser().GetLogin(),
+			Kind:           "review",
+			State:          rev.GetState(),
+			Body:           rev.GetBody(),
+			At:             t.UTC().Format(time.RFC3339),
+			Head:           head,
+			AfterBotReview: isAfterBotReview(head, "", 0, t, false),
+		})
+	}
+
+	for _, ic := range inlineComments {
+		if !isTrustedHuman(ic.GetUser(), ic.GetAuthorAssociation(), r.cfg.TrustedLogins) {
+			continue
+		}
+		t := ic.GetCreatedAt()
+		head := ic.GetCommitID()
+		if head == "" {
+			head = headAt(commits, t, pr.GetHead().GetSHA())
+		}
+		line := ic.GetLine()
+		if line == 0 {
+			line = ic.GetOriginalLine()
+		}
+		items = append(items, tokenusage.FeedbackItem{
+			Author:         ic.GetUser().GetLogin(),
+			Kind:           "inline",
+			Path:           ic.GetPath(),
+			Line:           line,
+			InReplyTo:      ic.GetInReplyTo(),
+			Body:           ic.GetBody(),
+			At:             t.UTC().Format(time.RFC3339),
+			Head:           head,
+			AfterBotReview: isAfterBotReview(head, ic.GetPath(), line, t, true),
+		})
+	}
+
+	for _, ic := range issueComments {
+		if !isTrustedHuman(ic.GetUser(), ic.GetAuthorAssociation(), r.cfg.TrustedLogins) {
+			continue
+		}
+		t := ic.GetCreatedAt()
+		head := headAt(commits, t, pr.GetHead().GetSHA())
+		items = append(items, tokenusage.FeedbackItem{
+			Author:         ic.GetUser().GetLogin(),
+			Kind:           "comment",
+			Body:           ic.GetBody(),
+			At:             t.UTC().Format(time.RFC3339),
+			Head:           head,
+			AfterBotReview: isAfterBotReview(head, "", 0, t, false),
+		})
+	}
+
+	r.determineAnsweredBy(ctx, sandboxName, items)
+
+	sort.Slice(items, func(i, j int) bool {
+		return items[i].At < items[j].At
+	})
+
+	return items
+}
+
+func (r *Reconciler) determineAnsweredBy(ctx context.Context, sandboxName string, items []tokenusage.FeedbackItem) {
+	if len(items) == 0 {
+		return
+	}
+	sb, err := connectTasks(ctx, r.sandboxes.namespace, sandboxName)
+	if err != nil {
+		klog.V(2).Infof("reconciler: cannot reach task server for sandbox %s: %v", sandboxName, err)
+		return
+	}
+	defer sb.Close()
+
+	entries, err := sb.List(ctx)
+	if err != nil {
+		klog.V(2).Infof("reconciler: listing tasks for sandbox %s: %v", sandboxName, err)
+		return
+	}
+
+	type careTaskInfo struct {
+		id      string
+		outcome string
+		bodies  map[string]bool
+	}
+	var careTasks []careTaskInfo
+
+	for _, entry := range entries {
+		taskID := entry.ID
+		if !strings.Contains(taskID, "care") {
+			continue
+		}
+		outcome := "nothing"
+		pushData, err := sb.ReadFile(ctx, taskID, "push.json")
+		if err == nil && len(pushData) > 0 {
+			var push struct {
+				Unchanged bool   `json:"unchanged"`
+				Head      string `json:"head"`
+			}
+			if err := json.Unmarshal(pushData, &push); err == nil && !push.Unchanged && push.Head != "" {
+				outcome = "fixed"
+			}
+		}
+		if outcome != "fixed" {
+			if hasReply(ctx, sb, taskID) {
+				outcome = "replied"
+			}
+		}
+
+		bodies := make(map[string]bool)
+		for _, fname := range []string{
+			"comments.jsonl",
+			"comments/comments.jsonl",
+			"comments/review-comments.jsonl",
+			"comments/reviews.jsonl",
+		} {
+			data, err := sb.ReadFile(ctx, taskID, fname)
+			if err != nil || len(data) == 0 {
+				continue
+			}
+			scanner := bufio.NewScanner(bytes.NewReader(data))
+			for scanner.Scan() {
+				line := scanner.Bytes()
+				var c struct {
+					Body string `json:"body"`
+				}
+				if err := json.Unmarshal(line, &c); err == nil {
+					if b := strings.TrimSpace(c.Body); b != "" {
+						bodies[b] = true
+					}
+				}
+			}
+		}
+
+		if len(bodies) > 0 {
+			careTasks = append(careTasks, careTaskInfo{
+				id:      taskID,
+				outcome: outcome,
+				bodies:  bodies,
+			})
+		}
+	}
+
+	for i := range items {
+		b := strings.TrimSpace(items[i].Body)
+		if b == "" {
+			continue
+		}
+		for _, ct := range careTasks {
+			if ct.bodies[b] {
+				items[i].AnsweredBy = &tokenusage.AnsweredBy{
+					Task:    ct.id,
+					Outcome: ct.outcome,
+				}
+				break
+			}
+		}
+	}
+}
+
+func hasReply(ctx context.Context, sb taskServer, taskID string) bool {
+	for _, f := range []string{"execution.log", "session/stream.ndjson", "comments/reply.json"} {
+		data, err := sb.ReadFile(ctx, taskID, f)
+		if err == nil && len(data) > 0 {
+			s := string(data)
+			if strings.Contains(s, "/replies") || strings.Contains(s, "CreateComment") || strings.Contains(s, "reply") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func isTrustedHuman(user *githubv39.User, association string, trustedLogins []string) bool {
+	if user == nil {
+		return false
+	}
+	login := user.GetLogin()
+	if login == "" {
+		return false
+	}
+	if strings.EqualFold(user.GetType(), "Bot") {
+		return false
+	}
+	loginLower := strings.ToLower(login)
+	if strings.HasSuffix(loginLower, "[bot]") ||
+		strings.HasSuffix(loginLower, "-bot") ||
+		strings.HasSuffix(loginLower, "-robot") ||
+		strings.Contains(loginLower, "prow") {
+		return false
+	}
+
+	assoc := strings.ToUpper(association)
+	if assoc == "OWNER" || assoc == "MEMBER" || assoc == "COLLABORATOR" {
+		return true
+	}
+	for _, t := range trustedLogins {
+		if strings.EqualFold(login, t) {
+			return true
+		}
+	}
+	return false
+}
+
+func headAt(commits []*githubv39.RepositoryCommit, t time.Time, fallbackHead string) string {
+	if len(commits) == 0 {
+		return fallbackHead
+	}
+	var active string
+	for _, c := range commits {
+		cTime := commitTime(c)
+		if !cTime.After(t) || active == "" {
+			active = c.GetSHA()
+		}
+	}
+	if active != "" {
+		return active
+	}
+	return fallbackHead
+}
+
+func commitTime(c *githubv39.RepositoryCommit) time.Time {
+	if c == nil || c.GetCommit() == nil {
+		return time.Time{}
+	}
+	if committer := c.GetCommit().GetCommitter(); committer != nil && !committer.GetDate().IsZero() {
+		return committer.GetDate()
+	}
+	if author := c.GetCommit().GetAuthor(); author != nil && !author.GetDate().IsZero() {
+		return author.GetDate()
+	}
+	return time.Time{}
 }

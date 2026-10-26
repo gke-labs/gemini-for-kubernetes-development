@@ -3,6 +3,8 @@ package sandbox
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -15,6 +17,8 @@ import (
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/concurrency"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/k8s"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/spool"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/tokenusage"
 	githubv39 "github.com/google/go-github/v39/github"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -883,5 +887,488 @@ func TestCollectGarbageNotifiesWhyClosedOnUnmergedPR(t *testing.T) {
 	}
 	if why.polled != 1 {
 		t.Errorf("expected Poll to be called once, got %d", why.polled)
+	}
+}
+
+func TestCaptureFeedbackFiltering(t *testing.T) {
+	mux := http.NewServeMux()
+
+	prNum := 80
+	headSHA := "abc1234"
+
+	mux.HandleFunc(fmt.Sprintf("/repos/test-owner/test-repo/pulls/%d", prNum), func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"number": prNum,
+			"state":  "closed",
+			"head":   map[string]string{"sha": headSHA},
+		})
+	})
+
+	mux.HandleFunc(fmt.Sprintf("/repos/test-owner/test-repo/pulls/%d/commits", prNum), func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode([]map[string]interface{}{
+			{"sha": headSHA, "commit": map[string]interface{}{
+				"committer": map[string]string{"date": "2026-10-26T10:00:00Z"},
+			}},
+		})
+	})
+
+	// Reviews
+	mux.HandleFunc(fmt.Sprintf("/repos/test-owner/test-repo/pulls/%d/reviews", prNum), func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode([]map[string]interface{}{
+			{
+				"id":                 int64(1001),
+				"user":               map[string]string{"login": "alice", "type": "User"},
+				"author_association": "MEMBER",
+				"state":              "CHANGES_REQUESTED",
+				"body":               "Please fix nil check",
+				"submitted_at":       "2026-10-26T12:00:00Z",
+				"commit_id":          headSHA,
+			},
+			{
+				"id":                 int64(1002),
+				"user":               map[string]string{"login": "dependabot[bot]", "type": "Bot"},
+				"author_association": "NONE",
+				"state":              "COMMENTED",
+				"body":               "Automated bump",
+				"submitted_at":       "2026-10-26T11:00:00Z",
+				"commit_id":          headSHA,
+			},
+		})
+	})
+
+	// Inline comments
+	mux.HandleFunc(fmt.Sprintf("/repos/test-owner/test-repo/pulls/%d/comments", prNum), func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode([]map[string]interface{}{
+			{
+				"id":                 int64(2001),
+				"user":               map[string]string{"login": "bob", "type": "User"},
+				"author_association": "COLLABORATOR",
+				"path":               "pkg/foo.go",
+				"line":               42,
+				"in_reply_to_id":     int64(0),
+				"body":               "Inline comment from Bob",
+				"created_at":         "2026-10-26T12:05:00Z",
+				"commit_id":          headSHA,
+			},
+			{
+				"id":                 int64(2002),
+				"user":               map[string]string{"login": "eve", "type": "User"},
+				"author_association": "NONE",
+				"path":               "pkg/foo.go",
+				"line":               42,
+				"body":               "Spam comment from untrusted Eve",
+				"created_at":         "2026-10-26T12:06:00Z",
+				"commit_id":          headSHA,
+			},
+			{
+				"id":                 int64(2003),
+				"user":               map[string]string{"login": "spock-watcher-bot", "type": "User"},
+				"author_association": "COLLABORATOR",
+				"path":               "pkg/foo.go",
+				"line":               42,
+				"body":               "Bot reply",
+				"created_at":         "2026-10-26T12:07:00Z",
+				"commit_id":          headSHA,
+			},
+		})
+	})
+
+	// Issue comments
+	mux.HandleFunc(fmt.Sprintf("/repos/test-owner/test-repo/issues/%d/comments", prNum), func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode([]map[string]interface{}{
+			{
+				"id":                 int64(3001),
+				"user":               map[string]string{"login": "charlie", "type": "User"},
+				"author_association": "NONE",
+				"body":               "Issue comment from trusted login Charlie",
+				"created_at":         "2026-10-26T12:10:00Z",
+			},
+		})
+	})
+
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	client := githubv39.NewClient(nil)
+	client.BaseURL, _ = url.Parse(srv.URL + "/")
+
+	r := New(Config{
+		TrustedLogins: []string{"charlie"},
+	}, Deps{
+		Sandboxes: NewService(ServiceConfig{Namespace: testNamespace, Owner: "test-owner", Repo: "test-repo"}, ServiceDeps{
+			GitHub: client,
+		}),
+	})
+
+	pr := &githubv39.PullRequest{
+		Number: githubv39.Int(prNum),
+		State:  githubv39.String("closed"),
+		Head:   &githubv39.PullRequestBranch{SHA: githubv39.String(headSHA)},
+	}
+
+	items := r.captureFeedback(context.Background(), pr, "factory-pr-80", prNum)
+
+	if len(items) != 3 {
+		t.Fatalf("expected 3 feedback items, got %d: %+v", len(items), items)
+	}
+
+	// 1. Alice's review
+	if items[0].Author != "alice" || items[0].Kind != "review" || items[0].State != "CHANGES_REQUESTED" || items[0].Body != "Please fix nil check" || items[0].Head != headSHA {
+		t.Errorf("unexpected item 0: %+v", items[0])
+	}
+	// 2. Bob's inline comment
+	if items[1].Author != "bob" || items[1].Kind != "inline" || items[1].Path != "pkg/foo.go" || items[1].Line != 42 || items[1].Body != "Inline comment from Bob" {
+		t.Errorf("unexpected item 1: %+v", items[1])
+	}
+	// 3. Charlie's issue comment
+	if items[2].Author != "charlie" || items[2].Kind != "comment" || items[2].Body != "Issue comment from trusted login Charlie" {
+		t.Errorf("unexpected item 2: %+v", items[2])
+	}
+}
+
+func TestCaptureFeedbackAfterBotReview(t *testing.T) {
+	mux := http.NewServeMux()
+	prNum := 81
+	headSHA := "commit-1"
+	botReviewTime := "2026-10-26T11:00:00Z"
+
+	mux.HandleFunc(fmt.Sprintf("/repos/test-owner/test-repo/pulls/%d", prNum), func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"number": prNum,
+			"state":  "closed",
+			"head":   map[string]string{"sha": headSHA},
+		})
+	})
+	mux.HandleFunc(fmt.Sprintf("/repos/test-owner/test-repo/pulls/%d/commits", prNum), func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode([]map[string]interface{}{
+			{"sha": headSHA, "commit": map[string]interface{}{
+				"committer": map[string]string{"date": "2026-10-26T10:00:00Z"},
+			}},
+		})
+	})
+
+	// Bot reviewed headSHA at 11:00 and commented on pkg/raised.go line 10
+	mux.HandleFunc(fmt.Sprintf("/repos/test-owner/test-repo/pulls/%d/reviews", prNum), func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode([]map[string]interface{}{
+			{
+				"id":                 int64(500),
+				"user":               map[string]string{"login": "reviewbot", "type": "User"},
+				"author_association": "COLLABORATOR",
+				"state":              "CHANGES_REQUESTED",
+				"body":               "Bot review comments",
+				"submitted_at":       botReviewTime,
+				"commit_id":          headSHA,
+			},
+		})
+	})
+
+	mux.HandleFunc(fmt.Sprintf("/repos/test-owner/test-repo/pulls/%d/comments", prNum), func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode([]map[string]interface{}{
+			// Bot comment on pkg/raised.go:10
+			{
+				"id":                     int64(501),
+				"user":                   map[string]string{"login": "reviewbot", "type": "User"},
+				"path":                   "pkg/raised.go",
+				"line":                   10,
+				"body":                   "Bot raised point",
+				"created_at":             "2026-10-26T11:00:00Z",
+				"commit_id":              headSHA,
+				"pull_request_review_id": int64(500),
+			},
+			// Human comment on pkg/raised.go:10 after bot review -> bot raised it -> afterBotReview = false
+			{
+				"id":                 int64(502),
+				"user":               map[string]string{"login": "alice", "type": "User"},
+				"author_association": "MEMBER",
+				"path":               "pkg/raised.go",
+				"line":               10,
+				"body":               "Human agree on raised",
+				"created_at":         "2026-10-26T12:00:00Z",
+				"commit_id":          headSHA,
+			},
+			// Human comment on pkg/missed.go:20 after bot review -> bot did not raise -> afterBotReview = true
+			{
+				"id":                 int64(503),
+				"user":               map[string]string{"login": "alice", "type": "User"},
+				"author_association": "MEMBER",
+				"path":               "pkg/missed.go",
+				"line":               20,
+				"body":               "Human on missed file",
+				"created_at":         "2026-10-26T12:01:00Z",
+				"commit_id":          headSHA,
+			},
+			// Human comment BEFORE bot review -> afterBotReview = false
+			{
+				"id":                 int64(504),
+				"user":               map[string]string{"login": "alice", "type": "User"},
+				"author_association": "MEMBER",
+				"path":               "pkg/early.go",
+				"line":               30,
+				"body":               "Human before bot review",
+				"created_at":         "2026-10-26T10:30:00Z",
+				"commit_id":          headSHA,
+			},
+		})
+	})
+
+	mux.HandleFunc(fmt.Sprintf("/repos/test-owner/test-repo/issues/%d/comments", prNum), func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode([]map[string]interface{}{
+			// General comment after bot review -> afterBotReview = true
+			{
+				"id":                 int64(505),
+				"user":               map[string]string{"login": "alice", "type": "User"},
+				"author_association": "MEMBER",
+				"body":               "General comment after bot review",
+				"created_at":         "2026-10-26T12:02:00Z",
+			},
+		})
+	})
+
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	client := githubv39.NewClient(nil)
+	client.BaseURL, _ = url.Parse(srv.URL + "/")
+
+	r := New(Config{
+		ReviewerLogins: []string{"reviewbot"},
+	}, Deps{
+		Sandboxes: NewService(ServiceConfig{Namespace: testNamespace, Owner: "test-owner", Repo: "test-repo"}, ServiceDeps{
+			GitHub: client,
+		}),
+	})
+
+	pr := &githubv39.PullRequest{
+		Number: githubv39.Int(prNum),
+		State:  githubv39.String("closed"),
+		Head:   &githubv39.PullRequestBranch{SHA: githubv39.String(headSHA)},
+	}
+
+	items := r.captureFeedback(context.Background(), pr, "factory-pr-81", prNum)
+
+	itemByBody := make(map[string]bool)
+	for _, it := range items {
+		itemByBody[it.Body] = it.AfterBotReview
+	}
+
+	if got := itemByBody["Human agree on raised"]; got != false {
+		t.Errorf("expected afterBotReview=false for comment bot already raised, got %v", got)
+	}
+	if got := itemByBody["Human on missed file"]; got != true {
+		t.Errorf("expected afterBotReview=true for comment bot missed, got %v", got)
+	}
+	if got := itemByBody["Human before bot review"]; got != false {
+		t.Errorf("expected afterBotReview=false for comment before bot reviewed, got %v", got)
+	}
+	if got := itemByBody["General comment after bot review"]; got != true {
+		t.Errorf("expected afterBotReview=true for general comment after bot review, got %v", got)
+	}
+}
+
+func TestCaptureFeedbackAnsweredBy(t *testing.T) {
+	mux := http.NewServeMux()
+	prNum := 82
+	headSHA := "commit-1"
+
+	mux.HandleFunc(fmt.Sprintf("/repos/test-owner/test-repo/pulls/%d", prNum), func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"number": prNum,
+			"state":  "closed",
+			"head":   map[string]string{"sha": headSHA},
+		})
+	})
+	mux.HandleFunc(fmt.Sprintf("/repos/test-owner/test-repo/pulls/%d/commits", prNum), func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode([]map[string]interface{}{
+			{"sha": headSHA, "commit": map[string]interface{}{
+				"committer": map[string]string{"date": "2026-10-26T10:00:00Z"},
+			}},
+		})
+	})
+	mux.HandleFunc(fmt.Sprintf("/repos/test-owner/test-repo/pulls/%d/reviews", prNum), func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode([]map[string]interface{}{})
+	})
+	mux.HandleFunc(fmt.Sprintf("/repos/test-owner/test-repo/pulls/%d/comments", prNum), func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode([]map[string]interface{}{
+			{
+				"id":                 int64(601),
+				"user":               map[string]string{"login": "alice", "type": "User"},
+				"author_association": "MEMBER",
+				"path":               "pkg/foo.go",
+				"line":               10,
+				"body":               "Fix this bug",
+				"created_at":         "2026-10-26T12:00:00Z",
+				"commit_id":          headSHA,
+			},
+			{
+				"id":                 int64(602),
+				"user":               map[string]string{"login": "alice", "type": "User"},
+				"author_association": "MEMBER",
+				"path":               "pkg/bar.go",
+				"line":               20,
+				"body":               "Why this approach?",
+				"created_at":         "2026-10-26T12:01:00Z",
+				"commit_id":          headSHA,
+			},
+			{
+				"id":                 int64(603),
+				"user":               map[string]string{"login": "alice", "type": "User"},
+				"author_association": "MEMBER",
+				"path":               "pkg/baz.go",
+				"line":               30,
+				"body":               "Unanswered comment",
+				"created_at":         "2026-10-26T12:02:00Z",
+				"commit_id":          headSHA,
+			},
+		})
+	})
+	mux.HandleFunc(fmt.Sprintf("/repos/test-owner/test-repo/issues/%d/comments", prNum), func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode([]map[string]interface{}{})
+	})
+
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	client := githubv39.NewClient(nil)
+	client.BaseURL, _ = url.Parse(srv.URL + "/")
+
+	// Mock task server
+	fakeTS := &fakeTaskServer{
+		entries: []spool.Entry{
+			{Task: spool.Task{ID: "recipe-care-comments-1"}},
+			{Task: spool.Task{ID: "recipe-care-comments-2"}},
+		},
+		files: map[string]string{
+			"recipe-care-comments-1/comments.jsonl": `{"id":601,"body":"Fix this bug"}` + "\n",
+			"recipe-care-comments-1/push.json":      `{"head":"pushed-sha-2","unchanged":false}`,
+			"recipe-care-comments-2/comments.jsonl": `{"id":602,"body":"Why this approach?"}` + "\n",
+			"recipe-care-comments-2/push.json":      `{"unchanged":true}`,
+			"recipe-care-comments-2/execution.log":  "Posting reply via gh api repos/o/r/pulls/comments/602/replies\n",
+		},
+	}
+	withTasks(t, fakeTS, nil)
+
+	r := New(Config{}, Deps{
+		Sandboxes: NewService(ServiceConfig{Namespace: testNamespace, Owner: "test-owner", Repo: "test-repo"}, ServiceDeps{
+			GitHub: client,
+		}),
+	})
+
+	pr := &githubv39.PullRequest{
+		Number: githubv39.Int(prNum),
+		State:  githubv39.String("closed"),
+		Head:   &githubv39.PullRequestBranch{SHA: githubv39.String(headSHA)},
+	}
+
+	items := r.captureFeedback(context.Background(), pr, "factory-pr-82", prNum)
+
+	ansByBody := make(map[string]*tokenusage.AnsweredBy)
+	for _, it := range items {
+		ansByBody[it.Body] = it.AnsweredBy
+	}
+
+	// 1. "Fix this bug" -> fixed by recipe-care-comments-1
+	ans1 := ansByBody["Fix this bug"]
+	if ans1 == nil || ans1.Task != "recipe-care-comments-1" || ans1.Outcome != "fixed" {
+		t.Errorf("expected answeredBy {recipe-care-comments-1, fixed}, got %+v", ans1)
+	}
+
+	// 2. "Why this approach?" -> replied by recipe-care-comments-2
+	ans2 := ansByBody["Why this approach?"]
+	if ans2 == nil || ans2.Task != "recipe-care-comments-2" || ans2.Outcome != "replied" {
+		t.Errorf("expected answeredBy {recipe-care-comments-2, replied}, got %+v", ans2)
+	}
+
+	// 3. "Unanswered comment" -> nil
+	ans3 := ansByBody["Unanswered comment"]
+	if ans3 != nil {
+		t.Errorf("expected answeredBy=nil for unanswered comment, got %+v", ans3)
+	}
+}
+
+func TestCollectGarbageUploadsFeedback(t *testing.T) {
+	prNum := 83
+	headSHA := "sha-83"
+
+	// Mock collector
+	var uploadedFeedback []string
+	collectorSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPut && r.URL.Path == fmt.Sprintf("/v1/prs/test-owner/test-repo/%d/feedback", prNum) {
+			body, _ := io.ReadAll(r.Body)
+			uploadedFeedback = append(uploadedFeedback, string(body))
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer collectorSrv.Close()
+
+	t.Setenv("COLLECTOR_URL", collectorSrv.URL)
+
+	// Mock GitHub
+	ghMux := http.NewServeMux()
+	ghMux.HandleFunc(fmt.Sprintf("/repos/test-owner/test-repo/pulls/%d", prNum), func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"number": prNum,
+			"state":  "closed",
+			"head":   map[string]string{"sha": headSHA},
+		})
+	})
+	ghMux.HandleFunc(fmt.Sprintf("/repos/test-owner/test-repo/pulls/%d/commits", prNum), func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode([]map[string]interface{}{
+			{"sha": headSHA, "commit": map[string]interface{}{
+				"committer": map[string]string{"date": "2026-10-26T10:00:00Z"},
+			}},
+		})
+	})
+	ghMux.HandleFunc(fmt.Sprintf("/repos/test-owner/test-repo/pulls/%d/reviews", prNum), func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode([]map[string]interface{}{})
+	})
+	ghMux.HandleFunc(fmt.Sprintf("/repos/test-owner/test-repo/pulls/%d/comments", prNum), func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode([]map[string]interface{}{})
+	})
+	ghMux.HandleFunc(fmt.Sprintf("/repos/test-owner/test-repo/issues/%d/comments", prNum), func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode([]map[string]interface{}{
+			{
+				"id":                 int64(701),
+				"user":               map[string]string{"login": "alice", "type": "User"},
+				"author_association": "OWNER",
+				"body":               "Closed with feedback",
+				"created_at":         "2026-10-26T12:00:00Z",
+			},
+		})
+	})
+
+	ghSrv := httptest.NewServer(ghMux)
+	defer ghSrv.Close()
+
+	client := githubv39.NewClient(nil)
+	client.BaseURL, _ = url.Parse(ghSrv.URL + "/")
+
+	sbName := fmt.Sprintf("factory-pr-%d", prNum)
+	kube := newFakeKubeClient(t,
+		newSandbox(sbName, map[string]interface{}{annotationLastTaskState: "Completed"}),
+	)
+
+	r := New(Config{}, Deps{
+		Sandboxes: NewService(ServiceConfig{Namespace: testNamespace, Owner: "test-owner", Repo: "test-repo"}, ServiceDeps{
+			Kube:   kube,
+			GitHub: client,
+		}),
+		Locks:    concurrency.NewSandboxLockRegistry(),
+		Entities: warmCache(),
+	})
+
+	r.CollectGarbage(context.Background())
+
+	if sandboxExists(t, r, sbName) {
+		t.Errorf("expected sandbox %s to be deleted", sbName)
+	}
+
+	if len(uploadedFeedback) != 1 {
+		t.Fatalf("expected 1 feedback upload, got %d", len(uploadedFeedback))
+	}
+
+	if !strings.Contains(uploadedFeedback[0], "Closed with feedback") || !strings.Contains(uploadedFeedback[0], `"author":"alice"`) {
+		t.Errorf("uploaded feedback content unexpected:\n%s", uploadedFeedback[0])
 	}
 }

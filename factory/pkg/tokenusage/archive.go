@@ -300,6 +300,9 @@ func (s *Store) Flush(ctx context.Context) error {
 	if err := s.uploadTasks(ctx); err != nil {
 		return err
 	}
+	if err := s.uploadFeedback(ctx); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	err := s.sealLocked()
 	s.mu.Unlock()

@@ -56,12 +56,21 @@ func (w *Watcher) newDispatcher(runner dispatcher.TaskRunner) *dispatcher.Dispat
 // goroutine and keeps cluster sandbox state in sync without blocking scanning
 // or dispatching.
 func (w *Watcher) newReconciler() *sandbox.Reconciler {
+	var trusted []string
+	if w.githubLogin != "" {
+		trusted = append(trusted, w.githubLogin)
+	}
+	if w.cfg != nil {
+		trusted = append(trusted, w.cfg.TrustedLogins()...)
+	}
 	return sandbox.New(sandbox.Config{
-		Interval:    sandbox.DefaultInterval,
-		GCInterval:  sandbox.DefaultGCInterval,
-		EvictionAge: w.SandboxEvictionAge,
-		IdleTimeout: w.SandboxIdleTimeout,
-		DryRun:      w.DryRun,
+		Interval:       sandbox.DefaultInterval,
+		GCInterval:     sandbox.DefaultGCInterval,
+		EvictionAge:    w.SandboxEvictionAge,
+		IdleTimeout:    w.SandboxIdleTimeout,
+		DryRun:         w.DryRun,
+		TrustedLogins:  trusted,
+		ReviewerLogins: w.reviewerLogins(),
 	}, sandbox.Deps{
 		Sandboxes:  w.sandboxes,
 		Locks:      w.sandboxLocks,
