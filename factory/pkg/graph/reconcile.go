@@ -2,6 +2,7 @@ package graph
 
 import (
 	"fmt"
+	"regexp"
 	"slices"
 	"strings"
 )
@@ -87,6 +88,11 @@ type Child struct {
 	// MergedBotPR is a bot-authored PR referencing the open child that has
 	// merged, 0 for none: the child is done all the same.
 	MergedBotPR int
+	// Route is the option ticked in a choosing step's route question
+	// (RouteChoice), "" for none or more than one; Asking, that some
+	// question of the child is still open (OpenQuestions).
+	Route  string
+	Asking bool
 }
 
 // Result is what Reconcile decides: the phase, every step's state, the
@@ -119,6 +125,10 @@ const (
 	ActAddParentLabels     = "add-parent-labels"
 	ActReopenParent        = "reopen-parent"
 	ActCloseParent         = "close-parent"
+	// ActRouteChild carries out a choosing step's route, picked on its
+	// child: fix or plan relabels it (Unlabels off, Labels on), skip
+	// closes it as not planned.
+	ActRouteChild = "route-child"
 )
 
 // Action is one write a pass makes. Every action is safe to repeat.
@@ -137,6 +147,10 @@ type Action struct {
 	// whoever approved the graph (askAssignees).
 	Assignees []string
 	AskPerson bool
+	// Route and Unlabels are a choosing step's route being carried out
+	// (ActRouteChild) and the labels it takes off its child.
+	Route    string
+	Unlabels []string
 	// Title, Body and Child are a child to create: the rendered title,
 	// body (without the marker) and what its marker says.
 	Title string
@@ -240,10 +254,28 @@ func Reconcile(o Observed) Result {
 			continue
 		}
 		st := s.Step(id)
-		if st.ThenOrDefault() == ThenFix {
+		if choices := st.Choices(); len(choices) > 0 && hasLabel(c.Labels, stop) {
+			// A choosing step waits on its child until every question
+			// there is answered, then goes the way its route says.
+			if c.Route != "" && !c.Asking && slices.Contains(choices, c.Route) {
+				a := Action{Kind: ActRouteChild, Step: id, Issue: c.Number, Route: c.Route, Unlabels: []string{stop, o.Trigger + "/" + NeedsHumanLabel}}
+				switch c.Route {
+				case ChooseFix:
+					a.Labels = fixLabels(s, *st, o.Trigger)
+				case ChoosePlan:
+					a.Labels = []string{o.Trigger + "/plan"}
+				case ChooseSkip:
+					c.Open, c.NotPlanned = false, true
+					canonical[id] = c
+				}
+				r.Actions = append(r.Actions, a)
+			}
+			continue
+		}
+		if st.ThenOrDefault() == ThenFix && (len(st.Choices()) == 0 || c.Route == ChooseFix) {
 			// A plan or needs-human label is taken off when it is acted on: only a
 			// child to be fixed keeps its labels.
-			if missing := missingLabels(c.Labels, childLabels(s, *st, o.Trigger)); len(missing) > 0 {
+			if missing := missingLabels(c.Labels, fixLabels(s, *st, o.Trigger)); len(missing) > 0 {
 				r.Actions = append(r.Actions, Action{Kind: ActAddChildLabels, Step: id, Issue: c.Number, Labels: missing})
 			}
 		}
@@ -310,14 +342,17 @@ func Reconcile(o Observed) Result {
 			}
 			body = strings.TrimRight(body, "\n") + "\n\n## Review Instructions\n\n" + review
 		}
-		if st.ThenOrDefault() == ThenAsk {
+		switch {
+		case len(st.Choices()) > 0:
+			body = withRouteQuestion(body, st.Choices()) + "\n\n" + chooseSection(o.Parent.Number, o.Trigger)
+		case st.ThenOrDefault() == ThenAsk:
 			body = strings.TrimRight(body, "\n") + "\n\n" + needsHumanSection(o.Parent.Number, o.Trigger)
 		}
 		r.Actions = append(r.Actions, Action{
 			Kind: ActCreateChild, Step: ss.ID, Title: strings.TrimSpace(title), Body: body,
 			Labels:    childLabels(s, *st, o.Trigger),
 			Assignees: slices.Clone(st.Assignees),
-			AskPerson: st.ThenOrDefault() == ThenAsk,
+			AskPerson: st.ThenOrDefault() == ThenAsk || len(st.Choices()) > 0,
 			Child:     ChildInfo{Parent: o.Parent.Number, Source: o.Source, Step: ss.ID, Depth: o.Parent.Depth + 1, Params: hash},
 		})
 		r.Steps[i].State = StepActive
@@ -434,17 +469,95 @@ This step of #%d's plan waits for a decision: no bot works on it until a person 
 The steps after it start once it is closed.`, parent, trigger, trigger, trigger, trigger, trigger)
 }
 
+// RouteQuestionID marks a choosing step's route question on its child.
+const RouteQuestionID = "route"
+
+// routeOptions are how each route reads on the child.
+var routeOptions = map[string]string{
+	ChooseFix:  "`fix`: implement it as one PR",
+	ChoosePlan: "`plan`: plan it first",
+	ChooseSkip: "`skip`: it isn't needed - close it",
+}
+
+// withRouteQuestion is a choosing step's body with its route question:
+// first in the body's ## Questions section, or in one of its own.
+func withRouteQuestion(body string, choices []string) string {
+	var q strings.Builder
+	fmt.Fprintf(&q, "<!-- factory:question id=%s -->\n**How should this step go?**\n", RouteQuestionID)
+	for _, c := range choices {
+		fmt.Fprintf(&q, "- [ ] %s\n", routeOptions[c])
+	}
+	body = strings.TrimRight(body, "\n")
+	if i := strings.Index(body, "\n## Questions\n"); i >= 0 {
+		at := i + len("\n## Questions\n")
+		return body[:at] + "\n" + q.String() + body[at:]
+	}
+	return body + "\n\n## Questions\n\n" + strings.TrimRight(q.String(), "\n")
+}
+
+// chooseSection is what a choosing step's child says under its questions.
+func chooseSection(parent int, trigger string) string {
+	return fmt.Sprintf(`## Needs a person
+
+This step of #%d's plan waits for a maintainer: tick one option of **How should this step go?** above, and answer any other question (tick a box, or reply). Within a few minutes it then goes that way - fixed as one PR, planned first, or closed as not needed - with no labels to change. Until then it carries `+"`%s/stop`"+`.`, parent, trigger)
+}
+
+// routeTokenRE is a route option's token: `fix`, `plan`, `skip`.
+var routeTokenRE = regexp.MustCompile("`([a-z]+)`")
+
+// RouteChoice is the option ticked in body's route question: the token of
+// the one ticked box, "" when none or more than one is ticked.
+func RouteChoice(body string) string {
+	marker := "<!-- factory:question id=" + RouteQuestionID + " -->"
+	i := strings.Index(body, marker)
+	if i < 0 {
+		return ""
+	}
+	choice, seen := "", false
+	for _, line := range strings.Split(body[i+len(marker):], "\n") {
+		t := strings.TrimSpace(strings.TrimRight(line, "\r"))
+		m := taskBoxRE.FindStringSubmatch(t)
+		if m == nil {
+			if seen && t != "" {
+				break // the next question, or the section's end
+			}
+			continue
+		}
+		seen = true
+		if m[1] == " " {
+			continue
+		}
+		if choice != "" {
+			return "" // two ticked: wait for one
+		}
+		if tok := routeTokenRE.FindStringSubmatch(t); tok != nil {
+			choice = tok[1]
+		}
+	}
+	return choice
+}
+
 // childLabels are the labels a step's child is created with, by what it
 // does first: to be fixed, the trigger label, the defaults, the step's own
 // and the review label when it has review instructions; to be planned,
 // <trigger>/plan; to wait for a person, <trigger>/needs-human.
 func childLabels(s *Spec, st Step, trigger string) []string {
+	if len(st.Choices()) > 0 {
+		return []string{trigger + "/" + NeedsHumanLabel, trigger + "/stop"}
+	}
 	switch st.ThenOrDefault() {
 	case ThenPlan:
 		return []string{trigger + "/plan"}
 	case ThenAsk:
 		return []string{trigger + "/" + NeedsHumanLabel, trigger + "/stop"}
 	}
+	return fixLabels(s, st, trigger)
+}
+
+// fixLabels are the labels of a step's child to be fixed: the trigger
+// label, the defaults, the step's own and the review label when it has
+// review instructions.
+func fixLabels(s *Spec, st Step, trigger string) []string {
 	labels := []string{trigger}
 	labels = append(labels, s.Defaults.Labels...)
 	labels = append(labels, st.Labels...)

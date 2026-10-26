@@ -191,8 +191,8 @@ start:
         A mermaid flowchart (`flowchart LR`) from `main` to every PR: one
         node per Breakdown step, labelled with its id and a short title, an
         edge for each `after`, steps with no `after` coming from `main`.
-        Mark a `then: plan` step "(planned first)" and a `then: ask` step
-        "(asks first)".
+        Mark a `then: plan` step "(planned first)", and a `then: ask`,
+        `choose:` or `optional:` step "(asks first)".
 
         ### PRs
         A table, in the Breakdown's order:
@@ -248,15 +248,18 @@ start:
         change, in which files, and how to verify it (the PR table's row,
         in full). A step may set `then: plan` (its sub-issue is planned
         first, for a piece still too big or unclear) instead of the default,
-        fix. A step that needs a maintainer's answer before it can be done -
-        how big it really is (fix or plan first), whether it is needed at
-        all, or a choice only it depends on - sets `then: ask`: its body
-        holds the step's work as usual, then a `## Questions` section in the
-        format above (for size, options like "Fix it as one PR" / "Plan it
-        first"; for necessity, "Do it" / "Skip it"). Its sub-issue waits for
-        the answer on that same issue, and the agent that then takes it
-        reads the answer there. Never add a separate step that only asks;
-        never make a step depend on another issue's answer. Do not name
+        fix. A step whose route is a maintainer's call - how big it really
+        is (fix it, or plan it first), or whether it is needed at all - sets
+        `choose:` with two or more of `fix`, `plan`, `skip` (or
+        `optional: true`, for its then or skip): its sub-issue asks "How
+        should this step go?" and waits; once a box is ticked there - and
+        every other question it asks - the controller routes it, with no
+        labels to change. A choice only that step depends on goes in its
+        body as a `## Questions` section in the format above, beside
+        `choose:` when its route is also a call, or with `then: ask` when the
+        maintainer will act on it by hand. The agent that takes the step
+        reads the answers on its own issue. Never add a separate step that
+        only asks; never make a step depend on another issue's answer. Do not name
         assignees: the sub-issue goes to the maintainer who approved the
         plan. `checkpoint: stop` pauses the graph
         when the step is done, for a maintainer to look; `replan` has this

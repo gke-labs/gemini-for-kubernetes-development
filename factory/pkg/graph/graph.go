@@ -112,6 +112,33 @@ type Step struct {
 	// Review is review instructions for the child's PR (a template).
 	Review    string   `yaml:"review,omitempty"`
 	Assignees []string `yaml:"assignees,omitempty"`
+	// Choose has a maintainer pick how the step goes, on its own
+	// sub-issue: two or more of fix, plan and skip. Optional is short for
+	// choosing between the step's then and skip. The sub-issue waits
+	// (needs-human, stop) until a box of its route question is ticked -
+	// and every other question it asks - then the controller carries the
+	// choice out.
+	Choose   []string `yaml:"choose,omitempty"`
+	Optional bool     `yaml:"optional,omitempty"`
+}
+
+// What a choosing step's route can be (Step.Choose).
+const (
+	ChooseFix  = "fix"
+	ChoosePlan = "plan"
+	ChooseSkip = "skip"
+)
+
+// Choices are what a maintainer picks the step's route from: its choose,
+// or its then and skip when optional; none for a step that just runs.
+func (s Step) Choices() []string {
+	if len(s.Choose) > 0 {
+		return s.Choose
+	}
+	if s.Optional {
+		return []string{s.ThenOrDefault(), ChooseSkip}
+	}
+	return nil
 }
 
 // ThenOrDefault is the step's then, fix when unset.

@@ -96,6 +96,7 @@ The parent never opens a PR. `fix` and `workflow` leave it alone
 | `fix` (default) | `<t>`, the graph's default labels, the step's labels, `<t>/review` with review instructions | the `fix` rule: a coder bot fixes the child from its body and opens a PR `Fixes #<child>`; PR care follows (review, CI, comments, ready-for-human) |
 | `plan` | `<t>/plan` | the `plan` rule plans the child; a maintainer applies `<t>/implement` - one PR, or a graph of its own (section 5) |
 | `ask` | `<t>/needs-human` and `<t>/stop` | the step needs a maintainer's answer first: how big it is (fix it, or plan it first), whether it is needed, or a choice only it depends on. Its body holds the step's work and a `## Questions` checklist; the stop label keeps every bot off it until then. Answer on that issue (tick a box, or reply), then remove `<t>/stop` and label it `<t>` (fix) or `<t>/plan` - the agent reads the answer there - or close it as not planned to skip it. The step's `assignees`, else the parent's humans, else whoever approved the graph, are assigned |
+| `choose: [fix, plan, skip]` (two or more), or `optional: true` (its then, or skip) | `<t>/needs-human` and `<t>/stop` | the route is a maintainer's call. The sub-issue asks **How should this step go?** first under `## Questions` (beside any question of the step's own). Tick a box - and answer every other question - and within a few minutes the controller routes it: `fix` takes the waiting labels off and labels it to be fixed, `plan` to be planned, `skip` closes it as not planned (the steps after it start). No labels to change by hand |
 
 ### Progress, pauses and checkpoints
 
@@ -151,7 +152,7 @@ steps:
     review: Check the examples run.   # review instructions; adds <t>/review
   - id: storage
     title: Pick the storage backend
-    then: ask           # a person decides; the child is labelled <t>/needs-human and <t>/stop
+    choose: [fix, plan, skip]   # the maintainer picks the route on the sub-issue; the controller acts on it
     assignees: [alice]  # optional, any step: assigned when its child is created
                         # (an ask step without: the parent's humans, else the approver)
     body: |

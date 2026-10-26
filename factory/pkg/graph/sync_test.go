@@ -135,6 +135,75 @@ func TestSyncAskStep(t *testing.T) {
 	}
 }
 
+// A choosing step's child waits, labelled needs-human and stop, with its
+// route question first under ## Questions, until every question there is
+// answered; then the controller carries the route out: fix relabels it to
+// be fixed, plan to be planned, skip closes it as not planned and lets the
+// steps after it start. Optional is a choice between the step's then and
+// skip.
+func TestSyncChooseRoute(t *testing.T) {
+	for _, tc := range []struct {
+		name, step, tick string
+		labels           []string // the child's after the route, open
+		skipped          bool
+	}{
+		{"fix", "choose: [fix, plan, skip], labels: [area/x]", "`fix`", []string{"overseer", "area/x"}, false},
+		{"plan", "choose: [fix, plan, skip]", "`plan`", []string{"overseer/plan"}, false},
+		{"skip", "choose: [fix, plan, skip]", "`skip`", nil, true},
+		{"optional, done", "then: plan, optional: true", "`plan`", []string{"overseer/plan"}, false},
+		{"optional, skipped", "optional: true", "`skip`", nil, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := graphtest.New()
+			f.Issues[100] = &graphtest.Issue{Title: "Epic", Body: "Build it.", Author: "alice", Assoc: "MEMBER", Open: true, Labels: []string{"overseer/graph"}}
+			f.Comment(100, "hopper-coder-bot", "NONE", "**Implementation plan** · v1\n\n```yaml graph\nsteps:\n"+
+				"  - {id: store, title: Store the traces, body: \"Store them.\\n\\n## Questions\\n\\n**Which bucket?**\\n- [ ] team bucket\\n- [ ] new bucket\\n\", "+tc.step+"}\n"+
+				"  - {id: read, title: Read them, body: read, after: [store]}\n```\n\n<!-- factory:comment key=plan v=1 -->")
+			opts := Options{Issue: 100, Trigger: "overseer", BotLogin: "watcher", Pool: []string{"hopper-coder-bot", "watcher"}}
+			sync(t, f, opts)
+			n := childOf(f, 100, "store")
+			if n == 0 {
+				t.Fatal("no child for the choosing step")
+			}
+			is := f.Issues[n]
+			if !slices.Equal(is.Labels, []string{"overseer/needs-human", "overseer/stop"}) {
+				t.Errorf("waiting child labels %v", is.Labels)
+			}
+			if !strings.Contains(is.Body, "## Questions\n\n<!-- factory:question id=route -->\n**How should this step go?**\n") ||
+				!strings.Contains(is.Body, "**Which bucket?**") || strings.Count(is.Body, "## Questions") != 1 || !strings.Contains(is.Body, "Within a few minutes it then goes that way") {
+				t.Errorf("child body:\n%s", is.Body)
+			}
+			// The route ticked, another question still open: it waits.
+			is.Body = strings.Replace(is.Body, "- [ ] "+tc.tick, "- [x] "+tc.tick, 1)
+			sync(t, f, opts)
+			if !slices.Equal(is.Labels, []string{"overseer/needs-human", "overseer/stop"}) || !is.Open {
+				t.Fatalf("routed with a question open: labels %v open %v", is.Labels, is.Open)
+			}
+			// Every question answered: the route is carried out.
+			is.Body = strings.Replace(is.Body, "- [ ] team bucket", "- [x] team bucket", 1)
+			sync(t, f, opts)
+			if tc.skipped {
+				if is.Open || is.Reason != "not_planned" {
+					t.Errorf("skip: open %v reason %q", is.Open, is.Reason)
+				}
+				if childOf(f, 100, "read") == 0 {
+					t.Error("the step after a skipped one did not start")
+				}
+				return
+			}
+			if !is.Open || !slices.Equal(is.Labels, tc.labels) {
+				t.Errorf("routed child: open %v labels %v, want %v", is.Open, is.Labels, tc.labels)
+			}
+			// Routed once: another pass changes nothing.
+			before := f.Writes
+			sync(t, f, opts)
+			if f.Writes != before {
+				t.Errorf("a pass after the route wrote %d times", f.Writes-before)
+			}
+		})
+	}
+}
+
 // A plan's graph from start to finish: children created as their steps
 // become ready, linked as sub-issues and labelled by their then; one
 // status comment, edited in place; the parent closed at the end.

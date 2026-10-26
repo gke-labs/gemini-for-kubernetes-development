@@ -158,6 +158,12 @@ func (f *Fake) CreateIssue(_ context.Context, title, body string, labels []strin
 	return f.Next, nil
 }
 
+func (f *Fake) RemoveLabel(_ context.Context, n int, label string) error {
+	f.Writes++
+	f.Issues[n].Labels = slices.DeleteFunc(f.Issues[n].Labels, func(l string) bool { return strings.EqualFold(l, label) })
+	return nil
+}
+
 func (f *Fake) AddAssignees(_ context.Context, n int, assignees []string) error {
 	f.Writes++
 	f.Issues[n].Assignees = append(f.Issues[n].Assignees, assignees...)

@@ -110,6 +110,29 @@ func (st Step) validateFields(plan bool) error {
 	default:
 		return fmt.Errorf("then %q is not one of %s, %s, %s", st.Then, ThenFix, ThenPlan, ThenAsk)
 	}
+	if len(st.Choose) > 0 || st.Optional {
+		switch {
+		case len(st.Choose) > 0 && st.Optional:
+			return errors.New("choose and optional both given; optional is choose with the step's then and skip")
+		case st.Then == ThenAsk:
+			return errors.New("then: ask with choose or optional; a choosing step asks already")
+		case st.Optional && st.Then != "" && st.Then != ThenFix && st.Then != ThenPlan:
+			return fmt.Errorf("optional with then %q; it chooses between the step's then (fix or plan) and skip", st.Then)
+		}
+		if len(st.Choose) == 1 {
+			return errors.New("choose has one option; give two or more, or none")
+		}
+		seen := map[string]bool{}
+		for _, c := range st.Choose {
+			switch {
+			case c != ChooseFix && c != ChoosePlan && c != ChooseSkip:
+				return fmt.Errorf("choose %q is not one of %s, %s, %s", c, ChooseFix, ChoosePlan, ChooseSkip)
+			case seen[c]:
+				return fmt.Errorf("choose %q given twice", c)
+			}
+			seen[c] = true
+		}
+	}
 	for _, a := range st.Assignees {
 		if !loginRE.MatchString(a) {
 			return fmt.Errorf("assignee %q is not a GitHub login", a)

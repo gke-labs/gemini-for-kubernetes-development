@@ -57,7 +57,7 @@ func TestBuiltinPlanRecipe(t *testing.T) {
 	for _, s := range rec.Start.Steps {
 		all += s.Ask
 	}
-	for _, want := range []string{"## Questions", "<!-- factory:question id=", "- [ ] Other: answered in a comment", "Never add a separate step that only asks", "## Baseline", "## PR plan", "### Dependency graph", "| Step | Title | What it adds | Files | After | Verification |", "<details>", "</details>"} {
+	for _, want := range []string{"## Questions", "<!-- factory:question id=", "- [ ] Other: answered in a comment", "Never add a separate step that", "`choose:` with two or more of `fix`, `plan`, `skip`", "## Baseline", "## PR plan", "### Dependency graph", "| Step | Title | What it adds | Files | After | Verification |", "<details>", "</details>"} {
 		if !strings.Contains(all, want) {
 			t.Errorf("the plan recipe does not ask for %q", want)
 		}

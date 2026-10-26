@@ -26,6 +26,7 @@ type GitHub interface {
 	CreateIssue(ctx context.Context, title, body string, labels []string) (int, error)
 	EditIssue(ctx context.Context, number int, title, body string) error
 	AddLabels(ctx context.Context, number int, labels []string) error
+	RemoveLabel(ctx context.Context, number int, label string) error
 	AddAssignees(ctx context.Context, number int, assignees []string) error
 	AddSubIssue(ctx context.Context, parent, child int) error
 	AddComment(ctx context.Context, number int, body string) error
@@ -310,6 +311,8 @@ func observeChildren(ctx context.Context, gh GitHub, opts Options, o *Observed) 
 			NotPlanned: !ref.Open && ref.StateReason == "not_planned",
 			Linked:     slices.Contains(linked, n),
 			Labels:     ref.Labels,
+			Route:      RouteChoice(ref.Body),
+			Asking:     len(OpenQuestions(ref.Body)) > 0,
 		}
 		if c.Open {
 			refs, err := gh.ListCrossReferences(ctx, n)
@@ -380,6 +383,19 @@ func applyOne(ctx context.Context, gh GitHub, opts Options, p *Pass, a Action) e
 		return gh.AddSubIssue(ctx, opts.Issue, n)
 	case ActLinkChild:
 		return gh.AddSubIssue(ctx, opts.Issue, a.Issue)
+	case ActRouteChild:
+		if a.Route == ChooseSkip {
+			if err := gh.AddComment(ctx, a.Issue, "Skipped, as chosen in this issue's questions."); err != nil {
+				return err
+			}
+			return gh.SetIssueState(ctx, a.Issue, "closed", "not_planned")
+		}
+		for _, l := range a.Unlabels {
+			if err := gh.RemoveLabel(ctx, a.Issue, l); err != nil {
+				opts.logf("taking %s off #%d (step %s): %v", l, a.Issue, a.Step, err)
+			}
+		}
+		return gh.AddLabels(ctx, a.Issue, a.Labels)
 	case ActCloseDuplicate:
 		if err := gh.AddComment(ctx, a.Issue, fmt.Sprintf("Duplicate of #%d, this step's child.", a.Of)); err != nil {
 			return err
@@ -421,6 +437,8 @@ func describe(a Action, dryRun bool) string {
 		return fmt.Sprintf("%screate step %s's child %q, labelled %s%s", would, a.Step, a.Title, strings.Join(a.Labels, ", "), assigned)
 	case ActLinkChild:
 		return fmt.Sprintf("%slink #%d (step %s) as a sub-issue", would, a.Issue, a.Step)
+	case ActRouteChild:
+		return fmt.Sprintf("%sroute #%d (step %s) to %s, as chosen on it", would, a.Issue, a.Step, a.Route)
 	case ActCloseDuplicate:
 		return fmt.Sprintf("%sclose #%d as a duplicate of #%d (step %s)", would, a.Issue, a.Of, a.Step)
 	case ActAddChildLabels:
