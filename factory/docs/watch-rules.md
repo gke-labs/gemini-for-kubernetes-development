@@ -691,7 +691,7 @@ the suite CI runs.
 | `implement` | issue | `<trigger>/implement` on a one-PR plan (`plan: pr`): fix-with-plan opens the PR |
 | `implement-graph` | issue | `<trigger>/implement` on a plan with a Breakdown (`plan: graph`): the graph label, for the graph controller (`--graphs`) to start from the plan; no task |
 | `implement-unplanned` | issue | `<trigger>/implement` with no plan: a comment, the label off |
-| `implement-not-ready` | issue | `<trigger>/implement` on a plan still asking or not yet rewritten (`plan: asking`/`answered`): a comment, the label off |
+| `implement-not-ready` | issue | `<trigger>/implement` on a plan still asking or not yet rewritten (`plan: asking`/`replanning`): a comment, the label off |
 | `plan-asking` | issue | a planned issue whose plan asks questions: `<trigger>/needs-human` |
 | `plan-answered` | issue | a planned issue whose plan's questions are all ticked: `needs-human` off, `<trigger>/plan` on, so the plan is written with the answers |
 | `inherit-labels` | pr | copies the closing issues' labels onto the PR, ahead of the rules that take it |
