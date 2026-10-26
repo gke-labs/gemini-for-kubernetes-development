@@ -164,6 +164,34 @@ func ReportPRSubject(ctx context.Context, repo string, pr *githubv39.PullRequest
 	}
 }
 
+// ReportPRFeedback uploads human feedback captured on a closed pull request to
+// the collector's PUT /v1/prs/{owner}/{repo}/{n}/feedback endpoint.
+// Best-effort: no-op when disabled; returns an error on upload failure.
+func ReportPRFeedback(ctx context.Context, owner, repo string, pr int, data []byte) error {
+	if !Enabled() {
+		return nil
+	}
+	u := fmt.Sprintf("%s/v1/prs/%s/%s/%d/feedback", collectorURL(), url.PathEscape(owner), url.PathEscape(repo), pr)
+	ctx, cancel := context.WithTimeout(ctx, archiveTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, u, bytes.NewReader(data))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/x-ndjson")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("reporting feedback for %s/%s#%d: %w", owner, repo, pr, err)
+	}
+	defer resp.Body.Close()
+	switch resp.StatusCode {
+	case http.StatusOK, http.StatusNotImplemented:
+		return nil
+	default:
+		return fmt.Errorf("reporting feedback for %s/%s#%d: collector returned status %d", owner, repo, pr, resp.StatusCode)
+	}
+}
+
 func postJSON(ctx context.Context, path string, v any) error {
 	base := collectorURL()
 	if base == "" {

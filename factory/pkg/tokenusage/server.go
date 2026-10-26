@@ -56,6 +56,7 @@ func NewServerForStore(store *Store) *Server {
 	s.mux.HandleFunc("PUT /v1/tasks/{sandbox}/{task}", s.handleTaskPut)
 	s.mux.HandleFunc("GET /v1/tasks/{sandbox}/{task}/files/{name...}", s.handleTaskFile)
 	s.mux.HandleFunc("GET /v1/tasks", s.handleTasks)
+	s.mux.HandleFunc("PUT /v1/prs/{owner}/{repo}/{n}/feedback", s.handleFeedbackPut)
 	s.mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
@@ -154,6 +155,35 @@ func detectContentType(name string) string {
 		return "text/plain; charset=utf-8"
 	default:
 		return "application/octet-stream"
+	}
+}
+
+// handleFeedbackPut takes a PR's feedback JSONL in the body and spools it
+// for upload to the archive under prs/<owner>/<repo>/<n>/feedback.jsonl.gz.
+func (s *Server) handleFeedbackPut(w http.ResponseWriter, r *http.Request) {
+	owner := r.PathValue("owner")
+	repo := r.PathValue("repo")
+	nStr := r.PathValue("n")
+	n, err := strconv.Atoi(nStr)
+	if err != nil || n <= 0 {
+		http.Error(w, "invalid pr number", http.StatusBadRequest)
+		return
+	}
+	err = s.store.PutFeedback(owner, repo, n, r.Body)
+	switch {
+	case err == nil:
+		w.WriteHeader(http.StatusOK)
+	case errors.Is(err, ErrNoArchive):
+		http.Error(w, err.Error(), http.StatusNotImplemented)
+	case errors.Is(err, ErrSpoolFull):
+		http.Error(w, err.Error(), http.StatusInsufficientStorage)
+	case errors.Is(err, ErrTaskTooLarge):
+		http.Error(w, err.Error(), http.StatusRequestEntityTooLarge)
+	case strings.HasPrefix(err.Error(), "invalid "):
+		http.Error(w, err.Error(), http.StatusBadRequest)
+	default:
+		log.Printf("feedback ingest failed for %s/%s#%d: %v", owner, repo, n, err)
+		http.Error(w, "storage error", http.StatusInternalServerError)
 	}
 }
 

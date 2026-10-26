@@ -65,8 +65,9 @@ func OpenStore(ctx context.Context, root string, archive Archive) (*Store, error
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		return nil, fmt.Errorf("creating storage root: %w", err)
 	}
-	// A task PUT that died half-way left its temporary directory.
+	// A task or feedback PUT that died half-way left its temporary directory.
 	_ = os.RemoveAll(filepath.Join(root, "tasks.tmp"))
+	_ = os.RemoveAll(filepath.Join(root, "feedback.tmp"))
 	s := &Store{
 		root:          root,
 		records:       map[string]UsageRecord{},

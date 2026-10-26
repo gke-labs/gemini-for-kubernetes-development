@@ -276,3 +276,26 @@ type SkillRef struct {
 	FirstSeq int64  `json:"firstSeq"`
 	LastSeq  int64  `json:"lastSeq"`
 }
+
+// AnsweredBy identifies the care task that addressed a feedback item and the
+// outcome of that care pass.
+type AnsweredBy struct {
+	Task    string `json:"task"`
+	Outcome string `json:"outcome"` // "fixed", "replied", "nothing"
+}
+
+// FeedbackItem is one human review, inline comment or conversation comment
+// on a pull request, captured when the PR is closed.
+type FeedbackItem struct {
+	Author         string      `json:"author"`
+	Kind           string      `json:"kind"` // "review", "inline", "comment"
+	State          string      `json:"state,omitempty"`
+	Path           string      `json:"path,omitempty"`
+	Line           int         `json:"line,omitempty"`
+	At             string      `json:"at"`
+	InReplyTo      int64       `json:"inReplyTo,omitempty"`
+	Body           string      `json:"body"`
+	Head           string      `json:"head"`
+	AfterBotReview bool        `json:"afterBotReview"`
+	AnsweredBy     *AnsweredBy `json:"answeredBy,omitempty"`
+}
