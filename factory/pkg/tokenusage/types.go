@@ -189,3 +189,90 @@ func MergeStats(dst *Stats, src Stats) {
 		dst.Models[model] = agg
 	}
 }
+
+// TaskRecord is the index entry of one archived task, and its folder's
+// manifest.json. Key is "<sandbox>/<task>"; a newer harvest of the same
+// task replaces it.
+type TaskRecord struct {
+	Key      string `json:"key"`
+	Repo     string `json:"repo,omitempty"`
+	Sandbox  string `json:"sandbox"`
+	Task     string `json:"task"`
+	TaskType string `json:"taskType,omitempty"`
+	Issue    int    `json:"issue,omitempty"`
+	PR       int    `json:"pr,omitempty"`
+
+	// From the task's own files: task.json, status.json, push.json and
+	// task-output.applied. Empty when the task has none.
+	Recipe       string `json:"recipe,omitempty"`
+	RunName      string `json:"runName,omitempty"`
+	URL          string `json:"url,omitempty"`
+	State        string `json:"state,omitempty"`
+	ExitCode     string `json:"exitCode,omitempty"`
+	StartedAt    string `json:"startedAt,omitempty"`
+	EndedAt      string `json:"endedAt,omitempty"`
+	PushedBranch string `json:"pushedBranch,omitempty"`
+	PushedHead   string `json:"pushedHead,omitempty"`
+	Applied      string `json:"applied,omitempty"`
+
+	// Instructions describes which instructions the task ran on:
+	// workflow, recipe, engine, model, commit, and skills detected in the trace.
+	Instructions *Instructions `json:"instructions,omitempty"`
+
+	// Files are the task's files as archived: after redaction, before
+	// compression.
+	Files []TaskFile `json:"files"`
+	// Folder is the task's folder in the archive, under the prefix.
+	Folder     string `json:"folder,omitempty"`
+	ArchivedAt string `json:"archivedAt,omitempty"`
+}
+
+// TaskFile is one archived file of a task, by its name in the task
+// directory ("push.json", "session/stream.ndjson").
+type TaskFile struct {
+	Name   string `json:"name"`
+	Bytes  int64  `json:"bytes"`
+	SHA256 string `json:"sha256"`
+}
+
+// TaskFilter selects task records. Zero values mean "no filter".
+type TaskFilter struct {
+	Repo    string
+	Issue   int
+	PR      int
+	Sandbox string
+}
+
+// Instructions maps a task run to the instructions it ran on: workflow, recipe,
+// engine, model, commit, and skills detected in the trace.
+type Instructions struct {
+	Repo     string       `json:"repo,omitempty"`
+	Commit   string       `json:"commit,omitempty"`
+	Workflow *WorkflowRef `json:"workflow,omitempty"`
+	Recipe   *RecipeRef   `json:"recipe,omitempty"`
+	Engine   string       `json:"engine,omitempty"`
+	Model    string       `json:"model,omitempty"`
+	Context  []string     `json:"context,omitempty"`
+	Skills   []SkillRef   `json:"skills,omitempty"`
+}
+
+// WorkflowRef identifies the workflow instructions.
+type WorkflowRef struct {
+	Name string `json:"name,omitempty"`
+	Path string `json:"path,omitempty"`
+}
+
+// RecipeRef identifies the recipe run.
+type RecipeRef struct {
+	Name string `json:"name,omitempty"`
+	Hash string `json:"hash,omitempty"`
+}
+
+// SkillRef records one skill invoked or read during a task session.
+type SkillRef struct {
+	Name     string `json:"name"`
+	Path     string `json:"path,omitempty"`
+	How      string `json:"how"` // "activated" | "read"
+	FirstSeq int64  `json:"firstSeq"`
+	LastSeq  int64  `json:"lastSeq"`
+}

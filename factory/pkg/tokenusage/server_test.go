@@ -18,7 +18,9 @@ package tokenusage
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -151,5 +153,143 @@ func TestServerEndToEnd(t *testing.T) {
 
 	if resp := getJSON(t, ts.URL+"/healthz", nil); resp.StatusCode != http.StatusOK {
 		t.Errorf("healthz: %d", resp.StatusCode)
+	}
+}
+
+func TestTaskFileArchiveStreaming(t *testing.T) {
+	ctx := context.Background()
+	a := newMemArchive()
+	s := openArchived(t, t.TempDir(), a)
+	ts := httptest.NewServer(NewServerForStore(s).Handler())
+	defer ts.Close()
+
+	taskJSONContent := []byte(`{"id":"task-stream-1","run_name":"run-1"}`)
+	streamContent := []byte(`{"seq":1,"kind":"user_prompt"}` + "\n")
+	logContent := []byte("setup step completed\n")
+
+	files := map[string][]byte{
+		"task.json":             taskJSONContent,
+		"session/stream.ndjson": streamContent,
+		"steps/01-setup.log":    logContent,
+	}
+
+	rec := TaskRecord{
+		Repo:     "org/repo",
+		Sandbox:  "sb-stream",
+		Task:     "task-stream-1",
+		TaskType: "recipe-fix",
+	}
+	if err := s.PutTask(rec, tarOf(t, files)); err != nil {
+		t.Fatalf("PutTask: %v", err)
+	}
+	if err := s.Flush(ctx); err != nil {
+		t.Fatalf("Flush: %v", err)
+	}
+
+	// 1. Successful file streaming (gzipped files in archive are uncompressed on the fly)
+	resp, err := http.Get(ts.URL + "/v1/tasks/sb-stream/task-stream-1/files/task.json")
+	if err != nil {
+		t.Fatalf("GET task.json: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("status = %d, want 200", resp.StatusCode)
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "application/json" {
+		t.Errorf("Content-Type = %q, want application/json", ct)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if !bytes.Equal(body, taskJSONContent) {
+		t.Errorf("got %q, want %q", body, taskJSONContent)
+	}
+
+	// Stream a subdirectory file (session/stream.ndjson)
+	respStream, err := http.Get(ts.URL + "/v1/tasks/sb-stream/task-stream-1/files/session/stream.ndjson")
+	if err != nil {
+		t.Fatalf("GET session/stream.ndjson: %v", err)
+	}
+	defer respStream.Body.Close()
+	if respStream.StatusCode != http.StatusOK {
+		t.Errorf("status = %d, want 200", respStream.StatusCode)
+	}
+	if ct := respStream.Header.Get("Content-Type"); ct != "application/x-ndjson" {
+		t.Errorf("Content-Type = %q, want application/x-ndjson", ct)
+	}
+	bodyStream, _ := io.ReadAll(respStream.Body)
+	if !bytes.Equal(bodyStream, streamContent) {
+		t.Errorf("got %q, want %q", bodyStream, streamContent)
+	}
+
+	// Stream manifest.json (not gzipped in bucket)
+	respManifest, err := http.Get(ts.URL + "/v1/tasks/sb-stream/task-stream-1/files/manifest.json")
+	if err != nil {
+		t.Fatalf("GET manifest.json: %v", err)
+	}
+	defer respManifest.Body.Close()
+	if respManifest.StatusCode != http.StatusOK {
+		t.Errorf("status = %d, want 200", respManifest.StatusCode)
+	}
+	var manifestRec TaskRecord
+	if err := json.NewDecoder(respManifest.Body).Decode(&manifestRec); err != nil {
+		t.Fatalf("decode manifest: %v", err)
+	}
+	if manifestRec.Key != "sb-stream/task-stream-1" {
+		t.Errorf("manifest key = %q, want sb-stream/task-stream-1", manifestRec.Key)
+	}
+
+	// 2. Security validation: refuse "..", leading slash, and invalid characters (400)
+	invalidURLs := []string{
+		ts.URL + "/v1/tasks/sb-stream/task-stream-1/files/%2e%2e",
+		ts.URL + "/v1/tasks/sb-stream/task-stream-1/files/%2e%2e/escape",
+		ts.URL + "/v1/tasks/sb-stream/task-stream-1/files/session/%2e%2e/%2e%2e/escape",
+		ts.URL + "/v1/tasks/sb-stream/task-stream-1/files/%2ftask.json",
+		ts.URL + "/v1/tasks/sb-stream/task-stream-1/files/task*.json",
+		ts.URL + "/v1/tasks/sb-stream/task-stream-1/files/bad%20name.txt",
+		ts.URL + "/v1/tasks/bad%20sb/task-stream-1/files/task.json",
+		ts.URL + "/v1/tasks/sb-stream/bad*task/files/task.json",
+		ts.URL + "/v1/tasks/sb-stream/task-stream-1/files/session%2f%2fstream.ndjson",
+	}
+	for _, u := range invalidURLs {
+		r, err := http.Get(u)
+		if err != nil {
+			t.Fatalf("GET %s: %v", u, err)
+		}
+		r.Body.Close()
+		if r.StatusCode != http.StatusBadRequest {
+			t.Errorf("GET %s status = %d, want %d", u, r.StatusCode, http.StatusBadRequest)
+		}
+	}
+
+	// 3. Not found checks (404)
+	r404, err := http.Get(ts.URL + "/v1/tasks/sb-stream/task-stream-1/files/missing.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r404.Body.Close()
+	if r404.StatusCode != http.StatusNotFound {
+		t.Errorf("missing file status = %d, want 404", r404.StatusCode)
+	}
+
+	r404Task, err := http.Get(ts.URL + "/v1/tasks/sb-stream/unknown-task/files/task.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r404Task.Body.Close()
+	if r404Task.StatusCode != http.StatusNotFound {
+		t.Errorf("unknown task status = %d, want 404", r404Task.StatusCode)
+	}
+
+	// 4. No archive configured -> 501
+	storeNoArchive := openArchived(t, t.TempDir(), nil)
+	tsNoArchive := httptest.NewServer(NewServerForStore(storeNoArchive).Handler())
+	defer tsNoArchive.Close()
+
+	r501, err := http.Get(tsNoArchive.URL + "/v1/tasks/sb-stream/task-stream-1/files/task.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r501.Body.Close()
+	if r501.StatusCode != http.StatusNotImplemented {
+		t.Errorf("no archive status = %d, want 501", r501.StatusCode)
 	}
 }

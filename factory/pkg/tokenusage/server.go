@@ -19,6 +19,7 @@ package tokenusage
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"log"
 	"net/http"
 	"strconv"
@@ -53,6 +54,7 @@ func NewServerForStore(store *Store) *Server {
 	s.mux.HandleFunc("POST /v1/workflows/{session}/mark-summarized", s.handleMarkSummarized)
 	s.mux.HandleFunc("GET /v1/usage/tools", s.handleUsageTools)
 	s.mux.HandleFunc("PUT /v1/tasks/{sandbox}/{task}", s.handleTaskPut)
+	s.mux.HandleFunc("GET /v1/tasks/{sandbox}/{task}/files/{name...}", s.handleTaskFile)
 	s.mux.HandleFunc("GET /v1/tasks", s.handleTasks)
 	s.mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -105,6 +107,54 @@ func (s *Server) handleTasks(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"tasks": s.store.ListTasks(TaskFilter{
 		Repo: q.Get("repo"), Issue: issue, PR: pr, Sandbox: q.Get("sandbox"),
 	})})
+}
+
+// handleTaskFile streams a single file from an archived task, unzipping if gzipped in the archive.
+func (s *Server) handleTaskFile(w http.ResponseWriter, r *http.Request) {
+	sandbox := r.PathValue("sandbox")
+	task := r.PathValue("task")
+	name := r.PathValue("name")
+
+	if !pathPart.MatchString(sandbox) || !pathPart.MatchString(task) || !validTaskFilePath(name) {
+		http.Error(w, "invalid path", http.StatusBadRequest)
+		return
+	}
+
+	rc, err := s.store.ReadTaskFile(r.Context(), sandbox, task, name)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrNoArchive):
+			http.Error(w, err.Error(), http.StatusNotImplemented)
+		case errors.Is(err, ErrNotFound):
+			http.Error(w, "not found", http.StatusNotFound)
+		default:
+			log.Printf("reading task file %s/%s/%s: %v", sandbox, task, name, err)
+			http.Error(w, "storage error", http.StatusInternalServerError)
+		}
+		return
+	}
+	defer rc.Close()
+
+	w.Header().Set("Content-Type", detectContentType(name))
+	w.WriteHeader(http.StatusOK)
+	if _, err := io.Copy(w, rc); err != nil {
+		log.Printf("streaming task file %s/%s/%s: %v", sandbox, task, name, err)
+	}
+}
+
+func detectContentType(name string) string {
+	switch {
+	case strings.HasSuffix(name, ".json"):
+		return "application/json"
+	case strings.HasSuffix(name, ".ndjson"):
+		return "application/x-ndjson"
+	case strings.HasSuffix(name, ".yaml"), strings.HasSuffix(name, ".yml"):
+		return "application/yaml"
+	case strings.HasSuffix(name, ".log"), strings.HasSuffix(name, ".txt"):
+		return "text/plain; charset=utf-8"
+	default:
+		return "application/octet-stream"
+	}
 }
 
 func (s *Server) handleUsageTools(w http.ResponseWriter, r *http.Request) {
