@@ -20,6 +20,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -41,10 +42,12 @@ type Store struct {
 	records     map[string]UsageRecord
 	subjects    map[string]Subject
 	tasks       map[string]TaskRecord
+	outcomes    map[string]OutcomeRecord
 	summarized  map[string]bool // workflow session -> summary comment posted
 	log         *os.File
 	subjectsLog *os.File
 	tasksLog    *os.File
+	outcomesLog *os.File
 
 	// The archive tier (archive.go); nil keeps everything on the PVC.
 	archive         Archive
@@ -73,6 +76,7 @@ func OpenStore(ctx context.Context, root string, archive Archive) (*Store, error
 		records:       map[string]UsageRecord{},
 		subjects:      map[string]Subject{},
 		tasks:         map[string]TaskRecord{},
+		outcomes:      map[string]OutcomeRecord{},
 		summarized:    map[string]bool{},
 		archive:       archive,
 		nextSeq:       1,
@@ -90,6 +94,11 @@ func OpenStore(ctx context.Context, root string, archive Archive) (*Store, error
 	}
 	if err := s.loadLog(ctx, logTasks, func(r io.Reader) error {
 		return replayLog(r, func(rec TaskRecord) string { return rec.Key }, s.tasks)
+	}); err != nil {
+		return nil, err
+	}
+	if err := s.loadLog(ctx, logOutcomes, func(r io.Reader) error {
+		return replayLog(r, func(rec OutcomeRecord) string { return rec.Key }, s.outcomes)
 	}); err != nil {
 		return nil, err
 	}
@@ -120,6 +129,14 @@ func OpenStore(ctx context.Context, root string, archive Archive) (*Store, error
 		return nil, fmt.Errorf("opening task index log: %w", err)
 	}
 	s.tasksLog = tasksLog
+	outcomesLog, err := os.OpenFile(s.activePath(logOutcomes), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		_ = log.Close()
+		_ = subjectsLog.Close()
+		_ = tasksLog.Close()
+		return nil, fmt.Errorf("opening outcomes log: %w", err)
+	}
+	s.outcomesLog = outcomesLog
 	return s, nil
 }
 
@@ -603,6 +620,9 @@ func (s *Store) Close() error {
 	if err2 := s.tasksLog.Close(); err == nil {
 		err = err2
 	}
+	if err2 := s.outcomesLog.Close(); err == nil {
+		err = err2
+	}
 	return err
 }
 
@@ -744,4 +764,252 @@ func (s *Store) SlowestShellCommands(repoFilter string) SlowestCommandsResponse 
 		resp.TopSlowestCommands = []AggregatedCommand{}
 	}
 	return resp
+}
+
+func parseTime(tsStr string) (time.Time, error) {
+	if t, err := time.Parse(time.RFC3339Nano, tsStr); err == nil {
+		return t, nil
+	}
+	if t, err := time.Parse(time.RFC3339, tsStr); err == nil {
+		return t, nil
+	}
+	if t, err := time.Parse("2006-01-02", tsStr); err == nil {
+		return t, nil
+	}
+	return time.Time{}, fmt.Errorf("cannot parse time %q", tsStr)
+}
+
+// PutOutcome appends an outcome record to the outcomes log and updates the in-memory index.
+func (s *Store) PutOutcome(rec OutcomeRecord) error {
+	if rec.Key == "" {
+		if rec.Repo != "" && rec.PR > 0 {
+			rec.Key = OutcomeKey(rec.Repo, rec.PR)
+		} else {
+			return errors.New("key is required")
+		}
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	line, err := json.Marshal(rec)
+	if err != nil {
+		return fmt.Errorf("marshaling outcome: %w", err)
+	}
+	if _, err := s.outcomesLog.Write(append(line, '\n')); err != nil {
+		return fmt.Errorf("appending to outcomes log: %w", err)
+	}
+	if err := s.outcomesLog.Sync(); err != nil {
+		return fmt.Errorf("syncing outcomes log: %w", err)
+	}
+	s.outcomes[rec.Key] = rec
+	return nil
+}
+
+// ListOutcomes returns matching outcome records, newest first.
+func (s *Store) ListOutcomes(f OutcomeFilter) []OutcomeRecord {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []OutcomeRecord
+	for _, rec := range s.outcomes {
+		if f.Repo != "" && rec.Repo != f.Repo {
+			continue
+		}
+		if f.PR != 0 && rec.PR != f.PR {
+			continue
+		}
+		if !f.Since.IsZero() || !f.Until.IsZero() {
+			tStr := rec.ClosedAt
+			if tStr == "" {
+				tStr = rec.OpenedAt
+			}
+			if tStr != "" {
+				t, err := parseTime(tStr)
+				if err == nil {
+					if !f.Since.IsZero() && t.Before(f.Since) {
+						continue
+					}
+					if !f.Until.IsZero() && t.After(f.Until) {
+						continue
+					}
+				}
+			}
+		}
+		out = append(out, rec)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		tI := out[i].ClosedAt
+		if tI == "" {
+			tI = out[i].OpenedAt
+		}
+		tJ := out[j].ClosedAt
+		if tJ == "" {
+			tJ = out[j].OpenedAt
+		}
+		if tI != tJ {
+			return tI > tJ
+		}
+		return out[i].Key < out[j].Key
+	})
+	return out
+}
+
+func (s *Store) tokensForPR(repo string, pr int) int64 {
+	var total int64
+	for _, rec := range s.records {
+		if rec.PR == pr && (repo == "" || rec.Repo == repo) {
+			for _, m := range rec.Stats.Models {
+				if m.Tokens.Total > 0 {
+					total += m.Tokens.Total
+				} else {
+					total += m.Tokens.Input + m.Tokens.Output
+				}
+			}
+		}
+	}
+	return total
+}
+
+// RollupOutcomes computes per-skill or per-workflow aggregate statistics.
+func (s *Store) RollupOutcomes(repo string, since time.Time, by string) ([]OutcomeRollup, error) {
+	if by != "skill" && by != "workflow" {
+		return nil, fmt.Errorf("by must be 'skill' or 'workflow', got %q", by)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	type itemAgg struct {
+		totalPRs     int
+		mergedPRs    int
+		botTotalPRs  int
+		botMergedPRs int
+		carePasses   int
+		humanEdits   int
+		totalTokens  int64
+	}
+	aggs := make(map[string]*itemAgg)
+
+	for _, rec := range s.outcomes {
+		if repo != "" && rec.Repo != repo {
+			continue
+		}
+		if !since.IsZero() {
+			tStr := rec.ClosedAt
+			if tStr == "" {
+				tStr = rec.OpenedAt
+			}
+			if tStr != "" {
+				if t, err := parseTime(tStr); err == nil && t.Before(since) {
+					continue
+				}
+			}
+		}
+
+		names := make(map[string]bool)
+		switch by {
+		case "skill":
+			for _, tRef := range rec.Tasks {
+				if tRef.Instructions != nil {
+					for _, sk := range tRef.Instructions.Skills {
+						if sk.Name != "" {
+							names[sk.Name] = true
+						}
+					}
+				} else {
+					if tr, ok := s.tasks[tRef.Sandbox+"/"+tRef.Task]; ok && tr.Instructions != nil {
+						for _, sk := range tr.Instructions.Skills {
+							if sk.Name != "" {
+								names[sk.Name] = true
+							}
+						}
+					}
+				}
+			}
+			for _, tr := range s.tasks {
+				if tr.PR == rec.PR && (repo == "" || tr.Repo == rec.Repo) && tr.Instructions != nil {
+					for _, sk := range tr.Instructions.Skills {
+						if sk.Name != "" {
+							names[sk.Name] = true
+						}
+					}
+				}
+			}
+		case "workflow":
+			for _, tRef := range rec.Tasks {
+				if tRef.Instructions != nil && tRef.Instructions.Workflow != nil && tRef.Instructions.Workflow.Name != "" {
+					names[tRef.Instructions.Workflow.Name] = true
+				} else {
+					if tr, ok := s.tasks[tRef.Sandbox+"/"+tRef.Task]; ok && tr.Instructions != nil && tr.Instructions.Workflow != nil && tr.Instructions.Workflow.Name != "" {
+						names[tr.Instructions.Workflow.Name] = true
+					}
+				}
+			}
+			for _, tr := range s.tasks {
+				if tr.PR == rec.PR && (repo == "" || tr.Repo == rec.Repo) && tr.Instructions != nil && tr.Instructions.Workflow != nil && tr.Instructions.Workflow.Name != "" {
+					names[tr.Instructions.Workflow.Name] = true
+				}
+			}
+			for _, ur := range s.records {
+				if ur.PR == rec.PR && (repo == "" || ur.Repo == rec.Repo) {
+					if ur.WorkflowName != "" {
+						names[ur.WorkflowName] = true
+					} else if ur.Workflow != "" {
+						names[ur.Workflow] = true
+					}
+				}
+			}
+		}
+
+		prTokens := s.tokensForPR(rec.Repo, rec.PR)
+		isMerged := rec.State == "merged"
+		isBotPR := rec.OpenedByBot || rec.HasSessionLink
+		hasHumanEdit := rec.HumanEdit != nil && (rec.HumanEdit.Files > 0 || rec.HumanEdit.Added > 0 || rec.HumanEdit.Deleted > 0 || len(rec.HumanEdit.Paths) > 0)
+
+		for name := range names {
+			agg, ok := aggs[name]
+			if !ok {
+				agg = &itemAgg{}
+				aggs[name] = agg
+			}
+			agg.totalPRs++
+			if isMerged {
+				agg.mergedPRs++
+			}
+			if isBotPR {
+				agg.botTotalPRs++
+				if isMerged {
+					agg.botMergedPRs++
+				}
+			}
+			agg.carePasses += rec.CarePasses
+			if hasHumanEdit {
+				agg.humanEdits++
+			}
+			agg.totalTokens += prTokens
+		}
+	}
+
+	var out []OutcomeRollup
+	for name, agg := range aggs {
+		rate := 0.0
+		if agg.botTotalPRs > 0 {
+			rate = float64(agg.botMergedPRs) / float64(agg.botTotalPRs)
+		}
+		costPerMerged := 0.0
+		if agg.mergedPRs > 0 {
+			costPerMerged = float64(agg.totalTokens) / float64(agg.mergedPRs)
+		}
+		out = append(out, OutcomeRollup{
+			Name:            name,
+			TotalPRs:        agg.totalPRs,
+			MergedPRs:       agg.mergedPRs,
+			AcceptanceRate:  rate,
+			CarePasses:      agg.carePasses,
+			HumanEdits:      agg.humanEdits,
+			CostPerMergedPR: costPerMerged,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].Name < out[j].Name
+	})
+	return out, nil
 }

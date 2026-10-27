@@ -24,7 +24,10 @@ limitations under the License.
 // the token-usage.json files written by the task scripts in factory/pkg/tasks.
 package tokenusage
 
-import "fmt"
+import (
+	"fmt"
+	"time"
+)
 
 // Stats captures accumulated usage statistics from LLM invocations,
 // keyed by model name.
@@ -298,4 +301,80 @@ type FeedbackItem struct {
 	Head           string      `json:"head"`
 	AfterBotReview bool        `json:"afterBotReview"`
 	AnsweredBy     *AnsweredBy `json:"answeredBy,omitempty"`
+}
+
+// OutcomeRecord captures the outcome of a pull request that agents worked on,
+// persisted upon PR close or merge.
+type OutcomeRecord struct {
+	Key              string           `json:"key"` // "outcome:owner/repo#pr"
+	Repo             string           `json:"repo"`
+	PR               int              `json:"pr"`
+	Issues           []int            `json:"issues,omitempty"`
+	State            string           `json:"state"` // "merged" | "closed"
+	OpenedAt         string           `json:"openedAt,omitempty"`
+	ClosedAt         string           `json:"closedAt,omitempty"`
+	ClosedBy         string           `json:"closedBy,omitempty"`
+	Tasks            []TaskOutcomeRef `json:"tasks,omitempty"`
+	CarePasses       int              `json:"carePasses"`
+	ReviewComments   int              `json:"reviewComments"`
+	ChangesRequested int              `json:"changesRequested"`
+	Feedback         *FeedbackSummary `json:"feedback,omitempty"`
+	AgentHead        string           `json:"agentHead,omitempty"`
+	HumanEdit        *HumanEdit       `json:"humanEdit,omitempty"`
+	CIRedAfterPush   int              `json:"ciRedAfterPush,omitempty"`
+	RequiresHuman    bool             `json:"requiresHuman,omitempty"`
+	CloseReason      string           `json:"closeReason,omitempty"`
+	OpenedByBot      bool             `json:"openedByBot"`
+	HasSessionLink   bool             `json:"hasSessionLink,omitempty"`
+}
+
+// OutcomeKey returns the canonical key for an outcome record.
+func OutcomeKey(repo string, pr int) string {
+	return fmt.Sprintf("outcome:%s#%d", repo, pr)
+}
+
+// TaskOutcomeRef references one task that ran for a pull request, with its
+// instructions and archive location.
+type TaskOutcomeRef struct {
+	Sandbox      string        `json:"sandbox"`
+	Task         string        `json:"task"`
+	Folder       string        `json:"folder,omitempty"`
+	Instructions *Instructions `json:"instructions,omitempty"`
+}
+
+// FeedbackSummary summarizes the human review and comment feedback captured
+// on a closed pull request.
+type FeedbackSummary struct {
+	Items          int    `json:"items"`
+	Humans         int    `json:"humans"`
+	AfterBotReview int    `json:"afterBotReview"`
+	Folder         string `json:"folder,omitempty"`
+}
+
+// HumanEdit captures how much a pull request moved between the agent's last
+// push and the final PR head, comparing each against its merge base with the base branch.
+type HumanEdit struct {
+	Files   int      `json:"files"`
+	Added   int      `json:"added"`
+	Deleted int      `json:"deleted"`
+	Paths   []string `json:"paths,omitempty"`
+}
+
+// OutcomeFilter selects outcome records.
+type OutcomeFilter struct {
+	Repo  string
+	PR    int
+	Since time.Time
+	Until time.Time
+}
+
+// OutcomeRollup aggregates outcome records grouped by skill or workflow.
+type OutcomeRollup struct {
+	Name            string  `json:"name"`
+	TotalPRs        int     `json:"totalPRs"`
+	MergedPRs       int     `json:"mergedPRs"`
+	AcceptanceRate  float64 `json:"acceptanceRate"`
+	CarePasses      int     `json:"carePasses"`
+	HumanEdits      int     `json:"humanEdits"`
+	CostPerMergedPR float64 `json:"costPerMergedPR"`
 }

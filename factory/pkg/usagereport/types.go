@@ -39,4 +39,9 @@ type (
 	AggregatedCommand       = tokenusage.AggregatedCommand
 	PeriodSlowest           = tokenusage.PeriodSlowest
 	SlowestCommandsResponse = tokenusage.SlowestCommandsResponse
+	OutcomeRecord           = tokenusage.OutcomeRecord
+	HumanEdit               = tokenusage.HumanEdit
+	FeedbackSummary         = tokenusage.FeedbackSummary
+	TaskOutcomeRef          = tokenusage.TaskOutcomeRef
+	OutcomeRollup           = tokenusage.OutcomeRollup
 )

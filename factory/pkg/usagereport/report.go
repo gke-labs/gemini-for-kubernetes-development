@@ -192,6 +192,75 @@ func ReportPRFeedback(ctx context.Context, owner, repo string, pr int, data []by
 	}
 }
 
+// ReportPROutcome uploads an outcome record for a closed pull request to
+// the collector's PUT /v1/outcomes/{owner}/{repo}/{pr} endpoint.
+// Best-effort: no-op when disabled; returns an error on upload failure.
+func ReportPROutcome(ctx context.Context, outcome *tokenusage.OutcomeRecord) error {
+	if !Enabled() || outcome == nil {
+		return nil
+	}
+	parts := strings.Split(outcome.Repo, "/")
+	if len(parts) != 2 {
+		return fmt.Errorf("invalid outcome repo %q", outcome.Repo)
+	}
+	owner, repo := parts[0], parts[1]
+	u := fmt.Sprintf("%s/v1/outcomes/%s/%s/%d", collectorURL(), url.PathEscape(owner), url.PathEscape(repo), outcome.PR)
+	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
+	defer cancel()
+
+	data, err := json.Marshal(outcome)
+	if err != nil {
+		return fmt.Errorf("marshaling outcome for %s#%d: %w", outcome.Repo, outcome.PR, err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, u, bytes.NewReader(data))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("reporting outcome for %s#%d: %w", outcome.Repo, outcome.PR, err)
+	}
+	defer resp.Body.Close()
+	switch resp.StatusCode {
+	case http.StatusOK, http.StatusNotImplemented:
+		return nil
+	default:
+		return fmt.Errorf("reporting outcome for %s#%d: collector returned status %d", outcome.Repo, outcome.PR, resp.StatusCode)
+	}
+}
+
+// ListTasksForPR queries the collector's task index for tasks belonging to a PR.
+func ListTasksForPR(ctx context.Context, owner, repo string, pr int) ([]tokenusage.TaskRecord, error) {
+	if !Enabled() {
+		return nil, nil
+	}
+	u := fmt.Sprintf("%s/v1/tasks?repo=%s&pr=%d", collectorURL(), url.QueryEscape(owner+"/"+repo), pr)
+	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("listing tasks returned %d", resp.StatusCode)
+	}
+	var out struct {
+		Tasks []tokenusage.TaskRecord `json:"tasks"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, err
+	}
+	return out.Tasks, nil
+}
+
 func postJSON(ctx context.Context, path string, v any) error {
 	base := collectorURL()
 	if base == "" {

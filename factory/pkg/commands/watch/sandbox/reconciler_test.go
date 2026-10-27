@@ -858,6 +858,7 @@ func TestPRNumberFromSandbox(t *testing.T) {
 type recordingWhyClosed struct {
 	closedPRs []int
 	polled    int
+	reasons   map[int]string
 }
 
 func (w *recordingWhyClosed) OnClosedPR(_ context.Context, pr *githubv39.PullRequest) {
@@ -866,6 +867,14 @@ func (w *recordingWhyClosed) OnClosedPR(_ context.Context, pr *githubv39.PullReq
 
 func (w *recordingWhyClosed) Poll(_ context.Context) {
 	w.polled++
+}
+
+func (w *recordingWhyClosed) CloseReason(prNum int) (string, bool) {
+	if w.reasons != nil {
+		r, ok := w.reasons[prNum]
+		return r, ok
+	}
+	return "", false
 }
 
 func TestCollectGarbageNotifiesWhyClosedOnUnmergedPR(t *testing.T) {
@@ -1370,5 +1379,212 @@ func TestCollectGarbageUploadsFeedback(t *testing.T) {
 
 	if !strings.Contains(uploadedFeedback[0], "Closed with feedback") || !strings.Contains(uploadedFeedback[0], `"author":"alice"`) {
 		t.Errorf("uploaded feedback content unexpected:\n%s", uploadedFeedback[0])
+	}
+}
+
+func TestCollectGarbageUploadsOutcomeRecord(t *testing.T) {
+	prNum := 99
+	agentHead := "agent-head-99"
+	finalHead := "final-head-99"
+
+	// Mock collector
+	var uploadedOutcomes []tokenusage.OutcomeRecord
+	collectorSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPut && r.URL.Path == fmt.Sprintf("/v1/outcomes/test-owner/test-repo/%d", prNum) {
+			var rec tokenusage.OutcomeRecord
+			if err := json.NewDecoder(r.Body).Decode(&rec); err != nil {
+				t.Errorf("decoding outcome: %v", err)
+			}
+			uploadedOutcomes = append(uploadedOutcomes, rec)
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer collectorSrv.Close()
+
+	t.Setenv("COLLECTOR_URL", collectorSrv.URL)
+
+	// Mock task server
+	fakeTS := &fakeTaskServer{
+		entries: []spool.Entry{
+			{Task: spool.Task{ID: "recipe-care-1"}},
+			{Task: spool.Task{ID: "recipe-fix-1"}},
+		},
+		files: map[string]string{
+			"recipe-care-1/push.json": fmt.Sprintf(`{"head": %q}`, agentHead),
+		},
+	}
+	withTasks(t, fakeTS, nil)
+
+	// Mock GitHub
+	ghMux := http.NewServeMux()
+	ghMux.HandleFunc(fmt.Sprintf("/repos/test-owner/test-repo/pulls/%d", prNum), func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"number": prNum,
+			"state":  "closed",
+			"merged": false,
+			"head": map[string]string{
+				"sha": finalHead,
+				"ref": "fix-branch",
+			},
+			"base": map[string]string{
+				"ref": "main",
+			},
+			"user": map[string]string{
+				"login": "gemini-bot",
+				"type":  "Bot",
+			},
+			"body": "Fixes #42. <sub>🤖 [Agent session](https://example.com/task-session/sb/task)</sub>",
+		})
+	})
+	ghMux.HandleFunc(fmt.Sprintf("/repos/test-owner/test-repo/pulls/%d/commits", prNum), func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode([]map[string]interface{}{})
+	})
+	ghMux.HandleFunc(fmt.Sprintf("/repos/test-owner/test-repo/pulls/%d/reviews", prNum), func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode([]map[string]interface{}{
+			{"state": "CHANGES_REQUESTED"},
+		})
+	})
+	ghMux.HandleFunc(fmt.Sprintf("/repos/test-owner/test-repo/pulls/%d/comments", prNum), func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode([]map[string]interface{}{
+			{"id": 1, "body": "inline 1"},
+			{"id": 2, "body": "inline 2"},
+		})
+	})
+	ghMux.HandleFunc(fmt.Sprintf("/repos/test-owner/test-repo/issues/%d/comments", prNum), func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode([]map[string]interface{}{})
+	})
+	ghMux.HandleFunc(fmt.Sprintf("/repos/test-owner/test-repo/compare/main...%s", agentHead), func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"files": []map[string]interface{}{
+				{"filename": "pkg/foo.go", "sha": "sha-old", "additions": 10, "deletions": 2},
+			},
+		})
+	})
+	ghMux.HandleFunc(fmt.Sprintf("/repos/test-owner/test-repo/compare/main...%s", finalHead), func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"files": []map[string]interface{}{
+				{"filename": "pkg/foo.go", "sha": "sha-new", "additions": 14, "deletions": 5},
+				{"filename": "pkg/bar.go", "sha": "sha-bar", "additions": 3, "deletions": 1},
+			},
+		})
+	})
+
+	ghSrv := httptest.NewServer(ghMux)
+	defer ghSrv.Close()
+
+	client := githubv39.NewClient(nil)
+	client.BaseURL, _ = url.Parse(ghSrv.URL + "/")
+
+	sbName := fmt.Sprintf("factory-pr-%d", prNum)
+	kube := newFakeKubeClient(t,
+		newSandbox(sbName, map[string]interface{}{annotationLastTaskState: "Completed"}),
+	)
+
+	why := &recordingWhyClosed{
+		reasons: map[int]string{
+			prNum: "superseded by #100",
+		},
+	}
+
+	r := New(Config{}, Deps{
+		Sandboxes: NewService(ServiceConfig{Namespace: testNamespace, Owner: "test-owner", Repo: "test-repo"}, ServiceDeps{
+			Kube:   kube,
+			GitHub: client,
+		}),
+		Locks:     concurrency.NewSandboxLockRegistry(),
+		Entities:  warmCache(),
+		WhyClosed: why,
+	})
+
+	r.CollectGarbage(context.Background())
+
+	if len(uploadedOutcomes) != 1 {
+		t.Fatalf("expected 1 outcome uploaded, got %d", len(uploadedOutcomes))
+	}
+
+	outcome := uploadedOutcomes[0]
+	if outcome.Repo != "test-owner/test-repo" || outcome.PR != prNum {
+		t.Errorf("repo/PR unexpected: %s#%d", outcome.Repo, outcome.PR)
+	}
+	if outcome.State != "closed" {
+		t.Errorf("state: expected closed, got %s", outcome.State)
+	}
+	if outcome.CloseReason != "superseded by #100" {
+		t.Errorf("closeReason: expected 'superseded by #100', got %q", outcome.CloseReason)
+	}
+	if !outcome.OpenedByBot {
+		t.Errorf("openedByBot: expected true")
+	}
+	if !outcome.HasSessionLink {
+		t.Errorf("hasSessionLink: expected true")
+	}
+	if outcome.CarePasses != 1 {
+		t.Errorf("carePasses: expected 1, got %d", outcome.CarePasses)
+	}
+	if outcome.ChangesRequested != 1 {
+		t.Errorf("changesRequested: expected 1, got %d", outcome.ChangesRequested)
+	}
+	if outcome.ReviewComments != 2 {
+		t.Errorf("reviewComments: expected 2, got %d", outcome.ReviewComments)
+	}
+	if outcome.AgentHead != agentHead {
+		t.Errorf("agentHead: expected %s, got %s", agentHead, outcome.AgentHead)
+	}
+	if outcome.HumanEdit == nil {
+		t.Fatalf("humanEdit was nil")
+	}
+	if outcome.HumanEdit.Files != 2 {
+		t.Errorf("humanEdit files: expected 2, got %d", outcome.HumanEdit.Files)
+	}
+	if outcome.HumanEdit.Added != 7 || outcome.HumanEdit.Deleted != 4 {
+		t.Errorf("humanEdit added/deleted: expected 7/4, got %d/%d", outcome.HumanEdit.Added, outcome.HumanEdit.Deleted)
+	}
+	if len(outcome.HumanEdit.Paths) != 2 || outcome.HumanEdit.Paths[0] != "pkg/bar.go" || outcome.HumanEdit.Paths[1] != "pkg/foo.go" {
+		t.Errorf("humanEdit paths: expected [pkg/bar.go, pkg/foo.go], got %v", outcome.HumanEdit.Paths)
+	}
+}
+
+func TestComputeHumanEditRebaseNoChange(t *testing.T) {
+	agentHead := "agent-head-1"
+	finalHead := "final-head-1"
+
+	ghMux := http.NewServeMux()
+	ghMux.HandleFunc(fmt.Sprintf("/repos/test-owner/test-repo/compare/main...%s", agentHead), func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"files": []map[string]interface{}{
+				{"filename": "pkg/foo.go", "sha": "sha-same", "additions": 10, "deletions": 2},
+			},
+		})
+	})
+	ghMux.HandleFunc(fmt.Sprintf("/repos/test-owner/test-repo/compare/main...%s", finalHead), func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"files": []map[string]interface{}{
+				{"filename": "pkg/foo.go", "sha": "sha-same", "additions": 10, "deletions": 2},
+			},
+		})
+	})
+
+	ghSrv := httptest.NewServer(ghMux)
+	defer ghSrv.Close()
+
+	client := githubv39.NewClient(nil)
+	client.BaseURL, _ = url.Parse(ghSrv.URL + "/")
+
+	r := &Reconciler{
+		sandboxes: &Service{
+			owner: "test-owner",
+			repo:  "test-repo",
+			gh:    client,
+		},
+	}
+
+	edit := r.computeHumanEdit(context.Background(), "main", agentHead, finalHead)
+	if edit == nil {
+		t.Fatalf("expected non-nil edit")
+	}
+	if edit.Files != 0 || edit.Added != 0 || edit.Deleted != 0 || len(edit.Paths) != 0 {
+		t.Errorf("expected 0 files changed on clean rebase, got %+v", edit)
 	}
 }
