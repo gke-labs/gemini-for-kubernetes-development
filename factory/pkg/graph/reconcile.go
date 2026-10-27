@@ -66,9 +66,10 @@ type Parent struct {
 	// ClosedByCommit.
 	ClosedBy string
 	Labels   []string
-	// Assignees are the parent's: an ask step's child, the plan naming no
-	// one, goes to its humans among them (askAssignees).
-	Assignees []string
+	// Humans are the people among the parent's assignees - neither the
+	// pool's bots, the watcher, nor an app - as Observe reads them: every
+	// child is assigned to them, at creation and when one is added later.
+	Humans []string
 	// Depth is the parent's own depth: 0 for an issue that is no graph's
 	// child, a child's marker depth otherwise.
 	Depth int
@@ -82,8 +83,9 @@ type Child struct {
 	// duplicate: its step is skipped.
 	NotPlanned bool
 	// Linked is whether it is a sub-issue of the parent.
-	Linked bool
-	Labels []string
+	Linked    bool
+	Labels    []string
+	Assignees []string
 	// MergedBotPR is a bot-authored PR referencing the open child that has
 	// merged, 0 for none: the child is done all the same.
 	MergedBotPR int
@@ -115,6 +117,7 @@ const (
 	ActLinkChild           = "link-child"
 	ActCloseDuplicate      = "close-duplicate"
 	ActAddChildLabels      = "add-child-labels"
+	ActAddChildAssignees   = "add-child-assignees"
 	ActCloseChildCompleted = "close-child-completed"
 	ActAddParentLabels     = "add-parent-labels"
 	ActReopenParent        = "reopen-parent"
@@ -131,10 +134,12 @@ type Action struct {
 	// or the PR a child is closed as completed by.
 	Of     int
 	Labels []string
-	// Assignees are the step's, given its child when it is created (GitHub
-	// notifies them). AskPerson is a then: ask step's child: with no
-	// assignees of the step's, it goes to the parent's humans, else to
-	// whoever approved the graph (askAssignees).
+	// Assignees are, for a child to create, the step's and the parent's
+	// humans (childAssignees), given it when it is created (GitHub
+	// notifies them); for an open child, the parent's humans added since
+	// they were last handed down that it lacks. AskPerson is a then: ask
+	// step's child: with no one from either, it goes to whoever approved
+	// the graph (approverAssignees).
 	Assignees []string
 	AskPerson bool
 	// Title, Body and Child are a child to create: the rendered title,
@@ -212,7 +217,7 @@ func Reconcile(o Observed) Result {
 	r.Steps = statuses(s, ids, canonical)
 
 	// 2. The stop label: only the status.
-	if hasLabel(o.Parent.Labels, stop) {
+	if containsFold(o.Parent.Labels, stop) {
 		r.Phase, r.Reason = PhasePaused, "the parent has "+stop
 		return r
 	}
@@ -232,8 +237,10 @@ func Reconcile(o Observed) Result {
 		}
 	}
 
-	// 6. Active children: labels a child to be fixed must keep, and
+	// 6. Active children: labels a child to be fixed must keep, the
+	// parent's humans added since they were last handed down, and
 	// children done by a merged bot PR.
+	added := missingLogins(o.State.Inherited, o.Parent.Humans)
 	for _, id := range ids {
 		c, ok := canonical[id]
 		if !ok || !c.Open {
@@ -247,12 +254,20 @@ func Reconcile(o Observed) Result {
 				r.Actions = append(r.Actions, Action{Kind: ActAddChildLabels, Step: id, Issue: c.Number, Labels: missing})
 			}
 		}
+		// A child a merged bot PR completes is closed below: assigning it
+		// first would only notify people of a closed issue.
+		if missing := missingLogins(c.Assignees, added); len(missing) > 0 && c.MergedBotPR == 0 {
+			r.Actions = append(r.Actions, Action{Kind: ActAddChildAssignees, Step: id, Issue: c.Number, Assignees: missing})
+		}
 		if c.MergedBotPR > 0 {
 			r.Actions = append(r.Actions, Action{Kind: ActCloseChildCompleted, Step: id, Issue: c.Number, Of: c.MergedBotPR})
 			c.Open = false
 			canonical[id] = c
 		}
 	}
+	// Who is handed down from now on: the parent's humans as they are, so
+	// one taken off the parent and put back is handed down again.
+	r.State.Inherited = slices.Clone(o.Parent.Humans)
 	r.Steps = statuses(s, ids, canonical)
 	state := map[string]string{}
 	for _, ss := range r.Steps {
@@ -316,7 +331,7 @@ func Reconcile(o Observed) Result {
 		r.Actions = append(r.Actions, Action{
 			Kind: ActCreateChild, Step: ss.ID, Title: strings.TrimSpace(title), Body: body,
 			Labels:    childLabels(s, *st, o.Trigger),
-			Assignees: slices.Clone(st.Assignees),
+			Assignees: childAssignees(st.Assignees, o.Parent.Humans),
 			// A child whose description asks (its own ## Questions) waits
 			// for an answer too: it goes to a person all the same.
 			AskPerson: st.ThenOrDefault() == ThenAsk || len(OpenQuestions(body)) > 0,
@@ -455,7 +470,7 @@ func childLabels(s *Spec, st Step, trigger string) []string {
 	}
 	var out []string
 	for _, l := range labels {
-		if !hasLabel(out, l) {
+		if !containsFold(out, l) {
 			out = append(out, l)
 		}
 	}
@@ -465,15 +480,42 @@ func childLabels(s *Spec, st Step, trigger string) []string {
 func missingLabels(have, want []string) []string {
 	var out []string
 	for _, l := range want {
-		if !hasLabel(have, l) {
+		if !containsFold(have, l) {
 			out = append(out, l)
 		}
 	}
 	return out
 }
 
-func hasLabel(labels []string, label string) bool {
-	return slices.ContainsFunc(labels, func(l string) bool { return strings.EqualFold(l, label) })
+// childAssignees is who a step's child is assigned to when it is created:
+// the step's own assignees, then the parent's humans - as a pool's PR
+// takes the human assignees of the issues it closes
+// ({{closing-issue-assignees}}) - each once.
+func childAssignees(step, humans []string) []string {
+	var out []string
+	for _, a := range append(slices.Clone(step), humans...) {
+		if a != "" && !containsFold(out, a) {
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
+// missingLogins are the logins of want not in have, each once.
+func missingLogins(have, want []string) []string {
+	var out []string
+	for _, a := range want {
+		if a != "" && !containsFold(have, a) && !containsFold(out, a) {
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
+// containsFold is whether list holds s, ignoring case, as GitHub compares
+// labels and logins.
+func containsFold(list []string, s string) bool {
+	return slices.ContainsFunc(list, func(l string) bool { return strings.EqualFold(l, s) })
 }
 
 func firstErr(errs ...error) error {

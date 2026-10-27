@@ -22,6 +22,8 @@ type IssueRef struct {
 	// Author is who opened it.
 	Author string
 	Labels []string
+	// Assignees are the logins it is assigned to.
+	Assignees []string
 }
 
 // rawIssue is the part of GitHub's issue JSON an IssueRef is read from.
@@ -38,6 +40,9 @@ type rawIssue struct {
 	Labels []struct {
 		Name string `json:"name"`
 	} `json:"labels"`
+	Assignees []struct {
+		Login string `json:"login"`
+	} `json:"assignees"`
 	PullRequest *struct {
 		MergedAt *time.Time `json:"merged_at"`
 	} `json:"pull_request"`
@@ -56,6 +61,9 @@ func (r rawIssue) ref() IssueRef {
 	}
 	for _, l := range r.Labels {
 		ref.Labels = append(ref.Labels, l.Name)
+	}
+	for _, a := range r.Assignees {
+		ref.Assignees = append(ref.Assignees, a.Login)
 	}
 	return ref
 }

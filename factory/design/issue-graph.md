@@ -151,7 +151,7 @@ spec:
 | `title` / `body` | Templates. They can use `.Params`, a few string helpers, and `step "<id>"`, which gives the issue number and URL of a step this one depends on, directly or not. |
 | `labels` | Added to `defaults.labels`. The deployment's trigger label is always added; definitions never name it. |
 | `review` | Optional review instructions (a template). When set, the child's PR goes through [automated review](pr-automated-review.md): the reconciler adds the review label (`<triggerLabel>/review`) to the child and appends the rendered text to the child body under a `## Review Instructions` heading. The PR inherits both from the child it references, as described in pr-automated-review.md. When omitted, the PR is not reviewed automatically. |
-| `assignees` | Optional. Defaults to the watch's target assignee, so the child is picked up quickly. |
+| `assignees` | Optional. Assigned with the parent's human assignees, which every child inherits (§5.3). |
 | `after` | Step ids that must be done before this step's child is created. They must form a DAG: unknown ids and cycles are invalid. A step without `after` is ready at once. |
 | `finally` | Optional: one step (`title`, `body`, `then`, `labels`, `review`), created once every other step is done, with no `after` to keep up to date. The parent closes when it is done. Without it, the parent closes when the steps are done. |
 | `maxActive` | How many steps may be active at once. Default 1. |
@@ -270,7 +270,9 @@ Creating a child and linking it to the parent are separate operations as far as 
 
 ### 5.3 Labels and assignees
 
-Without push access, labels and assignees set when an issue is created are silently dropped. The reconciler applies them after creation, checks that they took, and re-applies them every cycle while the child is open. Persistent failures show up in the status comment.
+Without push access, labels and assignees set when an issue is created are silently dropped. The reconciler applies them after creation, and re-applies a fixed child's labels every cycle while the child is open.
+
+Every child is assigned to the step's `assignees` and the parent's human assignees (not the pool's bots, the watcher, or apps), as a pool's PR takes the human assignees of the issues it closes. A human added to the parent later is assigned to each open child on the next cycle, once: the status comment's state records the parent's humans already handed down (`inherited`), so someone who steps off a child is not put back, and someone taken off the parent and added again is handed down again. A failed assignment is logged and left out of `inherited`, so the next cycle retries it.
 
 ### 5.4 Params can't change after start
 

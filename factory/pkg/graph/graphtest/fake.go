@@ -34,12 +34,14 @@ type Issue struct {
 type Fake struct {
 	// Login is who the fake's writes are by (CreateIssue, AddComment):
 	// "watcher" unless set.
-	Login   string
-	Issues  map[int]*Issue
-	Next    int
-	Files   map[string]string
-	Writes  int
-	nextCID int64
+	Login  string
+	Issues map[int]*Issue
+	Next   int
+	Files  map[string]string
+	Writes int
+	// AssignErr, when set, fails every AddAssignees.
+	AssignErr error
+	nextCID   int64
 }
 
 func New() *Fake {
@@ -78,7 +80,7 @@ func (f *Fake) GetIssue(_ context.Context, n int) (*githubv39.Issue, error) {
 
 func (f *Fake) ref(n int) github.IssueRef {
 	is := f.Issues[n]
-	return github.IssueRef{Number: n, IsPR: is.IsPR, Title: is.Title, Body: is.Body, Open: is.Open, StateReason: is.Reason, Merged: is.Merged, Labels: slices.Clone(is.Labels), Author: is.Author}
+	return github.IssueRef{Number: n, IsPR: is.IsPR, Title: is.Title, Body: is.Body, Open: is.Open, StateReason: is.Reason, Merged: is.Merged, Labels: slices.Clone(is.Labels), Author: is.Author, Assignees: slices.Clone(is.Assignees)}
 }
 
 func (f *Fake) GetIssueRef(_ context.Context, n int) (github.IssueRef, error) {
@@ -159,6 +161,9 @@ func (f *Fake) CreateIssue(_ context.Context, title, body string, labels []strin
 }
 
 func (f *Fake) AddAssignees(_ context.Context, n int, assignees []string) error {
+	if f.AssignErr != nil {
+		return f.AssignErr
+	}
 	f.Writes++
 	f.Issues[n].Assignees = append(f.Issues[n].Assignees, assignees...)
 	return nil

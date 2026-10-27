@@ -2,6 +2,7 @@ package graph
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -87,10 +88,10 @@ func TestSyncImplicitPlanStart(t *testing.T) {
 }
 
 // A then: ask step's child is created labelled needs-human, saying what
-// a person can do, and assigned: to the step's assignees, else the
-// parent's humans (not the pool's bots), else whoever approved the graph -
-// the last human to label the parent implement or graph (not the watcher,
-// which labels it graph on implement) - else no one.
+// a person can do, and assigned: to the step's assignees and the parent's
+// humans (not the pool's bots), else whoever approved the graph - the last
+// human to label the parent implement or graph (not the watcher, which
+// labels it graph on implement) - else no one.
 func TestSyncAskStep(t *testing.T) {
 	labeled := func(label, actor string) *githubv39.Timeline {
 		return &githubv39.Timeline{Event: githubv39.String("labeled"), Label: &githubv39.Label{Name: githubv39.String(label)}, Actor: &githubv39.User{Login: githubv39.String(actor)}}
@@ -107,7 +108,8 @@ func TestSyncAskStep(t *testing.T) {
 		events    []*githubv39.Timeline
 		want      []string
 	}{
-		{"the step's", "[alice]", []string{"bob"}, approved, []string{"alice"}},
+		{"the step's and the parent's humans", "[alice]", []string{"bob"}, approved, []string{"alice", "bob"}},
+		{"the step's, once", "[bob]", []string{"Bob"}, approved, []string{"bob"}},
 		{"the parent's humans", "[]", []string{"hopper-coder-bot", "bob"}, approved, []string{"bob"}},
 		{"the approver", "[]", []string{"hopper-coder-bot"}, approved, []string{"carol"}},
 		{"a maintainer's graph label", "[]", nil, []*githubv39.Timeline{labeled("overseer/graph", "erin")}, []string{"erin"}},
@@ -132,6 +134,79 @@ func TestSyncAskStep(t *testing.T) {
 				t.Errorf("assigned %v, want %v", is.Assignees, tc.want)
 			}
 		})
+	}
+}
+
+// Every step's child, not only an ask step's, is created assigned to the
+// parent's human assignees - not the pool's bots, the watcher or an app -
+// as a pool's PR takes its closing issues' humans. Only an ask step's
+// child falls back to the graph's approver.
+func TestSyncChildrenInheritParentHumans(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		parent []string
+		want   []string
+	}{
+		{"the parent's humans", []string{"hopper-coder-bot", "bob", "watcher", "renovate[bot]", "alice"}, []string{"bob", "alice"}},
+		{"no humans, no one", []string{"hopper-coder-bot"}, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := graphtest.New()
+			f.Issues[100] = &graphtest.Issue{Title: "Epic", Body: "Build it.", Author: "alice", Assoc: "MEMBER", Open: true,
+				Labels: []string{"overseer/graph"}, Assignees: tc.parent,
+				Events: []*githubv39.Timeline{{Event: githubv39.String("labeled"), Label: &githubv39.Label{Name: githubv39.String("overseer/implement")}, Actor: &githubv39.User{Login: githubv39.String("carol")}}}}
+			f.Comment(100, "hopper-coder-bot", "NONE", "**Implementation plan** · v1\n\n```yaml graph\nmaxActive: 2\nsteps:\n"+
+				"  - {id: build, title: Build it, body: b}\n"+
+				"  - {id: design, title: Design it, body: d, then: plan}\n```\n\n<!-- factory:comment key=plan v=1 -->")
+			sync(t, f, Options{Issue: 100, Trigger: "overseer", BotLogin: "watcher", Pool: []string{"hopper-coder-bot", "watcher"}})
+			for _, step := range []string{"build", "design"} {
+				n := childOf(f, 100, step)
+				if n == 0 {
+					t.Fatalf("no child for step %s", step)
+				}
+				if got := f.Issues[n].Assignees; !slices.Equal(got, tc.want) {
+					t.Errorf("step %s's child assigned %v, want %v", step, got, tc.want)
+				}
+			}
+		})
+	}
+}
+
+// A human added to the parent after a child exists is assigned to it on
+// the next pass - once, kept in the status comment's state: one taken off
+// the child by hand afterwards is not put back.
+func TestSyncHandsDownParentHumansAdded(t *testing.T) {
+	f := graphtest.New()
+	f.Issues[100] = &graphtest.Issue{Title: "Epic", Body: "Build it.", Author: "alice", Assoc: "MEMBER", Open: true,
+		Labels: []string{"overseer/graph"}, Assignees: []string{"hopper-coder-bot", "bob"}}
+	f.Comment(100, "hopper-coder-bot", "NONE", "**Implementation plan** · v1\n\n```yaml graph\nsteps:\n"+
+		"  - {id: build, title: Build it, body: b}\n```\n\n<!-- factory:comment key=plan v=1 -->")
+	opts := Options{Issue: 100, Trigger: "overseer", BotLogin: "watcher", Pool: []string{"hopper-coder-bot", "watcher"}}
+	sync(t, f, opts)
+	n := childOf(f, 100, "build")
+	if n == 0 {
+		t.Fatal("no child")
+	}
+	if got := f.Issues[n].Assignees; !slices.Equal(got, []string{"bob"}) {
+		t.Fatalf("created assigned %v, want [bob]", got)
+	}
+
+	f.Issues[100].Assignees = append(f.Issues[100].Assignees, "carol", "renovate[bot]")
+	f.AssignErr = errors.New("502 Bad Gateway")
+	sync(t, f, opts)
+	if got := f.Issues[n].Assignees; !slices.Equal(got, []string{"bob"}) {
+		t.Fatalf("with GitHub failing, assigned %v, want [bob]", got)
+	}
+	f.AssignErr = nil
+	sync(t, f, opts) // retried: the failed pass did not record carol as handed down
+	if got := f.Issues[n].Assignees; !slices.Equal(got, []string{"bob", "carol"}) {
+		t.Fatalf("after carol joined the parent, assigned %v, want [bob carol]", got)
+	}
+
+	f.Issues[n].Assignees = []string{"carol"} // bob steps off the child
+	sync(t, f, opts)
+	if got := f.Issues[n].Assignees; !slices.Equal(got, []string{"carol"}) {
+		t.Errorf("after bob left the child, assigned %v, want [carol]", got)
 	}
 }
 

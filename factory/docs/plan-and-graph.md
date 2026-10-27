@@ -95,7 +95,7 @@ The parent never opens a PR. `fix` and `workflow` leave it alone
 |---|---|---|
 | `fix` (default) | `<t>`, the graph's default labels, the step's labels, `<t>/review` with review instructions | the `fix` rule: a coder bot fixes the child from its body and opens a PR `Fixes #<child>`; PR care follows (review, CI, comments, ready-for-human). A fix step may defer details only its implementation settles: its body ends with its own `## Questions`, and the sub-issue waits for the answers on that issue (labelled `<t>/needs-human`, assigned to a person), then the fix starts by itself and follows them |
 | `plan` | `<t>/plan` | the `plan` rule plans the child; a maintainer applies `<t>/implement` - one PR, or a graph of its own (section 5) |
-| `ask` | `<t>/needs-human` and `<t>/stop` | the step needs a maintainer's answer first: how big it is (fix it, or plan it first), whether it is needed, or a choice only it depends on. Its body holds the step's work and a `## Questions` checklist; the stop label keeps every bot off it until then. Answer on that issue (tick a box, or reply), then remove `<t>/stop` and label it `<t>` (fix) or `<t>/plan` - the agent reads the answer there - or close it as not planned to skip it. The step's `assignees`, else the parent's humans, else whoever approved the graph, are assigned |
+| `ask` | `<t>/needs-human` and `<t>/stop` | the step needs a maintainer's answer first: how big it is (fix it, or plan it first), whether it is needed, or a choice only it depends on. Its body holds the step's work and a `## Questions` checklist; the stop label keeps every bot off it until then. Answer on that issue (tick a box, or reply), then remove `<t>/stop` and label it `<t>` (fix) or `<t>/plan` - the agent reads the answer there - or close it as not planned to skip it. The step's `assignees` and the parent's humans, else whoever approved the graph, are assigned |
 
 ### Progress, pauses and checkpoints
 
@@ -152,8 +152,11 @@ steps:
   - id: storage
     title: Pick the storage backend
     then: ask           # a person decides; the child is labelled <t>/needs-human and <t>/stop
-    assignees: [alice]  # optional, any step: assigned when its child is created
-                        # (an ask step without: the parent's humans, else the approver)
+    assignees: [alice]  # optional, any step: assigned when its child is created,
+                        # with the parent's human assignees, which every child
+                        # inherits - a human added to the parent later is added
+                        # to its open children once (an ask step with no one:
+                        # the approver)
     body: |
       Spanner or Bigtable? ...
     body: |
