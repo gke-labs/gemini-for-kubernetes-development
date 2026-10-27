@@ -122,6 +122,10 @@ func TestBuildOverseerWork(t *testing.T) {
 			{FileName: "task-pr-13873-iterate.yaml", Type: "pr-iterate", URL: kccURL + "/pull/13873", Number: 13873, Rank: 2, Priority: "high"},
 			{FileName: "task-issue-13931.yaml", Type: "issue-fix", URL: kccURL + "/issues/13931", Number: 13931, Rank: 1},
 		},
+		// Running in the watch, its sandbox's session not recorded yet.
+		Processing: []QueueTaskItem{
+			{FileName: "task-issue-13932-rule-fix.yaml", Type: "issue-rule", Recipe: "fix", URL: kccURL + "/issues/13932", Number: 13932},
+		},
 	}
 	rows := rowsByKey(buildOverseerWork("overseer-kcc", sandboxes, pods, q))
 
@@ -138,6 +142,7 @@ func TestBuildOverseerWork(t *testing.T) {
 		"sandbox-agent-k8s-config-connector-kcc-release-scheduler": {"agent", "agents", "", "agent:done", "agent-k8s-config-connector-kcc-release-scheduler(paused)", 0},
 		"issue-13916": {"issue", "attention", "fix-k8s-config-connector-13916's pod evicted", "fix:running", "fix-k8s-config-connector-13916(evicted)", 0},
 		"issue-13931": {"issue", "queued", "", "fix:incoming", "", 0},
+		"issue-13932": {"issue", "working", "", "fix:processing", "", 0},
 	} {
 		it, ok := rows[key]
 		if !ok {
@@ -150,8 +155,8 @@ func TestBuildOverseerWork(t *testing.T) {
 			t.Errorf("%s:\n got %s\nwant %s", key, got, exp)
 		}
 	}
-	if len(rows) != 8 {
-		t.Errorf("%d rows, want 8 (no controller row, the review folded): %v", len(rows), rows)
+	if len(rows) != 9 {
+		t.Errorf("%d rows, want 9 (no controller row, the review folded): %v", len(rows), rows)
 	}
 	if it := rows["pr-13618"]; it.Title != "Greenfield: Implement direct KMS" || it.HTMLURL != kccURL+"/pull/13618" {
 		t.Errorf("legacy PR row: title %q, url %q", it.Title, it.HTMLURL)

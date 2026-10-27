@@ -556,6 +556,11 @@ func workSection(r *OverseerWorkItem) (string, string) {
 			return "working", ""
 		}
 	}
+	// A task the watch is running, before its sandbox's session says so
+	// (a new sandbox, a run not yet recorded on it).
+	if slices.ContainsFunc(r.Queued, func(q OverseerQueuedTask) bool { return q.State == "processing" }) {
+		return "working", ""
+	}
 	// A task held back by its cooldown is waiting to be queued.
 	if len(r.Queued) > 0 || r.Cooldown != nil {
 		return "queued", ""
