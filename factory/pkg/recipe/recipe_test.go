@@ -1976,20 +1976,26 @@ func TestBuiltinResultsAreWrittenFiles(t *testing.T) {
 			}
 			// An ask that names a file the agent writes expects it.
 			for _, m := range outputNameRE.FindAllStringSubmatch(s.Ask, -1) {
-				if s.Expects != m[1] && !(rec.TaskOutput != nil && rec.TaskOutput.Optional && rec.TaskOutput.From == m[1]) {
+				match := false
+				for _, decl := range rec.OutputDecls() {
+					if decl.Optional && decl.From == m[1] {
+						match = true
+						break
+					}
+				}
+				if s.Expects != m[1] && !match {
 					t.Errorf("%s: step %s names %s but does not expect it", name, s.Label(i), m[1])
 				}
 			}
 		}
-		if rec.TaskOutput == nil {
-			continue
-		}
-		from := rec.TaskOutput.From
-		named := fmt.Sprintf(`{{ output %q }}`, from)
-		if !slices.ContainsFunc(rec.Start.Steps, func(s Step) bool {
-			return strings.Contains(s.Ask, named) || strings.Contains(s.Run, from)
-		}) {
-			t.Errorf("%s: no ask names %s, and no run step writes %s", name, named, from)
+		for _, decl := range rec.OutputDecls() {
+			from := decl.From
+			named := fmt.Sprintf(`{{ output %q }}`, from)
+			if !slices.ContainsFunc(rec.Start.Steps, func(s Step) bool {
+				return strings.Contains(s.Ask, named) || strings.Contains(s.Run, from)
+			}) {
+				t.Errorf("%s: no ask names %s, and no run step writes %s", name, named, from)
+			}
 		}
 	}
 }

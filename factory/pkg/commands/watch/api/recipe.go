@@ -50,6 +50,9 @@ func RuleRunName(t *QueueTask) string {
 	}
 	prefix := t.Rule
 	if prefix == "" {
+		prefix = t.Recipe
+	}
+	if prefix == "" {
 		prefix = "rule"
 	}
 	return fmt.Sprintf("%s-%d-%s-%d", prefix, t.Number, sha, at.Unix())
@@ -57,16 +60,19 @@ func RuleRunName(t *QueueTask) string {
 
 // RunNameOf is t's run name (factory --run-name): the one stamped on it
 // when it was queued (TaskQueueManager.Enqueue), else by what it runs -
-// ChoreRunName for an agent definition, RuleRunName for a rule's recipe -
+// ChoreRunName for an agent definition (including workflow steps),
+// RuleRunName for a recipe (rules or chore recipes) -
 // "" for a task that runs neither.
 func RunNameOf(t *QueueTask) string {
 	switch {
 	case t.RunName != "":
 		return t.RunName
-	case t.AgentFile != "":
+	case t.AgentFile != "" && t.Rule == "workflow":
 		return ChoreRunName(t)
 	case t.Recipe != "":
 		return RuleRunName(t)
+	case t.AgentFile != "":
+		return ChoreRunName(t)
 	}
 	return ""
 }

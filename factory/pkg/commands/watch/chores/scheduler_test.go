@@ -168,6 +168,37 @@ func TestScheduleOnceQueuesDueChore(t *testing.T) {
 	}
 }
 
+func TestScheduleOnceQueuesRecipeChore(t *testing.T) {
+	retroAgent := `---
+name: Weekly Retro
+schedule: "@weekly"
+recipe: retro
+inputs:
+  since: "7d"
+---
+Weekly retrospective chore.
+`
+	s, _, queue := newTestScheduler(t, map[string]string{
+		".agents/retro.md": retroAgent,
+	})
+
+	s.ScheduleOnce(context.Background())
+
+	task, ok := queue.tasks()["task-chore-weekly-retro.yaml"]
+	if !ok {
+		t.Fatalf("expected the retro chore to be queued, got %v", queue.tasks())
+	}
+	if task.Recipe != "retro" {
+		t.Errorf("task.Recipe = %q, want retro", task.Recipe)
+	}
+	if task.Inputs == nil || task.Inputs["since"] != "7d" {
+		t.Errorf("task.Inputs = %+v, want since=7d", task.Inputs)
+	}
+	if task.AgentFile != ".agents/retro.md" {
+		t.Errorf("task.AgentFile = %q, want .agents/retro.md", task.AgentFile)
+	}
+}
+
 func TestScheduleOnceRecordsTheRunOnDisk(t *testing.T) {
 	s, _, _ := newTestScheduler(t, map[string]string{
 		".agents/triage.md": agentFile("Nightly Triage", "@daily"),

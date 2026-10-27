@@ -80,6 +80,33 @@ func TestCLIRunner_BuildArgs(t *testing.T) {
 		}
 	})
 
+	t.Run("chore task specifying a recipe", func(t *testing.T) {
+		task := &api.QueueTask{
+			Type:       api.TypeAgentChore,
+			URL:        "https://github.com/test-owner/test-repo",
+			AgentFile:  ".agents/retro.md",
+			AgentName:  "Weekly Retro",
+			Recipe:     "retro",
+			Inputs:     map[string]string{"since": "7d"},
+			EnqueuedAt: time.Unix(1760000000, 0),
+		}
+		args := r.BuildArgs(task, "coder-bot")
+		wantPrefix := []string{"recipe", "retro", "--url", task.URL, "--run-name", "retro-0-head-1760000000"}
+		if len(args) < len(wantPrefix) || !slices.Equal(args[:len(wantPrefix)], wantPrefix) {
+			t.Errorf("args = %v, want them to start %v", args, wantPrefix)
+		}
+		var foundInput bool
+		for i, a := range args {
+			if a == "--input" && i+1 < len(args) && args[i+1] == "since=7d" {
+				foundInput = true
+				break
+			}
+		}
+		if !foundInput {
+			t.Errorf("expected --input since=7d in args: %v", args)
+		}
+	})
+
 	t.Run("pr-review task with instructions", func(t *testing.T) {
 		task := &api.QueueTask{
 			Type:         api.TypePRRule,

@@ -129,6 +129,7 @@ effects or host dependencies.`,
 	cmd.AddCommand(sshdCmd)
 
 	cmd.AddCommand(NewRecipeCommand(ctx))
+	cmd.AddCommand(NewRetroCommand(ctx))
 	cmd.AddCommand(newPeekCommand(ctx))
 
 	graphCmd := NewGraphCommand(ctx)

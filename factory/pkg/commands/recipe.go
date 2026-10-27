@@ -344,6 +344,9 @@ func checkSandboxKey(rec *recipe.Recipe, it githubItem, opts recipeRunOpts, key 
 		return nil
 	}
 	sb := rec.Sandbox
+	if rec.Name == "retro" && key == "" {
+		key = "weekly"
+	}
 	switch {
 	case sb.Kind == recipe.SandboxAgent && opts.ensure == nil:
 		return fmt.Errorf("recipe %s runs in an agent's own sandbox: run it with factory agent create", rec.Name)
@@ -518,6 +521,9 @@ func runRecipeIn(ctx context.Context, opts recipeRunOpts, recipeArg, itemURL, ru
 	}
 
 	cloneURL := fmt.Sprintf("https://github.com/%s/%s.git", it.Owner, it.Repo)
+	if rec.Name == "retro" && sandboxKey == "" {
+		sandboxKey = "weekly"
+	}
 	// An issue's recipes run in the issue's sandbox, beside its triage,
 	// plan and fix; a PR's in its fix sandbox, beside the fix that opened
 	// it, except a credentials: clone recipe's, in one of its own which no
@@ -1546,6 +1552,50 @@ func writeTaskOutput(taskDir, repoDir string, inputs map[string]string, engine s
 		if err := taskoutput.WriteFrame(taskDir, frame); err != nil {
 			return err
 		}
+	}
+	decls := []*taskoutput.Decl{task.Output}
+	if recData, err := os.ReadFile(filepath.Join(taskDir, spool.RecipeSourceFile)); err == nil {
+		if rec, err := recipe.ParseKept(recData); err == nil && len(rec.OutputDecls()) > 1 {
+			decls = rec.OutputDecls()
+		}
+	}
+	if len(decls) > 1 {
+		var docs []*taskoutput.Document
+		for _, decl := range decls {
+			raw, err := os.ReadFile(filepath.Join(taskDir, decl.From))
+			if (errors.Is(err, os.ErrNotExist) || err == nil && len(raw) == 0) && decl.Optional {
+				continue
+			}
+			if err != nil {
+				return fmt.Errorf("reading the task's %s result: %w", decl.Kind, err)
+			}
+			if len(raw) == 0 {
+				return fmt.Errorf("the task's %s result, %s, is empty", decl.Kind, decl.From)
+			}
+			doc, err := taskoutput.Wrap(decl.Kind, string(raw), target, source)
+			if err != nil {
+				return err
+			}
+			if decl.Kind == "Change" {
+				if err := fillChange(doc, task, taskDir, inputs); err != nil {
+					return err
+				}
+			}
+			doc.Actions = decl.Actions
+			doc.Preview = decl.Preview
+			doc.Comment = decl.Comment
+			docs = append(docs, doc)
+		}
+		if len(docs) == 0 {
+			fmt.Printf("::task-output none: the task left no results\n")
+			return nil
+		}
+		out, err := taskoutput.Marshal(docs...)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("::task-output %d document(s) %s\n", len(docs), taskoutput.File)
+		return os.WriteFile(filepath.Join(taskDir, taskoutput.File), out, 0o644)
 	}
 	raw, err := os.ReadFile(filepath.Join(taskDir, task.Output.From))
 	if (errors.Is(err, os.ErrNotExist) || err == nil && len(raw) == 0) && task.Output.Optional {

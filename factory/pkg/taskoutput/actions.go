@@ -76,15 +76,21 @@ var verbs = map[string]verb{
 	"open-pr":       {class: ClassApply, kinds: []string{"Change"}, apply: applyOpenPR},
 	"post-replies":  {class: ClassApply, kinds: []string{"Change"}, apply: applyPostReplies},
 	"post-spec":     {class: ClassApply, kinds: []string{"FanOut"}, apply: applyPostSpec},
+	"open-issue":    {class: ClassApply, kinds: []string{"Digest"}, apply: applyOpenIssue},
 	"run":           {class: ClassFollowUp, kinds: []string{"Triage", "Plan", "Notes", "Review", "Change", "Summary"}},
-	"edit":          {class: ClassDraft, kinds: []string{"Triage", "Plan", "Notes", "Review", "Change", "Summary", "FanOut"}},
-	"reject":        {class: ClassDraft, kinds: []string{"Triage", "Plan", "Notes", "Review", "Change", "Summary", "FanOut"}},
+	"edit":          {class: ClassDraft, kinds: []string{"Triage", "Plan", "Notes", "Review", "Change", "Summary", "FanOut", "Digest"}},
+	"reject":        {class: ClassDraft, kinds: []string{"Triage", "Plan", "Notes", "Review", "Change", "Summary", "FanOut", "Digest"}},
 }
 
 // defaultActions are what a kind's result offers when its document
 // declares none: one from a runner or recipe older than actions, or
 // written by hand.
 var defaultActions = map[string][]Action{
+	"Digest": {
+		{Verb: "edit", Field: "spec", Format: "yaml"},
+		{Verb: "open-issue", Label: "Open issue"},
+		{Verb: "reject"},
+	},
 	"Triage": {
 		{Verb: "edit", Field: "spec", Format: "yaml"},
 		{Verb: "label"},

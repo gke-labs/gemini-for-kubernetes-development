@@ -86,11 +86,15 @@ type Recipe struct {
 	// Outputs are the task-directory files `recipe run` prints when the
 	// recipe ends, in order. Unset, they are the capture files.
 	Outputs []string `yaml:"outputs,omitempty"`
+	// RawTaskOutputs holds the unmarshaled task outputs (single or sequence).
+	RawTaskOutputs rawTaskOutputs `yaml:"task-output,omitempty"`
 	// TaskOutput declares the task's result: the runner wraps the file the
 	// agent wrote into taskoutput.File, which `factory apply` acts on. It
 	// is factory's, not the runner's: ForSandbox takes it out of the
 	// recipe a sandbox gets, and the task carries it in task.json.
-	TaskOutput *taskoutput.Decl `yaml:"task-output,omitempty"`
+	TaskOutput *taskoutput.Decl `yaml:"-"`
+	// TaskOutputs holds all task-output declarations for recipes with multiple outputs.
+	TaskOutputs []*taskoutput.Decl `yaml:"-"`
 	// TaskType makes the recipe its sandbox's main task, of that type, as
 	// plan or fix are: it records its state in last-task-*, where callers
 	// already look for that type. Unset, it is a side task,
@@ -418,12 +422,43 @@ func withoutSandbox(data []byte) ([]byte, error) {
 	return data, nil
 }
 
+// rawTaskOutputs unmarshals task-output as either a single Decl or a sequence of Decls.
+type rawTaskOutputs []*taskoutput.Decl
+
+func (t *rawTaskOutputs) UnmarshalYAML(n *yaml.Node) error {
+	if n.Kind == yaml.SequenceNode {
+		var list []*taskoutput.Decl
+		if err := n.Decode(&list); err != nil {
+			return err
+		}
+		*t = list
+		return nil
+	}
+	var single taskoutput.Decl
+	if err := n.Decode(&single); err != nil {
+		return err
+	}
+	*t = []*taskoutput.Decl{&single}
+	return nil
+}
+
+func (t rawTaskOutputs) MarshalYAML() (any, error) {
+	if len(t) == 1 {
+		return t[0], nil
+	}
+	return []*taskoutput.Decl(t), nil
+}
+
 func parse(data []byte, kept bool) (*Recipe, error) {
 	var r Recipe
 	dec := yaml.NewDecoder(strings.NewReader(string(data)))
 	dec.KnownFields(true)
 	if err := dec.Decode(&r); err != nil {
 		return nil, fmt.Errorf("parsing recipe: %w", err)
+	}
+	if len(r.RawTaskOutputs) > 0 {
+		r.TaskOutputs = r.RawTaskOutputs
+		r.TaskOutput = r.RawTaskOutputs[0]
 	}
 	if err := r.validate(!kept); err != nil {
 		return nil, err
@@ -578,7 +613,7 @@ func (r *Recipe) validate(sandbox bool) error {
 			return fmt.Errorf("applicable-when needs a label")
 		}
 	}
-	if to := r.TaskOutput; to != nil {
+	for _, to := range r.TaskOutputs {
 		if !taskoutput.Known(to.Kind) {
 			return fmt.Errorf("task-output kind %q is not one of: %s", to.Kind, strings.Join(taskoutput.KnownKinds(), ", "))
 		}
@@ -766,6 +801,23 @@ func (r *Recipe) OutputDecl() *taskoutput.Decl {
 	}
 	decl := *r.TaskOutput
 	return &decl
+}
+
+// OutputDecls is all task outputs a task of the recipe declares: copies of
+// TaskOutputs, or nil without one.
+func (r *Recipe) OutputDecls() []*taskoutput.Decl {
+	if len(r.TaskOutputs) == 0 {
+		if r.TaskOutput != nil {
+			return []*taskoutput.Decl{r.OutputDecl()}
+		}
+		return nil
+	}
+	var out []*taskoutput.Decl
+	for _, d := range r.TaskOutputs {
+		cp := *d
+		out = append(out, &cp)
+	}
+	return out
 }
 
 // OutputFiles is what `recipe run` prints: Outputs, or else every file an

@@ -995,6 +995,13 @@ func (s *Store) ReadTaskFile(ctx context.Context, sandbox, task, name string) (i
 	} else {
 		data, readErr = s.archive.Read(ctx, folder+name)
 	}
+	if errors.Is(readErr, ErrNotFound) && (name == "feedback.jsonl" || name == "feedback.jsonl.gz") && rec.PR > 0 && rec.Repo != "" {
+		fbPath := fmt.Sprintf("prs/%s/%d/feedback.jsonl.gz", rec.Repo, rec.PR)
+		data, readErr = s.archive.Read(ctx, fbPath)
+		if errors.Is(readErr, ErrNotFound) {
+			data, readErr = s.archive.Read(ctx, strings.TrimSuffix(fbPath, ".gz"))
+		}
+	}
 	if readErr != nil {
 		return nil, readErr
 	}

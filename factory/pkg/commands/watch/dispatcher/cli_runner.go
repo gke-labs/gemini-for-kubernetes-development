@@ -65,13 +65,7 @@ func NewCLIRunner(cfg CLIRunnerConfig) *CLIRunner {
 func (r *CLIRunner) BuildArgs(t *api.QueueTask, selectedUser string) []string {
 	var args []string
 	switch {
-	case t.AgentFile != "":
-		args = []string{"agent", "create", "--url", t.URL, "--agent", t.AgentFile, "--run-name", api.RunNameOf(t)}
-		if t.SessionID != "" {
-			args = append(args, "--session-id", t.SessionID)
-		}
-		return r.withCommonArgs(args, selectedUser)
-	case t.Recipe != "":
+	case t.Recipe != "" && (t.AgentFile == "" || t.Rule != "workflow"):
 		// Its result applied by the CLI as the user picked (--user).
 		args = []string{"recipe", t.Recipe, "--url", t.URL, "--run-name", api.RunNameOf(t)}
 		if _, _, err := recipe.Builtin(t.Recipe); err != nil {
@@ -81,6 +75,12 @@ func (r *CLIRunner) BuildArgs(t *api.QueueTask, selectedUser string) []string {
 		args = append(args, api.RecipeArgs(t)...)
 		for _, inst := range t.Instructions {
 			args = append(args, "--instruction", inst)
+		}
+		return r.withCommonArgs(args, selectedUser)
+	case t.AgentFile != "":
+		args = []string{"agent", "create", "--url", t.URL, "--agent", t.AgentFile, "--run-name", api.RunNameOf(t)}
+		if t.SessionID != "" {
+			args = append(args, "--session-id", t.SessionID)
 		}
 		return r.withCommonArgs(args, selectedUser)
 	}

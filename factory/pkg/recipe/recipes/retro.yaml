@@ -1,0 +1,100 @@
+# Weekly retrospective on repository agent runs: analyzes outcomes, traces, and
+# feedback to propose instruction improvements and publishes a weekly scoreboard.
+name: retro
+label: Retro
+on: [repo]
+as: coder
+credentials: clone
+
+sandbox:
+  prefix: retro
+  cpu-request: "2"
+  cpu-limit: "4"
+  memory-request: 4Gi
+  memory-limit: 8Gi
+  ephemeral-storage: 10Gi
+  disk: 30Gi
+
+inputs:
+  collector_url:
+    description: Token usage and outcome collector URL
+  since:
+    description: Timestamp (RFC3339) or relative window to analyze outcomes since
+  instructions:
+    type: instructions
+    description: Specific instructions or areas to focus retro analysis on
+
+outputs:
+  - change.yaml
+  - digest.yaml
+
+start:
+  steps:
+    - uses: clone
+    - uses: configure-engine
+
+    - run: |
+        # If staged outcomes/rollups are not already present in $TASK_DIR and collector_url is provided,
+        # fetch and stage the week's rollups, candidate PR outcomes, and archived traces/logs.
+        if [ ! -f "$TASK_DIR/outcomes.json" ] && [ -n "${INPUT_COLLECTOR_URL}" ]; then
+          factory retro stage --collector "${INPUT_COLLECTOR_URL}" --repo "${INPUT_REPO_OWNER}/${INPUT_REPO_NAME}" --dir "$TASK_DIR" ${INPUT_SINCE:+--since "${INPUT_SINCE}"} || true
+        fi
+
+    - ask: |
+        You are conducting a weekly retrospective on the repository's automated agent runs to improve its skills and workflows.
+
+        Staged inputs in {{ task_dir }}:
+        - Outcomes and rollups: outcomes.json, rollup-skill.json, rollup-workflow.json
+        - Candidate PRs and their traces: candidates/pr-<N>/<sandbox>-<task>/ (session/stream.ndjson, execution.log, feedback.jsonl, outcome.json)
+
+        {{ if .Inputs.instructions }}
+        Additional instructions:
+        {{ .Inputs.instructions }}
+        {{ end }}
+
+        Your task:
+        1. Examine the week's scoreboard and candidate PRs that ran into trouble (closed unmerged, multiple care passes, human review feedback, or human edits).
+        2. Identify what failed and classify each finding:
+           - Coding skill: wrong, incomplete, or missing instructions.
+           - Review instructions / review skill: missed a defect (afterBotReview) or generated noise.
+           - Workflow or chore ordering.
+           - Environment or tooling problems.
+        3. Propose edits to skills (.gemini/skills/ or .agents/skills/), workflows (.agents/workflows/), or review instructions.
+           Commit any instruction/skill changes to git.
+        4. Write the results:
+           - If edits to skills or workflows are made and committed:
+             Write {{ output "change.yaml" }} with:
+             change:
+               title: "retro: improve skills and workflows from weekly review"
+               body: |
+                 Table of proposed changes: `instruction -> lesson -> PRs`.
+           - Write the weekly findings and scoreboard digest to {{ output "digest.yaml" }}:
+             digest:
+               title: "Weekly Retro: {{ .Inputs.repo_owner }}/{{ .Inputs.repo_name }}"
+               body: |
+                 ## Scoreboard
+                 ...
+
+task-output:
+  - kind: Change
+    from: change.yaml
+    optional: true
+    preview: spec.body
+    actions:
+      - verb: edit
+        field: spec
+        format: yaml
+      - verb: open-pr
+        label: Open PR
+      - verb: reject
+  - kind: Digest
+    from: digest.yaml
+    optional: true
+    preview: spec.title
+    actions:
+      - verb: edit
+        field: spec
+        format: yaml
+      - verb: open-issue
+        label: Open issue
+      - verb: reject
