@@ -154,6 +154,18 @@ func TestDecidePRs(t *testing.T) {
 			it.Checks, it.Assignees = "failing", nil
 			it.Runs = []PastRun{ciRun(70*time.Minute, "h2", true)}
 		}), "ci run"},
+		{"ci failed 15m ago: failure cooldown", pr(func(it *Item) {
+			it.Checks, it.Assignees = "failing", nil
+			it.Runs = []PastRun{ciRun(25*time.Minute, "h2", true)}
+		}), ""},
+		{"ci refused 3 times since the head: no attempt, no give-up", pr(func(it *Item) {
+			it.Checks = "failing"
+			for _, d := range []time.Duration{150, 100, 50} {
+				r := ciRun(d*time.Minute, "h2", true)
+				r.NotRun = true
+				it.Runs = append(it.Runs, r)
+			}
+		}), "ci run"},
 		{"comments failed on this head: retried", pr(func(it *Item) {
 			it.Runs = []PastRun{{Rule: "comments", StartedAt: ago(time.Hour), EndedAt: ago(50 * time.Minute), Head: "h2", Failed: true}}
 		}), "comments run"},

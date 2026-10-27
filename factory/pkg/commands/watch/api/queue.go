@@ -3,6 +3,7 @@ package api
 import (
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 )
 
@@ -216,7 +217,20 @@ type JournalEvent struct {
 type EndedRun struct {
 	StartedAt time.Time
 	Failed    bool
+	// CannotRun is a failed run refused before doing anything - its recipe
+	// does not run on the item, or no bot of the pool may run it
+	// (IsCannotRun): it holds a cooldown like any run, but does not count
+	// toward a give-up, as no attempt was made.
+	CannotRun bool
 }
+
+// CannotRunPrefix starts the error of a task refused before doing
+// anything: the factory CLI's, and the watch's own when no bot may run it.
+const CannotRunPrefix = "cannot run here: "
+
+// IsCannotRun is whether a task's error says it was refused before doing
+// anything (CannotRunPrefix).
+func IsCannotRun(errMsg string) bool { return strings.Contains(errMsg, CannotRunPrefix) }
 
 // IsPRTask reports whether a given task type corresponds to an automated PR task.
 func IsPRTask(taskType TaskType) bool {

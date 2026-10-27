@@ -25,6 +25,7 @@ import (
 	"k8s.io/klog/v2"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/clients"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/api"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/conventions"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/config"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/constants"
@@ -789,11 +790,11 @@ func checkOn(rec *recipe.Recipe, it githubItem, target string) error {
 		}
 	case recipe.OnPR:
 		if slices.Contains(rec.On, recipe.OnMyPR) {
-			return fmt.Errorf("recipe %s runs on a PR you can push to, one you authored from your fork; #%d is not (factory pr adopt takes it over)", rec.Name, it.Number)
+			return fmt.Errorf("%srecipe %s runs on a PR you can push to, one you authored from your fork; #%d is not (factory pr adopt takes it over)", api.CannotRunPrefix, rec.Name, it.Number)
 		}
 	}
 	what := map[string]string{recipe.OnRepo: "repository", recipe.OnIssue: "issue", recipe.OnPR: "pull request", recipe.OnMyPR: "pull request"}[target]
-	return fmt.Errorf("recipe %s runs on %s, not on a %s", rec.Name, strings.Join(rec.On, ", "), what)
+	return fmt.Errorf("%srecipe %s runs on %s, not on a %s", api.CannotRunPrefix, rec.Name, strings.Join(rec.On, ", "), what)
 }
 
 // applicableLabels are the labels rec applies to items with one of

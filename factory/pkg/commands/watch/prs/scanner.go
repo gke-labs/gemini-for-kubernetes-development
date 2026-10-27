@@ -13,6 +13,8 @@ package prs
 import (
 	"context"
 	"fmt"
+	"slices"
+	"strings"
 	"time"
 
 	githubv39 "github.com/google/go-github/v39/github"
@@ -615,9 +617,12 @@ func (s *Scanner) evaluate(ctx context.Context, prIssue *githubv39.Issue) {
 		s.read(rules.FactChecks)
 	}
 
+	// A bot's PR runs as its author (only the author's fork takes a push),
+	// not as another bot it is assigned to (a reviewer can be); someone
+	// else's runs as the bot assigned to it, if any.
 	assignedBot := conventions.AssignedBotUser(prIssue, s.cfg.BotUsers)
 	taskAssignee := assignedBot
-	if taskAssignee == "" {
+	if taskAssignee == "" || slices.ContainsFunc(s.cfg.BotUsers, func(u string) bool { return strings.EqualFold(u, author) }) {
 		taskAssignee = author
 	}
 	shortSHA := headSHA

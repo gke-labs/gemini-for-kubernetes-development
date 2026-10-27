@@ -403,6 +403,11 @@ label then keeps every rule off the item until a person takes it off; no
 run happens while it is on, so a count since `pause` starts again from
 zero.
 
+A run refused before it did anything - its error says `cannot run here:`
+(a care recipe on a PR whose author is no bot of the pool, a recipe on an
+item it does not run on) - is not an attempt; it still starts the failure
+cooldown.
+
 ---
 
 ## Order

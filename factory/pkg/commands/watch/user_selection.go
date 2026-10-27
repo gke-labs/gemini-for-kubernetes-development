@@ -159,7 +159,7 @@ func (w *Watcher) selectUserForTask(ctx context.Context, taskType api.TaskType, 
 		case as == recipe.AsAuthor || as == "":
 			// The PR's author runs it (it pushes to the PR's branch): one
 			// outside the pool cannot.
-			return "", fmt.Errorf("PR author '%s' is not in the configured bot pool for role '%s'", author, role)
+			return "", fmt.Errorf("%sPR author '%s' is not in the configured bot pool for role '%s'", api.CannotRunPrefix, author, role)
 		}
 		// A recipe that names a pool (adopt: coder) on someone else's PR:
 		// any of the pool.

@@ -90,3 +90,32 @@ func TestSelectUser_KeyedCommentAuthor(t *testing.T) {
 		t.Errorf("fix (no key) read the comments: %d reads, %v", commentReads-reads, err)
 	}
 }
+
+// A care recipe (as: author) on a bot's PR assigned to a reviewer bot runs
+// as the PR's author, never as the reviewer; an assigned coder still runs
+// one on a PR whose author is no bot.
+func TestSelectUser_AuthorRecipeNotTheReviewer(t *testing.T) {
+	w := newTestWatcher(t, t.TempDir())
+	w.cfg = &config.FactoryConfig{Roles: map[string]config.RoleConfig{
+		"coder":    {Users: []string{"ada-coder-bot", "hopper-coder-bot"}},
+		"reviewer": {Users: []string{"review-bot"}},
+	}}
+	srv := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		rw.Header().Set("Content-Type", "application/json")
+		_, _ = rw.Write([]byte(`{"number": 7, "user": {"login": "ada-coder-bot"}}`))
+	}))
+	t.Cleanup(srv.Close)
+	gh := githubv39.NewClient(nil)
+	gh.BaseURL, _ = url.Parse(srv.URL + "/")
+	w.ghClient = gh
+	coordinator := &watcherTaskCoordinator{w: w}
+
+	user, err := coordinator.SelectUser(context.Background(), &api.QueueTask{Type: api.TypePRRule, Recipe: "care-ci", Assignee: "review-bot", Number: 7})
+	if err != nil || user != "ada-coder-bot" {
+		t.Errorf("care-ci assigned to review-bot: %q, %v; want ada-coder-bot", user, err)
+	}
+	user, err = coordinator.SelectUser(context.Background(), &api.QueueTask{Type: api.TypePRRule, Recipe: "care-comments", Assignee: "hopper-coder-bot", Number: 8})
+	if err != nil || user != "hopper-coder-bot" {
+		t.Errorf("care-comments assigned to hopper-coder-bot: %q, %v; want hopper-coder-bot", user, err)
+	}
+}

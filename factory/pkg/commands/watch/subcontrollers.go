@@ -580,8 +580,14 @@ func (c *watcherTaskCoordinator) SelectUser(ctx context.Context, task *api.Queue
 // for author (the PR's own bot) or a task no rule decided, else a member
 // of that pool - a review the PR's author was put on runs as a reviewer.
 func (w *Watcher) inPool(as, user string) bool {
-	if as == "" || as == recipe.AsAuthor || w.cfg == nil {
+	if w.cfg == nil {
 		return true
+	}
+	if as == "" || as == recipe.AsAuthor {
+		// The PR's own bot pushes to its branch: a bot that writes PRs (an
+		// agent or a coder), never a reviewer the PR is assigned to.
+		writers := append(slices.Clone(w.cfg.Roles["agent"].Users), w.cfg.Roles["coder"].Users...)
+		return len(writers) == 0 || slices.ContainsFunc(writers, func(u string) bool { return strings.EqualFold(u, user) })
 	}
 	role, ok := w.cfg.Roles[as]
 	if !ok || len(role.Users) == 0 {

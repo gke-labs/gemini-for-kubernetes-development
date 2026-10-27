@@ -1,8 +1,9 @@
 # Mirrors prs/handlers.go handlePRInvestigate: a PR whose checks fail is
 # investigated and fixed by its author (care-ci --apply --action
-# post-replies, its run: below). It runs again on a new head, after a
-# failed run, on a PR assigned to the pool explicitly, or 2h after the
-# last. After 3 attempts since the last commit, trusted human comment or
+# post-replies, its run: below). It runs again on a new head, on a PR
+# assigned to the pool explicitly, 20m after a failed run or 2h after a
+# run that completed. A run refused before doing anything (a PR it
+# cannot run on) is no attempt. After 3 attempts since the last commit, trusted human comment or
 # pause it gives up with the stop label (investigationAttempts). Third of
 # the PR rules that take the item (prs/scanner.go evaluate).
 name: ci
@@ -20,6 +21,7 @@ run:
 policy:
   cooldown:
     success: 2h
+    failure: 20m
     reset-on: [head]
     skip-when: {assignee: pool}
   give-up:
