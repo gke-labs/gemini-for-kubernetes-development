@@ -58,6 +58,7 @@ func NewServerForStore(store *Store) *Server {
 	s.mux.HandleFunc("GET /v1/tasks/{sandbox}/{task}/files/{name...}", s.handleTaskFile)
 	s.mux.HandleFunc("GET /v1/tasks", s.handleTasks)
 	s.mux.HandleFunc("PUT /v1/prs/{owner}/{repo}/{n}/feedback", s.handleFeedbackPut)
+	s.mux.HandleFunc("GET /v1/prs/{owner}/{repo}/{n}/feedback", s.handleFeedbackGet)
 	s.mux.HandleFunc("PUT /v1/outcomes/{owner}/{repo}/{pr}", s.handleOutcomePut)
 	s.mux.HandleFunc("GET /v1/outcomes/rollup", s.handleOutcomesRollup)
 	s.mux.HandleFunc("GET /v1/outcomes", s.handleOutcomes)
@@ -188,6 +189,39 @@ func (s *Server) handleFeedbackPut(w http.ResponseWriter, r *http.Request) {
 	default:
 		log.Printf("feedback ingest failed for %s/%s#%d: %v", owner, repo, n, err)
 		http.Error(w, "storage error", http.StatusInternalServerError)
+	}
+}
+
+// handleFeedbackGet streams uncompressed feedback.jsonl for a PR from the archive.
+func (s *Server) handleFeedbackGet(w http.ResponseWriter, r *http.Request) {
+	owner := r.PathValue("owner")
+	repo := r.PathValue("repo")
+	nStr := r.PathValue("n")
+	n, err := strconv.Atoi(nStr)
+	if err != nil || n <= 0 || !pathPart.MatchString(owner) || !pathPart.MatchString(repo) {
+		http.Error(w, "invalid path", http.StatusBadRequest)
+		return
+	}
+
+	rc, err := s.store.ReadFeedback(r.Context(), owner, repo, n)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrNoArchive):
+			http.Error(w, err.Error(), http.StatusNotImplemented)
+		case errors.Is(err, ErrNotFound):
+			http.Error(w, "not found", http.StatusNotFound)
+		default:
+			log.Printf("reading feedback %s/%s#%d: %v", owner, repo, n, err)
+			http.Error(w, "storage error", http.StatusInternalServerError)
+		}
+		return
+	}
+	defer rc.Close()
+
+	w.Header().Set("Content-Type", "application/x-ndjson")
+	w.WriteHeader(http.StatusOK)
+	if _, err := io.Copy(w, rc); err != nil {
+		log.Printf("streaming feedback %s/%s#%d: %v", owner, repo, n, err)
 	}
 }
 

@@ -18,6 +18,8 @@ package tokenusage
 
 import (
 	"bufio"
+	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"errors"
@@ -1012,4 +1014,56 @@ func (s *Store) RollupOutcomes(repo string, since time.Time, by string) ([]Outco
 		return out[i].Name < out[j].Name
 	})
 	return out, nil
+}
+
+// ReadFeedback streams uncompressed feedback.jsonl for the given PR from the archive.
+// Returns ErrNoArchive if the store has no archive configured, or ErrNotFound if
+// no feedback exists for this PR.
+func (s *Store) ReadFeedback(ctx context.Context, owner, repo string, n int) (io.ReadCloser, error) {
+	s.mu.Lock()
+	if s.archive == nil {
+		s.mu.Unlock()
+		return nil, ErrNoArchive
+	}
+	s.mu.Unlock()
+
+	if !pathPart.MatchString(owner) || !pathPart.MatchString(repo) || n <= 0 {
+		return nil, fmt.Errorf("invalid path parameters: %s/%s#%d", owner, repo, n)
+	}
+
+	objectPath := fmt.Sprintf("prs/%s/%s/%d/feedback.jsonl.gz", owner, repo, n)
+	data, readErr := s.archive.Read(ctx, objectPath)
+	if errors.Is(readErr, ErrNotFound) {
+		objectPath = fmt.Sprintf("prs/%s/%s/%d/feedback.jsonl", owner, repo, n)
+		data, readErr = s.archive.Read(ctx, objectPath)
+	}
+	if errors.Is(readErr, ErrNotFound) {
+		// Fall back to checking spooled feedback waiting to flush.
+		entries, err := os.ReadDir(s.feedbackSpoolDir())
+		if err == nil {
+			suffix := fmt.Sprintf("-%s-%s-%d", owner, repo, n)
+			for _, entry := range entries {
+				if entry.IsDir() && strings.HasSuffix(entry.Name(), suffix) {
+					spooledData, err := os.ReadFile(filepath.Join(s.feedbackSpoolDir(), entry.Name(), "feedback.jsonl"))
+					if err == nil {
+						data = spooledData
+						readErr = nil
+						break
+					}
+				}
+			}
+		}
+	}
+	if readErr != nil {
+		return nil, readErr
+	}
+
+	if len(data) >= 2 && data[0] == 0x1f && data[1] == 0x8b {
+		zr, err := gzip.NewReader(bytes.NewReader(data))
+		if err != nil {
+			return nil, fmt.Errorf("decompressing feedback for %s/%s#%d: %w", owner, repo, n, err)
+		}
+		return zr, nil
+	}
+	return io.NopCloser(bytes.NewReader(data)), nil
 }

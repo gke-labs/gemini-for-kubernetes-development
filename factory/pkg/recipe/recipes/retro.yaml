@@ -1,0 +1,131 @@
+# factory recipe retro --url <repository>: a weekly retro that improves
+# the repository's skills, workflows and instructions.
+#
+# The retro analyzes the week's staged outcome records, rollups, human
+# feedback, and task transcripts/logs to identify recurring issues,
+# formulate lessons, propose edits to instructions, and record the
+# week's write-up in .agents/journals/retro/<YYYY-MM-DD>.md.
+#
+# The recipe runs with credentials: clone: the GitHub token reaches the
+# clone step and nothing else. Its result is a Change task output, which
+# open-pr opens as a PR with the week's edits and journal.
+name: retro
+timeout: 1h
+on: [repo]
+as: coder
+credentials: clone
+
+sandbox:
+  prefix: retro
+  cpu-request: "4"
+  cpu-limit: "8"
+  memory-request: 12Gi
+  memory-limit: 16Gi
+  ephemeral-storage: 10Gi
+  disk: 40Gi
+
+inputs:
+  instructions:
+    type: instructions
+    description: Additional instructions or focus areas for the retro
+  staged_dir:
+    description: Directory where traces, logs, feedback and rollups are staged
+    default: staged
+  labels:
+    description: Labels for the PR, comma-separated; open-pr adds them
+  draft:
+    description: Whether open-pr opens the PR as a draft, true or false
+    default: "false"
+
+context: |
+  You are an expert software engineer conducting the weekly repository
+  retrospective (retro). Your goal is to improve the instructions that
+  agents run on in this repository:
+  - skills (.agents/skills/<name>/SKILL.md or builtin skills)
+  - workflows (.agents/workflows/<name>.md)
+  - agent chore definitions (.agents/<name>.md)
+  - repository instructions and guidelines (AGENTS.md, GEMINI.md)
+  - review guidelines and instructions
+
+  The repository is checked out in the current directory.
+  The recipe runs with credentials: clone: you have git read access to the
+  repository, but no GitHub API credentials. Do NOT run git push.
+  Make clean commits for your changes to instructions and the week's journal.
+
+start:
+  steps:
+    - uses: clone
+    - uses: configure-engine
+
+    - run: |
+        DATE="$(date +%Y-%m-%d)"
+        BRANCH="retro/${DATE}"
+        base="$(git rev-parse HEAD)"
+        git checkout -B "${BRANCH}"
+        printf '%s\n' "${BRANCH}" > "$TASK_DIR/branch"
+        printf '%s\n' "${base}" > "$TASK_DIR/base"
+        mkdir -p .agents/journals/retro
+
+    - ask: |
+        Conduct the weekly retro for {{ .Inputs.repo_owner }}/{{ .Inputs.repo_name }}.
+
+        {{- if .Inputs.instructions }}
+        Instructions:
+        {{ .Inputs.instructions }}
+        {{- end }}
+
+        Analyze the staged inputs under `{{ .Inputs.staged_dir }}` (or `$TASK_DIR/staged` if present),
+        including rollups per skill and workflow, outcome records, candidate PRs, human feedback,
+        and task traces/logs:
+
+        1. Review the week's scoreboard: per-skill and per-workflow PR outcomes, care pass rates,
+           and review misses/noise.
+        2. For each candidate PR (unmerged, >=3 care passes, human feedback, or significant human edits):
+           - Find what went wrong by cross-referencing human feedback, human edits, and the agent trace
+             with the active skill or workflow.
+           - Classify each finding (e.g., coding skill was wrong or missed a step, review instructions missed it,
+             workflow ordering problem, tooling/environment issue, bad issue/specification, etc.).
+        3. Group recurring issues into shared lessons across multiple PRs.
+        4. Propose surgical edits to skills, workflows, or instructions responsible on the default branch.
+           A lesson with no skill to own it becomes a new skill or an addition to repository instructions.
+           Environment and tooling problems change no instruction: record them in the journal for humans to address.
+        5. Write the week's journal to `.agents/journals/retro/<YYYY-MM-DD>.md` (using today's date).
+           The journal must include:
+           - The scoreboard (per skill and workflow outcomes)
+           - The classified candidate PRs and findings
+           - The proposed instruction changes and their rationale
+           - Environment and tooling problems to file
+        6. Commit your changes:
+           Stage the journal file and all modified/created instruction files, and commit them with a clean
+           commit message starting with "retro: ".
+        7. Write the task output Change to {{ output "change.yaml" }}.
+           The PR description must format a table of:
+           `instruction → lesson → PRs`
+           and link to the journal file `.agents/journals/retro/<YYYY-MM-DD>.md`.
+      expects: change.yaml
+
+    - run: |
+        head="$(git rev-parse HEAD)"
+        base="$(cat "$TASK_DIR/base" 2>/dev/null || echo "$head")"
+        branch="$(cat "$TASK_DIR/branch" 2>/dev/null || echo "retro-$(date +%Y-%m-%d)")"
+        if [ "$head" = "$base" ]; then
+          printf '{"unchanged":true,"base":"%s","head":"%s"}\n' "${base}" "${head}" > "$TASK_DIR/push.json"
+        else
+          printf '{"fork":"%s/%s","branch":"%s","base":"%s","head":"%s"}\n' "${INPUT_REPO_OWNER}" "${INPUT_REPO_NAME}" "${branch}" "${base}" "${head}" > "$TASK_DIR/push.json"
+        fi
+
+outputs:
+  - change.yaml
+
+task-output:
+  kind: Change
+  on-finish: open-pr
+  from: change.yaml
+  preview: spec.title
+  actions:
+    - verb: edit
+      field: spec
+      format: yaml
+    - verb: open-pr
+      label: Open PR
+    - verb: reject

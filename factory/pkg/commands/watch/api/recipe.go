@@ -14,8 +14,12 @@ func RecipeArgs(t *QueueTask) []string {
 		return nil
 	}
 	var args []string
-	if t.Apply != "" {
-		args = append(args, "--apply", "--action", t.Apply)
+	apply := t.Apply
+	if apply == "" && t.Type == TypeAgentChore {
+		apply = "open-pr"
+	}
+	if apply != "" {
+		args = append(args, "--apply", "--action", apply)
 	}
 	if t.PRLabels {
 		args = append(args, "--pr-labels")
@@ -50,6 +54,9 @@ func RuleRunName(t *QueueTask) string {
 	}
 	prefix := t.Rule
 	if prefix == "" {
+		prefix = t.Recipe
+	}
+	if prefix == "" {
 		prefix = "rule"
 	}
 	return fmt.Sprintf("%s-%d-%s-%d", prefix, t.Number, sha, at.Unix())
@@ -63,7 +70,7 @@ func RunNameOf(t *QueueTask) string {
 	switch {
 	case t.RunName != "":
 		return t.RunName
-	case t.AgentFile != "":
+	case t.AgentFile != "" && (t.Recipe == "" || t.Rule == "workflow"):
 		return ChoreRunName(t)
 	case t.Recipe != "":
 		return RuleRunName(t)

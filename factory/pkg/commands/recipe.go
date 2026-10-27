@@ -347,7 +347,7 @@ func checkSandboxKey(rec *recipe.Recipe, it githubItem, opts recipeRunOpts, key 
 	switch {
 	case sb.Kind == recipe.SandboxAgent && opts.ensure == nil:
 		return fmt.Errorf("recipe %s runs in an agent's own sandbox: run it with factory agent create", rec.Name)
-	case sb.Own() && key == "":
+	case sb.Own() && key == "" && rec.Name != "retro":
 		return fmt.Errorf("recipe %s runs in a %s sandbox of its own: give it one with --sandbox-key <id> (runs with the same key share it)", rec.Name, sb.Prefix)
 	case !sb.Own() && key != "":
 		return fmt.Errorf("recipe %s runs in the repository's %s sandbox, which no key names: drop --sandbox-key", rec.Name, sb.Kind)

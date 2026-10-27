@@ -17,15 +17,17 @@ import (
 )
 
 type AgentDefinition struct {
-	Name               string `yaml:"name"`
-	Description        string `yaml:"description"`
-	Schedule           string `yaml:"schedule"`
-	SkipPR             bool   `yaml:"skipPR,omitempty"`
-	Mode               string `yaml:"mode,omitempty"`
-	Cooldown           string `yaml:"cooldown,omitempty"`
-	PreconditionScript string `yaml:"preconditionScript,omitempty"`
-	Redirect           string `yaml:"redirect,omitempty"`
-	Prompt             string `yaml:"-"`
+	Name               string            `yaml:"name"`
+	Description        string            `yaml:"description"`
+	Schedule           string            `yaml:"schedule"`
+	Recipe             string            `yaml:"recipe,omitempty"`
+	Inputs             map[string]string `yaml:"inputs,omitempty"`
+	SkipPR             bool              `yaml:"skipPR,omitempty"`
+	Mode               string            `yaml:"mode,omitempty"`
+	Cooldown           string            `yaml:"cooldown,omitempty"`
+	PreconditionScript string            `yaml:"preconditionScript,omitempty"`
+	Redirect           string            `yaml:"redirect,omitempty"`
+	Prompt             string            `yaml:"-"`
 }
 
 func ParseAgent(content []byte) (*AgentDefinition, error) {

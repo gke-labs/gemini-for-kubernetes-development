@@ -302,6 +302,7 @@ func TestEveryTaskNamesItsRun(t *testing.T) {
 		"a rule task":     {&api.QueueTask{Type: api.TypePRRule, URL: "https://github.com/o/r/pull/1", Number: 1, Rule: "ci", Recipe: "care-ci", EnqueuedAt: at}, "recipe", api.RuleRunName},
 		"a workflow step": {&api.QueueTask{Type: api.TypeAgentChore, URL: "https://github.com/o/r/issues/1", Number: 1, AgentFile: ".agents/workflows/x.md", Rule: "workflow", Recipe: "workflow", EnqueuedAt: at}, "agent", api.ChoreRunName},
 		"a chore":         {&api.QueueTask{Type: api.TypeAgentChore, URL: "https://github.com/o/r", AgentFile: ".agents/x.md", EnqueuedAt: at}, "agent", api.ChoreRunName},
+		"a recipe chore":  {&api.QueueTask{Type: api.TypeAgentChore, URL: "https://github.com/o/r", AgentFile: ".agents/retro.md", Recipe: "retro", EnqueuedAt: at}, "recipe", api.RuleRunName},
 	} {
 		args := r.BuildArgs(tc.task, "coder-bot")
 		if len(args) == 0 || args[0] != tc.command {
@@ -315,5 +316,33 @@ func TestEveryTaskNamesItsRun(t *testing.T) {
 	// Neither an agent definition nor a recipe: nothing to run.
 	if args := r.BuildArgs(&api.QueueTask{Type: api.TypePRRule, Number: 1}, "coder-bot"); args != nil {
 		t.Errorf("a task that runs nothing builds %v", args)
+	}
+}
+
+func TestCLIRunner_BuildArgs_ChoreRecipe(t *testing.T) {
+	r := testCLIRunner(t.TempDir())
+	at := time.Unix(1760000000, 0)
+	task := &api.QueueTask{
+		Type:       api.TypeAgentChore,
+		URL:        "https://github.com/owner/repo",
+		AgentFile:  ".agents/retro.md",
+		AgentName:  "Weekly Retro",
+		Recipe:     "retro",
+		Inputs:     map[string]string{"since": "7d"},
+		EnqueuedAt: at,
+	}
+	args := r.BuildArgs(task, "bot1")
+	wantPrefix := []string{
+		"recipe", "retro",
+		"--url", "https://github.com/owner/repo",
+		"--run-name", "retro-0-head-1760000000",
+		"--apply", "--action", "open-pr",
+		"--input", "since=7d",
+	}
+	if len(args) < len(wantPrefix) || !slices.Equal(args[:len(wantPrefix)], wantPrefix) {
+		t.Fatalf("args = %v, want them to start %v", args, wantPrefix)
+	}
+	if !slices.Contains(args, "--user") || args[slices.Index(args, "--user")+1] != "bot1" {
+		t.Errorf("args %v missing --user bot1", args)
 	}
 }

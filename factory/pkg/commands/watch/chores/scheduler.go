@@ -65,6 +65,10 @@ type Definition struct {
 	Schedule string
 	// Path is the repository path of the definition, recorded on the queued task.
 	Path string
+	// Recipe is the recipe the chore runs, from its frontmatter.
+	Recipe string
+	// Inputs are the inputs passed to the chore's recipe run, from its frontmatter.
+	Inputs map[string]string
 }
 
 // Config holds the tuning knobs of a Scheduler.
@@ -235,7 +239,7 @@ func (s *Scheduler) newTask(def Definition, lastRun, now time.Time) *api.QueueTa
 		lastRunStr = lastRun.Format(time.RFC3339)
 	}
 
-	return &api.QueueTask{
+	task := &api.QueueTask{
 		Type:             api.TypeAgentChore,
 		URL:              fmt.Sprintf("https://github.com/%s/%s", s.cfg.Owner, s.cfg.Repo),
 		Priority:         api.PriorityMedium,
@@ -249,7 +253,13 @@ func (s *Scheduler) newTask(def Definition, lastRun, now time.Time) *api.QueueTa
 		Status:    api.StatusPending,
 		AgentFile: def.Path,
 		AgentName: def.Name,
+		Recipe:    def.Recipe,
+		Inputs:    def.Inputs,
 	}
+	if def.Recipe != "" {
+		task.Apply = "open-pr"
+	}
+	return task
 }
 
 // definitions returns the chore definitions declared in the repository,
@@ -303,6 +313,8 @@ func (s *Scheduler) fetchDefinitions(ctx context.Context) ([]Definition, error) 
 			Name:     agentDef.Name,
 			Schedule: agentDef.Schedule,
 			Path:     path,
+			Recipe:   agentDef.Recipe,
+			Inputs:   agentDef.Inputs,
 		})
 	}
 	return defs, nil

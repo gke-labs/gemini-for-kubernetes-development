@@ -65,7 +65,7 @@ func NewCLIRunner(cfg CLIRunnerConfig) *CLIRunner {
 func (r *CLIRunner) BuildArgs(t *api.QueueTask, selectedUser string) []string {
 	var args []string
 	switch {
-	case t.AgentFile != "":
+	case t.AgentFile != "" && (t.Recipe == "" || t.Rule == "workflow"):
 		args = []string{"agent", "create", "--url", t.URL, "--agent", t.AgentFile, "--run-name", api.RunNameOf(t)}
 		if t.SessionID != "" {
 			args = append(args, "--session-id", t.SessionID)

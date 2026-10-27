@@ -219,6 +219,35 @@ You are a test assistant.
 	}
 }
 
+func TestParseAgentWithRecipeAndInputs(t *testing.T) {
+	content := []byte(`---
+name: weekly-retro
+description: Weekly retrospective chore
+schedule: "@weekly"
+recipe: retro
+inputs:
+  since: "7d"
+  foo: bar
+---
+Prompt here.
+`)
+
+	def, err := ParseAgent(content)
+	if err != nil {
+		t.Fatalf("ParseAgent failed: %v", err)
+	}
+
+	if def.Name != "weekly-retro" {
+		t.Errorf("Name = %q; want %q", def.Name, "weekly-retro")
+	}
+	if def.Recipe != "retro" {
+		t.Errorf("Recipe = %q; want %q", def.Recipe, "retro")
+	}
+	if def.Inputs == nil || def.Inputs["since"] != "7d" || def.Inputs["foo"] != "bar" {
+		t.Errorf("Inputs = %+v; want since=7d, foo=bar", def.Inputs)
+	}
+}
+
 func TestFetchWorkflowContentRedirect(t *testing.T) {
 	upstreamContent := `---
 name: checklist-for-kind
