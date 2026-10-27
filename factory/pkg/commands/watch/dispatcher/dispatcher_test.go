@@ -12,6 +12,7 @@ import (
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/api"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/concurrency"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/k8s"
 )
 
 // fakeSandboxService is an in-memory SandboxService for dispatcher tests.
@@ -881,5 +882,44 @@ func TestDispatchOnce_DoesNotSuspendSandboxForNonChoreTask(t *testing.T) {
 	suspended := sandboxes.suspendedSandboxes()
 	if len(suspended) != 0 {
 		t.Errorf("expected no sandboxes suspended for non-chore task, got %v", suspended)
+	}
+}
+
+// A workflow's step whose sandbox's pod did not start in time is not yet,
+// not a failure: dropped, with no run recorded, no finish, and the sandbox
+// left up for its pod. Any other task with the same error fails.
+func TestDispatchOnce_PodStartTimeoutDropsAWorkflowStep(t *testing.T) {
+	podErr := errors.New("exit status 1: connecting to sandbox: sandbox wf-issue-42 has no task server to use (" + k8s.PodStartTimeout + " wf-issue-42 to become ready)")
+	for _, tc := range []struct {
+		name      string
+		task      *api.QueueTask
+		processed int
+	}{
+		{"workflow step", &api.QueueTask{Type: api.TypeAgentChore, Number: 42, URL: "https://github.com/test-owner/test-repo/issues/42"}, 0},
+		{"fix", &api.QueueTask{Type: api.TypeIssueRule, Number: 42, URL: "https://github.com/test-owner/test-repo/issues/42"}, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d, queue, sandboxes, coordinator, runner := testDispatcher(t, t.TempDir(), nil)
+			runner.run = func(context.Context, string, *api.QueueTask, string) error { return podErr }
+			tc.task.EnqueuedAt = time.Now()
+			if err := queue.Enqueue("task-42.yaml", tc.task); err != nil {
+				t.Fatal(err)
+			}
+			d.DispatchOnce(context.Background())
+			d.Wait()
+			waitForCounts(t, queue, 0, 0, tc.processed)
+			if tc.processed > 0 {
+				return
+			}
+			if runs := queue.EndedRuns("task-42.yaml"); len(runs) != 0 {
+				t.Errorf("runs recorded: %v", runs)
+			}
+			if got := coordinator.outcomes(); len(got) != 0 {
+				t.Errorf("finished: %v", got)
+			}
+			if got := sandboxes.suspendedSandboxes(); len(got) != 0 {
+				t.Errorf("suspended: %v", got)
+			}
+		})
 	}
 }

@@ -19,6 +19,11 @@ var (
 	sandboxPodWait = 6 * time.Minute
 )
 
+// PodStartTimeout begins the error SandboxPod returns when no pod became
+// ready in time - a pod still scheduling or scaling up a node, not a
+// broken task: the watch's dispatcher tries such a task again later.
+const PodStartTimeout = "timed out waiting for sandbox pod"
+
 // SandboxPod is the name of the sandbox's ready pod, once there is one.
 // A sandbox the idle suspender scaled to zero is woken first, and stamped
 // unpaused-at: without the stamp the suspender, counting from the last
@@ -57,7 +62,7 @@ func sandboxPod(ctx context.Context, kube *clients.KubernetesClient, namespace, 
 			}
 		}
 		if time.Now().After(deadline) {
-			return "", fmt.Errorf("timed out waiting for sandbox pod %s to become ready", sandboxName)
+			return "", fmt.Errorf("%s %s to become ready", PodStartTimeout, sandboxName)
 		}
 		select {
 		case <-ctx.Done():

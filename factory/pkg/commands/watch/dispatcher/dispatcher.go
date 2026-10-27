@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -17,6 +18,7 @@ import (
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/api"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/concurrency"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/k8s"
 )
 
 const (
@@ -447,6 +449,19 @@ func (d *Dispatcher) executeTask(ctx context.Context, taskFilename string, task 
 	if taskErr := d.runner.Run(taskCtx, taskFilename, task, selectedUser); taskErr != nil {
 		if errors.Is(ctx.Err(), context.Canceled) {
 			klog.Warningf("Task %s was interrupted by dispatcher shutdown (%v). Leaving it in the processing queue for recovery on the next run.", taskFilename, taskErr)
+			return
+		}
+
+		// A workflow's step whose sandbox's pod did not start in time (a
+		// node still scaling up): not yet rather than a failure. Dropped -
+		// no run, so no failure cooldown or on-failure writes - and the
+		// sandbox left up for its pod to start; the next scan queues it
+		// again. Only a step: its start writes are a claim, made again as
+		// is (a fix's start comment, a comments task's acknowledgement are
+		// not), and a scheduled chore dropped would wait for its schedule.
+		if task.Type == api.TypeAgentChore && task.Number > 0 && strings.Contains(taskErr.Error(), k8s.PodStartTimeout) {
+			klog.Infof("Dropping task %s: its sandbox's pod is not ready yet: %v", taskFilename, taskErr)
+			_ = d.queue.DropTask(taskFilename, task, "the sandbox's pod is not ready yet")
 			return
 		}
 

@@ -311,3 +311,24 @@ func TestInheritLabelsOnReadyPRs(t *testing.T) {
 		t.Errorf("a ready PR inherits %q, want the stop label and priority, not review", got)
 	}
 }
+
+// A workflow's success cooldown waits up to a fifth more, the same for
+// an item's same last run and spread across a batch of items that ran
+// together.
+func TestWorkflowJitter(t *testing.T) {
+	d, start := 2*time.Hour, time.Date(2026, 10, 27, 6, 0, 0, 0, time.UTC)
+	lo, hi := d, time.Duration(0)
+	for n := 13000; n < 13050; n++ {
+		j := workflowJitter(n, start, d)
+		if j < 0 || j > d/5 {
+			t.Fatalf("#%d: jitter %s outside [0, %s]", n, j, d/5)
+		}
+		if again := workflowJitter(n, start, d); again != j {
+			t.Fatalf("#%d: jitter %s then %s", n, j, again)
+		}
+		lo, hi = min(lo, j), max(hi, j)
+	}
+	if hi-lo < d/10 {
+		t.Errorf("50 items spread over %s, want at least %s", hi-lo, d/10)
+	}
+}

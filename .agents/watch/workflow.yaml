@@ -6,7 +6,8 @@
 # dispatcher's agent-chore, dispatcher/cli_runner.go BuildArgs), which
 # runs the workflow recipe. There is no updated-since gate: a workflow
 # steps every cooldown while the issue is open. The success cooldown is
-# the workflow definition's own (10m when it sets none). An open PR that
+# the workflow definition's own (10m when it sets none), plus up to a
+# fifth more so a batch does not step again as one. An open PR that
 # closes the issue holds it back (linked-pr, from the PR listing); a PR
 # only linked in the timeline does not, as the rule does not ask for
 # connected-pr (fix does). The definition (workflow: any) and its cooldown
