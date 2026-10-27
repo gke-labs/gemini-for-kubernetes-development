@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -78,6 +79,7 @@ type LinkedWork interface {
 type WhyClosed interface {
 	OnClosedPR(ctx context.Context, pr *githubv39.PullRequest)
 	Poll(ctx context.Context)
+	CloseReason(prNum int) (string, bool)
 }
 
 // Config holds the tuning knobs of a Reconciler.
@@ -447,7 +449,8 @@ func (r *Reconciler) deleteClosedPRSandbox(ctx context.Context, item *unstructur
 	meta.Issues = common.ReferencedIssueList(pr)
 	usagereport.HarvestSandbox(ctx, r.sandboxes.namespace, name, meta)
 	usagereport.ReportPRSubject(ctx, r.repoSlug(), pr)
-	r.captureAndUploadFeedback(ctx, pr, name, num)
+	feedbackItems := r.captureAndUploadFeedback(ctx, pr, name, num)
+	r.recordAndUploadOutcome(ctx, pr, name, num, feedbackItems)
 	if err := r.sandboxes.Delete(ctx, name); err != nil {
 		klog.Errorf("Failed to delete sandbox '%s' for closed PR #%d: %v", name, num, err)
 		return false
@@ -760,10 +763,12 @@ func ParseEvictionAge(ageStr string) (time.Duration, error) {
 	return time.ParseDuration(ageStr)
 }
 
-func (r *Reconciler) captureAndUploadFeedback(ctx context.Context, pr *githubv39.PullRequest, sandboxName string, num int) {
+var sessionHintRE = regexp.MustCompile(`<sub>🤖 \[Agent session\]\([^)\s]*\)</sub>`)
+
+func (r *Reconciler) captureAndUploadFeedback(ctx context.Context, pr *githubv39.PullRequest, sandboxName string, num int) []tokenusage.FeedbackItem {
 	items := r.captureFeedback(ctx, pr, sandboxName, num)
 	if len(items) == 0 {
-		return
+		return nil
 	}
 
 	var buf bytes.Buffer
@@ -779,6 +784,264 @@ func (r *Reconciler) captureAndUploadFeedback(ctx context.Context, pr *githubv39
 	if err := usagereport.ReportPRFeedback(ctx, r.sandboxes.owner, r.sandboxes.repo, num, buf.Bytes()); err != nil {
 		klog.Warningf("reconciler: uploading feedback for PR #%d: %v", num, err)
 	}
+	return items
+}
+
+func (r *Reconciler) recordAndUploadOutcome(ctx context.Context, pr *githubv39.PullRequest, sandboxName string, num int, feedbackItems []tokenusage.FeedbackItem) {
+	gh := r.sandboxes.gh
+	client := github.ForRepo(gh, r.sandboxes.owner, r.sandboxes.repo)
+
+	var outcomeTasks []tokenusage.TaskOutcomeRef
+	var agentHead string
+	var carePasses int
+
+	// First try to list tasks from the collector
+	if collectorTasks, err := usagereport.ListTasksForPR(ctx, r.sandboxes.owner, r.sandboxes.repo, num); err == nil && len(collectorTasks) > 0 {
+		for _, t := range collectorTasks {
+			outcomeTasks = append(outcomeTasks, tokenusage.TaskOutcomeRef{
+				Sandbox:      t.Sandbox,
+				Task:         t.Task,
+				Folder:       t.Folder,
+				Instructions: t.Instructions,
+			})
+			if strings.Contains(t.Task, "care") || strings.Contains(t.Recipe, "care") {
+				carePasses++
+			}
+			if t.PushedHead != "" && agentHead == "" {
+				agentHead = t.PushedHead
+			}
+		}
+	}
+
+	// Also read from sandbox task server directly
+	sb, err := connectTasks(ctx, r.sandboxes.namespace, sandboxName)
+	if err == nil {
+		defer sb.Close()
+		entries, err := sb.List(ctx)
+		if err == nil {
+			if len(outcomeTasks) == 0 {
+				for _, entry := range entries {
+					outcomeTasks = append(outcomeTasks, tokenusage.TaskOutcomeRef{
+						Sandbox: sandboxName,
+						Task:    entry.ID,
+						Folder:  fmt.Sprintf("tasks/%s/%s/%s", r.repoSlug(), sandboxName, entry.ID),
+					})
+				}
+			}
+			if carePasses == 0 {
+				for _, entry := range entries {
+					if strings.Contains(entry.ID, "care") {
+						carePasses++
+					}
+				}
+			}
+			if agentHead == "" {
+				// entries are ordered newest first
+				for _, entry := range entries {
+					data, err := sb.ReadFile(ctx, entry.ID, "push.json")
+					if err == nil && len(data) > 0 {
+						var push struct {
+							Head string `json:"head"`
+						}
+						if err := json.Unmarshal(data, &push); err == nil && push.Head != "" {
+							agentHead = push.Head
+							break
+						}
+					}
+				}
+			}
+		}
+	}
+
+	var reviewComments int
+	var changesRequested int
+	if client != nil {
+		if reviews, err := client.ListReviews(ctx, num); err == nil {
+			for _, rev := range reviews {
+				if rev.GetState() == "CHANGES_REQUESTED" {
+					changesRequested++
+				}
+			}
+		}
+		if inlineComments, err := client.ListAllReviewComments(ctx, num); err == nil {
+			reviewComments = len(inlineComments)
+		}
+	}
+
+	var fb *tokenusage.FeedbackSummary
+	if len(feedbackItems) > 0 {
+		authors := make(map[string]bool)
+		afterBotReview := 0
+		for _, it := range feedbackItems {
+			if it.Author != "" {
+				authors[it.Author] = true
+			}
+			if it.AfterBotReview {
+				afterBotReview++
+			}
+		}
+		fb = &tokenusage.FeedbackSummary{
+			Items:          len(feedbackItems),
+			Humans:         len(authors),
+			AfterBotReview: afterBotReview,
+			Folder:         fmt.Sprintf("prs/%s/%d", r.repoSlug(), num),
+		}
+	}
+
+	finalHead := pr.GetHead().GetSHA()
+	baseRef := pr.GetBase().GetRef()
+	humanEdit := r.computeHumanEdit(ctx, baseRef, agentHead, finalHead)
+
+	prState := "closed"
+	if pr.GetMerged() {
+		prState = "merged"
+	}
+
+	var closedBy string
+	if pr.GetMerged() && pr.GetMergedBy() != nil {
+		closedBy = pr.GetMergedBy().GetLogin()
+	}
+
+	var closeReason string
+	if r.whyClosed != nil {
+		if reason, ok := r.whyClosed.CloseReason(num); ok {
+			closeReason = reason
+		}
+	}
+
+	isBot := isBotUser(pr.GetUser(), r.sandboxes.owner, r.cfg.ReviewerLogins)
+	hasSessionLink := sessionHintRE.MatchString(pr.GetBody()) ||
+		strings.Contains(pr.GetBody(), "task-session") ||
+		strings.Contains(pr.GetBody(), "[Agent session]")
+
+	outcome := &tokenusage.OutcomeRecord{
+		Key:              tokenusage.OutcomeKey(r.repoSlug(), num),
+		Repo:             r.repoSlug(),
+		PR:               num,
+		Issues:           common.ReferencedIssueList(pr),
+		State:            prState,
+		ClosedBy:         closedBy,
+		Tasks:            outcomeTasks,
+		CarePasses:       carePasses,
+		ReviewComments:   reviewComments,
+		ChangesRequested: changesRequested,
+		Feedback:         fb,
+		AgentHead:        agentHead,
+		HumanEdit:        humanEdit,
+		CloseReason:      closeReason,
+		OpenedByBot:      isBot || hasSessionLink,
+		HasSessionLink:   hasSessionLink,
+	}
+	if t := pr.GetCreatedAt(); !t.IsZero() {
+		outcome.OpenedAt = t.UTC().Format(time.RFC3339)
+	}
+	if t := pr.GetClosedAt(); !t.IsZero() {
+		outcome.ClosedAt = t.UTC().Format(time.RFC3339)
+	}
+
+	if err := usagereport.ReportPROutcome(ctx, outcome); err != nil {
+		klog.Warningf("reconciler: uploading outcome for PR #%d: %v", num, err)
+	}
+}
+
+func (r *Reconciler) computeHumanEdit(ctx context.Context, baseRef, agentHead, finalHead string) *tokenusage.HumanEdit {
+	if agentHead == "" || finalHead == "" || agentHead == finalHead {
+		return &tokenusage.HumanEdit{Files: 0, Added: 0, Deleted: 0, Paths: nil}
+	}
+	gh := r.sandboxes.gh
+	if gh == nil {
+		return &tokenusage.HumanEdit{Files: 0, Added: 0, Deleted: 0, Paths: nil}
+	}
+	if baseRef == "" {
+		baseRef = "main"
+	}
+
+	cmpAgent, _, err := gh.Repositories.CompareCommits(ctx, r.sandboxes.owner, r.sandboxes.repo, baseRef, agentHead, nil)
+	if err != nil {
+		klog.V(2).Infof("reconciler: compare commits for agent head %s against %s: %v", agentHead, baseRef, err)
+		return nil
+	}
+	cmpFinal, _, err := gh.Repositories.CompareCommits(ctx, r.sandboxes.owner, r.sandboxes.repo, baseRef, finalHead, nil)
+	if err != nil {
+		klog.V(2).Infof("reconciler: compare commits for final head %s against %s: %v", finalHead, baseRef, err)
+		return nil
+	}
+
+	type fileInfo struct {
+		sha       string
+		additions int
+		deletions int
+	}
+	agentFiles := make(map[string]fileInfo)
+	for _, f := range cmpAgent.Files {
+		agentFiles[f.GetFilename()] = fileInfo{
+			sha:       f.GetSHA(),
+			additions: f.GetAdditions(),
+			deletions: f.GetDeletions(),
+		}
+	}
+
+	var paths []string
+	added := 0
+	deleted := 0
+	finalSeen := make(map[string]bool)
+
+	for _, f := range cmpFinal.Files {
+		p := f.GetFilename()
+		finalSeen[p] = true
+		af, existed := agentFiles[p]
+		if !existed {
+			paths = append(paths, p)
+			added += f.GetAdditions()
+			deleted += f.GetDeletions()
+		} else if f.GetSHA() != af.sha {
+			paths = append(paths, p)
+			diffAdd := f.GetAdditions() - af.additions
+			if diffAdd > 0 {
+				added += diffAdd
+			}
+			diffDel := f.GetDeletions() - af.deletions
+			if diffDel > 0 {
+				deleted += diffDel
+			}
+		}
+	}
+	for p, af := range agentFiles {
+		if !finalSeen[p] {
+			paths = append(paths, p)
+			deleted += af.additions
+		}
+	}
+	sort.Strings(paths)
+	return &tokenusage.HumanEdit{
+		Files:   len(paths),
+		Added:   added,
+		Deleted: deleted,
+		Paths:   paths,
+	}
+}
+
+func isBotUser(user *githubv39.User, owner string, reviewerLogins []string) bool {
+	if user == nil {
+		return false
+	}
+	login := user.GetLogin()
+	if strings.EqualFold(login, owner) {
+		return true
+	}
+	if conventions.IsReviewerBot(user, reviewerLogins) {
+		return true
+	}
+	loginLower := strings.ToLower(login)
+	if strings.EqualFold(user.GetType(), "Bot") ||
+		strings.HasSuffix(loginLower, "[bot]") ||
+		strings.HasSuffix(loginLower, "-bot") ||
+		strings.HasSuffix(loginLower, "-robot") ||
+		strings.Contains(loginLower, "bot") ||
+		strings.Contains(loginLower, "prow") {
+		return true
+	}
+	return false
 }
 
 func (r *Reconciler) captureFeedback(ctx context.Context, pr *githubv39.PullRequest, sandboxName string, num int) []tokenusage.FeedbackItem {

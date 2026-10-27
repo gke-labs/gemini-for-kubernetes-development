@@ -24,6 +24,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Server exposes the Store over HTTP.
@@ -57,6 +58,9 @@ func NewServerForStore(store *Store) *Server {
 	s.mux.HandleFunc("GET /v1/tasks/{sandbox}/{task}/files/{name...}", s.handleTaskFile)
 	s.mux.HandleFunc("GET /v1/tasks", s.handleTasks)
 	s.mux.HandleFunc("PUT /v1/prs/{owner}/{repo}/{n}/feedback", s.handleFeedbackPut)
+	s.mux.HandleFunc("PUT /v1/outcomes/{owner}/{repo}/{pr}", s.handleOutcomePut)
+	s.mux.HandleFunc("GET /v1/outcomes/rollup", s.handleOutcomesRollup)
+	s.mux.HandleFunc("GET /v1/outcomes", s.handleOutcomes)
 	s.mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
@@ -276,6 +280,82 @@ func (s *Server) handleMarkSummarized(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]bool{"alreadyPosted": alreadyPosted})
+}
+
+func (s *Server) handleOutcomePut(w http.ResponseWriter, r *http.Request) {
+	owner := r.PathValue("owner")
+	repo := r.PathValue("repo")
+	prStr := r.PathValue("pr")
+	pr, err := strconv.Atoi(prStr)
+	if err != nil || pr <= 0 {
+		http.Error(w, "invalid pr number", http.StatusBadRequest)
+		return
+	}
+	var rec OutcomeRecord
+	if err := json.NewDecoder(r.Body).Decode(&rec); err != nil {
+		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	rec.Repo = owner + "/" + repo
+	rec.PR = pr
+	rec.Key = OutcomeKey(rec.Repo, rec.PR)
+
+	if err := s.store.PutOutcome(rec); err != nil {
+		log.Printf("outcome ingest failed for %s#%d: %v", rec.Repo, rec.PR, err)
+		http.Error(w, "storage error", http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+func (s *Server) handleOutcomes(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	f := OutcomeFilter{
+		Repo: q.Get("repo"),
+		PR:   atoiOrZero(q.Get("pr")),
+	}
+	if sinceStr := q.Get("since"); sinceStr != "" {
+		if t, err := parseTime(sinceStr); err == nil {
+			f.Since = t
+		} else {
+			http.Error(w, "invalid since parameter: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+	if untilStr := q.Get("until"); untilStr != "" {
+		if t, err := parseTime(untilStr); err == nil {
+			f.Until = t
+		} else {
+			http.Error(w, "invalid until parameter: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+	writeJSON(w, map[string]any{"outcomes": s.store.ListOutcomes(f)})
+}
+
+func (s *Server) handleOutcomesRollup(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	repo := q.Get("repo")
+	by := q.Get("by")
+	if by != "skill" && by != "workflow" {
+		http.Error(w, "by parameter must be 'skill' or 'workflow'", http.StatusBadRequest)
+		return
+	}
+	var since time.Time
+	if sinceStr := q.Get("since"); sinceStr != "" {
+		var err error
+		since, err = parseTime(sinceStr)
+		if err != nil {
+			http.Error(w, "invalid since parameter: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+	rollups, err := s.store.RollupOutcomes(repo, since, by)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, map[string]any{"rollups": rollups})
 }
 
 func writeJSON(w http.ResponseWriter, v any) {

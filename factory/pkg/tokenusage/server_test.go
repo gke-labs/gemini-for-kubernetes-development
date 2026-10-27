@@ -293,3 +293,85 @@ func TestTaskFileArchiveStreaming(t *testing.T) {
 		t.Errorf("no archive status = %d, want 501", r501.StatusCode)
 	}
 }
+
+func TestOutcomeServerEndpoints(t *testing.T) {
+	ts := newTestServer(t)
+
+	// PUT outcome record
+	rec := OutcomeRecord{
+		State:       "merged",
+		OpenedAt:    "2026-10-25T10:00:00Z",
+		ClosedAt:    "2026-10-26T12:00:00Z",
+		CarePasses:  2,
+		OpenedByBot: true,
+		Tasks: []TaskOutcomeRef{
+			{
+				Sandbox: "sb-1",
+				Task:    "task-1",
+				Instructions: &Instructions{
+					Repo: "test-owner/test-repo",
+					Workflow: &WorkflowRef{
+						Name: "flow-a",
+					},
+					Skills: []SkillRef{
+						{Name: "skill-x"},
+					},
+				},
+			},
+		},
+	}
+	body, _ := json.Marshal(rec)
+	req, _ := http.NewRequest(http.MethodPut, ts.URL+"/v1/outcomes/test-owner/test-repo/42", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("PUT outcome: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("PUT outcome status: %d", resp.StatusCode)
+	}
+
+	// GET outcomes list
+	var listResp struct {
+		Outcomes []OutcomeRecord `json:"outcomes"`
+	}
+	getJSON(t, ts.URL+"/v1/outcomes?repo=test-owner/test-repo&pr=42", &listResp)
+	if len(listResp.Outcomes) != 1 {
+		t.Fatalf("expected 1 outcome, got %d", len(listResp.Outcomes))
+	}
+	if listResp.Outcomes[0].PR != 42 || listResp.Outcomes[0].Repo != "test-owner/test-repo" {
+		t.Errorf("unexpected outcome: %+v", listResp.Outcomes[0])
+	}
+
+	// GET rollups by skill
+	var skillRollupResp struct {
+		Rollups []OutcomeRollup `json:"rollups"`
+	}
+	getJSON(t, ts.URL+"/v1/outcomes/rollup?repo=test-owner/test-repo&by=skill", &skillRollupResp)
+	if len(skillRollupResp.Rollups) != 1 || skillRollupResp.Rollups[0].Name != "skill-x" {
+		t.Fatalf("unexpected skill rollups: %+v", skillRollupResp.Rollups)
+	}
+	if skillRollupResp.Rollups[0].TotalPRs != 1 || skillRollupResp.Rollups[0].MergedPRs != 1 || skillRollupResp.Rollups[0].AcceptanceRate != 1.0 {
+		t.Errorf("unexpected skill rollup stats: %+v", skillRollupResp.Rollups[0])
+	}
+
+	// GET rollups by workflow
+	var wfRollupResp struct {
+		Rollups []OutcomeRollup `json:"rollups"`
+	}
+	getJSON(t, ts.URL+"/v1/outcomes/rollup?repo=test-owner/test-repo&by=workflow", &wfRollupResp)
+	if len(wfRollupResp.Rollups) != 1 || wfRollupResp.Rollups[0].Name != "flow-a" {
+		t.Fatalf("unexpected workflow rollups: %+v", wfRollupResp.Rollups)
+	}
+
+	// Bad 'by' parameter -> 400
+	respBad, err := http.Get(ts.URL + "/v1/outcomes/rollup?by=invalid")
+	if err != nil {
+		t.Fatal(err)
+	}
+	respBad.Body.Close()
+	if respBad.StatusCode != http.StatusBadRequest {
+		t.Errorf("expected 400 for bad 'by', got %d", respBad.StatusCode)
+	}
+}

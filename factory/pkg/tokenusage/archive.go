@@ -66,6 +66,7 @@ var ErrNotFound = errors.New("not found")
 const (
 	logRecords  = "records"
 	logSubjects = "subjects"
+	logOutcomes = "outcomes"
 
 	archivedSummarized = "summarized.json"
 )
@@ -75,7 +76,7 @@ const (
 // a few objects rather than every flush since the beginning.
 var compactAfter = 100
 
-var logKinds = []string{logRecords, logSubjects, logTasks}
+var logKinds = []string{logRecords, logSubjects, logTasks, logOutcomes}
 
 func segmentName(kind string, seq int64) string {
 	return fmt.Sprintf("%s/%020d.seg.jsonl.gz", kind, seq)
@@ -281,6 +282,8 @@ func (s *Store) logFile(kind string) **os.File {
 		return &s.subjectsLog
 	case logTasks:
 		return &s.tasksLog
+	case logOutcomes:
+		return &s.outcomesLog
 	}
 	return &s.log
 }
@@ -449,6 +452,12 @@ func (s *Store) snapshotLocked(kind string) ([]byte, error) {
 	case logTasks:
 		for _, key := range sortedKeys(s.tasks) {
 			if err := write(s.tasks[key]); err != nil {
+				return nil, err
+			}
+		}
+	case logOutcomes:
+		for _, key := range sortedKeys(s.outcomes) {
+			if err := write(s.outcomes[key]); err != nil {
 				return nil, err
 			}
 		}

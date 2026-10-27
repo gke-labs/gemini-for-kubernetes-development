@@ -350,3 +350,36 @@ func TestGCSArchive(t *testing.T) {
 		t.Fatalf("Delete missing: %v", err)
 	}
 }
+
+func TestFlushOutcomesToArchive(t *testing.T) {
+	ctx := context.Background()
+	a := newMemArchive()
+	s := openArchived(t, t.TempDir(), a)
+
+	rec := OutcomeRecord{
+		Repo:        "org/repo",
+		PR:          10,
+		State:       "merged",
+		CarePasses:  2,
+		OpenedByBot: true,
+	}
+	if err := s.PutOutcome(rec); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.Flush(ctx); err != nil {
+		t.Fatalf("Flush: %v", err)
+	}
+
+	// Verify sealed segment uploaded
+	if _, err := a.Read(ctx, "outcomes/00000000000000000001.seg.jsonl.gz"); err != nil {
+		t.Fatalf("expected outcomes segment 1: %v", err)
+	}
+
+	// Restore on a fresh PVC
+	s2 := openArchived(t, t.TempDir(), a)
+	outcomes := s2.ListOutcomes(OutcomeFilter{})
+	if len(outcomes) != 1 || outcomes[0].PR != 10 || outcomes[0].State != "merged" {
+		t.Fatalf("restored outcomes unexpected: %+v", outcomes)
+	}
+}

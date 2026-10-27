@@ -372,3 +372,210 @@ func TestSlowestShellCommands(t *testing.T) {
 		t.Errorf("expected 3 day calls, got %d", len(resp.SlowestByPeriod.Day))
 	}
 }
+
+func TestOutcomePersistenceAndRollups(t *testing.T) {
+	s, dir := newTestStore(t)
+
+	// Persist outcome record
+	rec101 := OutcomeRecord{
+		Repo:       "org/repo",
+		PR:         101,
+		State:      "merged",
+		OpenedAt:   "2026-10-25T10:00:00Z",
+		ClosedAt:   "2026-10-26T12:00:00Z",
+		CarePasses: 2,
+		HumanEdit: &HumanEdit{
+			Files: 1, Added: 5, Deleted: 2, Paths: []string{"pkg/foo.go"},
+		},
+		OpenedByBot: true,
+		Tasks: []TaskOutcomeRef{
+			{
+				Sandbox: "fix-repo-101",
+				Task:    "recipe-fix-1",
+				Folder:  "tasks/org/repo/fix-repo-101/recipe-fix-1",
+				Instructions: &Instructions{
+					Repo: "org/repo",
+					Workflow: &WorkflowRef{
+						Name: "kcc-greenfield",
+					},
+					Skills: []SkillRef{
+						{Name: "kcc-direct"},
+						{Name: "record-real-gcp"},
+					},
+				},
+			},
+		},
+	}
+	if err := s.PutOutcome(rec101); err != nil {
+		t.Fatalf("PutOutcome 101: %v", err)
+	}
+
+	// Upsert with carePasses = 3
+	rec101.CarePasses = 3
+	if err := s.PutOutcome(rec101); err != nil {
+		t.Fatalf("PutOutcome upsert 101: %v", err)
+	}
+
+	// Replay from disk
+	if err := s.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	s2, err := NewStore(dir)
+	if err != nil {
+		t.Fatalf("NewStore replay: %v", err)
+	}
+	defer func() { _ = s2.Close() }()
+
+	outcomes := s2.ListOutcomes(OutcomeFilter{})
+	if len(outcomes) != 1 {
+		t.Fatalf("expected 1 outcome, got %d", len(outcomes))
+	}
+	if outcomes[0].CarePasses != 3 {
+		t.Errorf("expected replayed CarePasses 3, got %d", outcomes[0].CarePasses)
+	}
+	if outcomes[0].Key != "outcome:org/repo#101" {
+		t.Errorf("expected key outcome:org/repo#101, got %s", outcomes[0].Key)
+	}
+
+	// Add PR 102 (closed, not opened by bot, member opened PR)
+	rec102 := OutcomeRecord{
+		Repo:        "org/repo",
+		PR:          102,
+		State:       "closed",
+		OpenedAt:    "2026-10-27T08:00:00Z",
+		ClosedAt:    "2026-10-27T09:00:00Z",
+		CarePasses:  1,
+		OpenedByBot: false,
+		Tasks: []TaskOutcomeRef{
+			{
+				Sandbox: "fix-repo-102",
+				Task:    "recipe-care-1",
+				Instructions: &Instructions{
+					Repo: "org/repo",
+					Workflow: &WorkflowRef{
+						Name: "kcc-greenfield",
+					},
+					Skills: []SkillRef{
+						{Name: "kcc-direct"},
+					},
+				},
+			},
+		},
+	}
+	if err := s2.PutOutcome(rec102); err != nil {
+		t.Fatalf("PutOutcome 102: %v", err)
+	}
+
+	// Test filters
+	if got := len(s2.ListOutcomes(OutcomeFilter{PR: 101})); got != 1 {
+		t.Errorf("filter PR 101: expected 1, got %d", got)
+	}
+	sinceTime, _ := time.Parse(time.RFC3339, "2026-10-27T00:00:00Z")
+	if got := len(s2.ListOutcomes(OutcomeFilter{Since: sinceTime})); got != 1 {
+		t.Errorf("filter Since 2026-10-27: expected 1, got %d", got)
+	}
+
+	// Add usage records for PR 101 to check costPerMergedPR calculation
+	mustPut(t, s2, UsageRecord{
+		Key:   "sb:task1",
+		Repo:  "org/repo",
+		PR:    101,
+		Stats: statsFor("gemini-2.5-pro", 1000, 500, 1500),
+	})
+
+	// Rollup by skill
+	rollups, err := s2.RollupOutcomes("org/repo", time.Time{}, "skill")
+	if err != nil {
+		t.Fatalf("RollupOutcomes skill: %v", err)
+	}
+	// Skills: "kcc-direct" (used by 101 and 102) and "record-real-gcp" (used by 101)
+	if len(rollups) != 2 {
+		t.Fatalf("expected 2 skills in rollup, got %d", len(rollups))
+	}
+
+	// Verify "kcc-direct":
+	// totalPRs = 2 (101, 102)
+	// mergedPRs = 1 (101)
+	// acceptanceRate = 1.0 (PR 102 was NOT opened by bot, so excluded from acceptance rate!)
+	// carePasses = 3 + 1 = 4
+	// humanEdits = 1 (PR 101 had human edits)
+	// costPerMergedPR = 1500 / 1 = 1500.0
+	var kccDirect OutcomeRollup
+	for _, r := range rollups {
+		if r.Name == "kcc-direct" {
+			kccDirect = r
+		}
+	}
+	if kccDirect.TotalPRs != 2 {
+		t.Errorf("kcc-direct totalPRs: expected 2, got %d", kccDirect.TotalPRs)
+	}
+	if kccDirect.MergedPRs != 1 {
+		t.Errorf("kcc-direct mergedPRs: expected 1, got %d", kccDirect.MergedPRs)
+	}
+	if kccDirect.AcceptanceRate != 1.0 {
+		t.Errorf("kcc-direct acceptanceRate: expected 1.0, got %f", kccDirect.AcceptanceRate)
+	}
+	if kccDirect.CarePasses != 4 {
+		t.Errorf("kcc-direct carePasses: expected 4, got %d", kccDirect.CarePasses)
+	}
+	if kccDirect.HumanEdits != 1 {
+		t.Errorf("kcc-direct humanEdits: expected 1, got %d", kccDirect.HumanEdits)
+	}
+	if kccDirect.CostPerMergedPR != 1500.0 {
+		t.Errorf("kcc-direct costPerMergedPR: expected 1500.0, got %f", kccDirect.CostPerMergedPR)
+	}
+
+	// Add PR 103 opened by bot and closed (unmerged)
+	rec103 := OutcomeRecord{
+		Repo:        "org/repo",
+		PR:          103,
+		State:       "closed",
+		OpenedByBot: true,
+		Tasks: []TaskOutcomeRef{
+			{
+				Sandbox: "fix-repo-103",
+				Task:    "recipe-fix-1",
+				Instructions: &Instructions{
+					Repo: "org/repo",
+					Skills: []SkillRef{
+						{Name: "kcc-direct"},
+					},
+				},
+			},
+		},
+	}
+	if err := s2.PutOutcome(rec103); err != nil {
+		t.Fatalf("PutOutcome 103: %v", err)
+	}
+
+	// Now kcc-direct has 3 PRs:
+	// Bot opened: 101 (merged), 103 (closed) -> acceptance rate = 1 / 2 = 0.5
+	// Non-bot opened: 102 (closed) -> excluded from rate
+	rollups, err = s2.RollupOutcomes("org/repo", time.Time{}, "skill")
+	if err != nil {
+		t.Fatalf("RollupOutcomes skill: %v", err)
+	}
+	for _, r := range rollups {
+		if r.Name == "kcc-direct" {
+			if r.TotalPRs != 3 {
+				t.Errorf("expected 3 total PRs, got %d", r.TotalPRs)
+			}
+			if r.AcceptanceRate != 0.5 {
+				t.Errorf("expected acceptanceRate 0.5, got %f", r.AcceptanceRate)
+			}
+		}
+	}
+
+	// Rollup by workflow
+	wfRollups, err := s2.RollupOutcomes("org/repo", time.Time{}, "workflow")
+	if err != nil {
+		t.Fatalf("RollupOutcomes workflow: %v", err)
+	}
+	if len(wfRollups) != 1 || wfRollups[0].Name != "kcc-greenfield" {
+		t.Fatalf("expected 1 workflow rollup 'kcc-greenfield', got %+v", wfRollups)
+	}
+	if wfRollups[0].TotalPRs != 2 || wfRollups[0].MergedPRs != 1 {
+		t.Errorf("workflow stats: expected totalPRs=2 mergedPRs=1, got totalPRs=%d mergedPRs=%d",
+			wfRollups[0].TotalPRs, wfRollups[0].MergedPRs)
+	}
+}
