@@ -1,0 +1,79 @@
+# factory recipe retro --url <repo>: conducts the weekly retrospective on
+# recent agent pull requests, analyzes staged outcome records, traces, and
+# reviewer feedback, proposes improvements to skills, workflows, and review
+# instructions via a Change (open-pr), and publishes findings in a Digest (open-issue).
+name: retro
+label: Retro
+on: [repo]
+as: coder
+credentials: clone
+
+sandbox:
+  prefix: retro
+  cpu-request: "2"
+  cpu-limit: "4"
+  memory-request: 4Gi
+  memory-limit: 8Gi
+  ephemeral-storage: 10Gi
+  disk: 30Gi
+
+outputs:
+  - digest.md
+
+task-output:
+  kind: Digest
+  from: digest.md
+  actions:
+    - verb: edit
+      field: spec.markdown
+      format: markdown
+    - verb: open-issue
+      label: Open retro issue
+    - verb: reject
+
+context: |
+  You are an expert software engineering lead running a weekly retrospective
+  for an AI coding agent system. Your goal is to systematically analyze pull
+  request outcomes, reviewer feedback, and task traces from the past week to
+  identify failure modes and improve repository skills, workflows, and review
+  guidelines.
+
+  You have no GitHub credentials (credentials: clone). The repository default
+  branch is cloned in the current directory. Staged trace inputs and outcome
+  data are available in the task directory.
+
+start:
+  steps:
+    - uses: clone
+    - uses: configure-engine
+
+    - ask: |
+        Analyze the past week's PR outcomes, reviewer feedback, and traces staged in $TASK_DIR.
+
+        Staged files include:
+        - `rollups-skill.json`: aggregate statistics grouped by skill
+        - `rollups-workflow.json`: aggregate statistics grouped by workflow
+        - `outcomes.json`: outcome records for pull requests
+        - `prs/<number>/`: candidate PR details, `outcome.json`, `feedback.jsonl`, and task transcripts/logs
+
+        1. Inspect the scoreboard: total PRs, merged PRs, acceptance rate, care passes, and human edits across skills and workflows.
+        2. Examine candidate PRs (closed unmerged, >=3 care passes, human feedback, or high human edits):
+           - Correlate reviewer comments and human edits with agent actions in `session/stream.ndjson` and `execution.log`.
+           - Classify each issue: skill deficiency, missed instructions, workflow sequencing, review instruction gaps/noise, tooling/environment, or unclear issue.
+        3. Group common failure patterns across PRs into actionable lessons.
+        4. If skill, workflow, or review instruction edits are warranted, modify the relevant files in the repository (e.g. under `.agents/` or `dev/`) and write `change.yaml` in $TASK_DIR with:
+           ```yaml
+           change:
+             title: "chore: weekly retro improvements to skills and workflows"
+             body: |
+               Table of instruction -> lesson -> PRs (feedback and trace links).
+           ```
+        5. Summarise your findings.
+
+    - ask: |
+        Now write the weekly retrospective digest to the file {{ output "digest.md" }}.
+        The digest MUST start with a markdown header (e.g. `# Weekly Retro`) and contain:
+        - Weekly Scoreboard: acceptance rate, volume, care passes, human edits, grouped by skill and workflow.
+        - Candidate PR Analysis: breakdown of investigated PRs, classifications, and reviewer feedback insights.
+        - Recommendations & Action Items: proposed skill/workflow changes and any follow-up issues to file.
+      expects: digest.md

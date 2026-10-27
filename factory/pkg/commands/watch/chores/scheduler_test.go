@@ -392,3 +392,37 @@ func TestRunSchedulesImmediatelyAndStopsOnCancel(t *testing.T) {
 		t.Fatal("Run did not return after its context was cancelled")
 	}
 }
+
+func TestScheduleChoreWithRecipeAndInputs(t *testing.T) {
+	choreYAML := `---
+name: "weekly-retro"
+description: "Run the weekly retro"
+schedule: "@weekly"
+recipe: "retro"
+inputs:
+  candidate_limit: "10"
+---
+
+Prompt text here.
+`
+	s, _, queue := newTestScheduler(t, map[string]string{
+		".agents/retro.md": choreYAML,
+	})
+
+	s.ScheduleOnce(context.Background())
+
+	tasks := queue.tasks()
+	if len(tasks) != 1 {
+		t.Fatalf("expected 1 task queued, got %d", len(tasks))
+	}
+	task := tasks[taskFileName("weekly-retro")]
+	if task == nil {
+		t.Fatalf("task for weekly-retro not found in %v", tasks)
+	}
+	if task.Recipe != "retro" {
+		t.Errorf("task.Recipe = %q, want 'retro'", task.Recipe)
+	}
+	if task.Inputs["candidate_limit"] != "10" {
+		t.Errorf("task.Inputs = %+v, want candidate_limit=10", task.Inputs)
+	}
+}

@@ -1,3 +1,17 @@
+// Copyright 2026 The Kubernetes Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package dispatcher
 
 import (
@@ -302,6 +316,7 @@ func TestEveryTaskNamesItsRun(t *testing.T) {
 		"a rule task":     {&api.QueueTask{Type: api.TypePRRule, URL: "https://github.com/o/r/pull/1", Number: 1, Rule: "ci", Recipe: "care-ci", EnqueuedAt: at}, "recipe", api.RuleRunName},
 		"a workflow step": {&api.QueueTask{Type: api.TypeAgentChore, URL: "https://github.com/o/r/issues/1", Number: 1, AgentFile: ".agents/workflows/x.md", Rule: "workflow", Recipe: "workflow", EnqueuedAt: at}, "agent", api.ChoreRunName},
 		"a chore":         {&api.QueueTask{Type: api.TypeAgentChore, URL: "https://github.com/o/r", AgentFile: ".agents/x.md", EnqueuedAt: at}, "agent", api.ChoreRunName},
+		"a chore recipe":  {&api.QueueTask{Type: api.TypeAgentChore, URL: "https://github.com/o/r", AgentFile: ".agents/retro.md", Recipe: "retro", EnqueuedAt: at}, "recipe", api.ChoreRunName},
 	} {
 		args := r.BuildArgs(tc.task, "coder-bot")
 		if len(args) == 0 || args[0] != tc.command {
@@ -315,5 +330,24 @@ func TestEveryTaskNamesItsRun(t *testing.T) {
 	// Neither an agent definition nor a recipe: nothing to run.
 	if args := r.BuildArgs(&api.QueueTask{Type: api.TypePRRule, Number: 1}, "coder-bot"); args != nil {
 		t.Errorf("a task that runs nothing builds %v", args)
+	}
+}
+
+func TestCLIRunner_BuildArgs_ChoreRecipe(t *testing.T) {
+	r := testCLIRunner(t.TempDir())
+	at := time.Unix(1760000000, 0)
+	task := &api.QueueTask{
+		Type:       api.TypeAgentChore,
+		URL:        "https://github.com/GoogleCloudPlatform/k8s-config-connector",
+		AgentFile:  ".agents/retro.md",
+		AgentName:  "weekly-retro",
+		Recipe:     "retro",
+		Inputs:     map[string]string{"sample_size": "20"},
+		EnqueuedAt: at,
+	}
+	args := r.BuildArgs(task, "test-user")
+	wantPrefix := []string{"recipe", "retro", "--url", task.URL, "--run-name", api.RunNameOf(task), "--input", "sample_size=20"}
+	if !slices.Equal(args[:len(wantPrefix)], wantPrefix) {
+		t.Errorf("args = %v, want prefix %v", args, wantPrefix)
 	}
 }

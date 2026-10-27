@@ -1,3 +1,17 @@
+// Copyright 2026 The Kubernetes Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package taskoutput
 
 import (
@@ -74,11 +88,12 @@ var verbs = map[string]verb{
 	"post-review":   {class: ClassApply, kinds: []string{"Review"}, apply: applyPostReview},
 	"submit-review": {class: ClassApply, kinds: []string{"Review"}, apply: applySubmitReview, offeredAs: "post-review"},
 	"open-pr":       {class: ClassApply, kinds: []string{"Change"}, apply: applyOpenPR},
+	"open-issue":    {class: ClassApply, kinds: []string{"Digest"}, apply: applyOpenIssue},
 	"post-replies":  {class: ClassApply, kinds: []string{"Change"}, apply: applyPostReplies},
 	"post-spec":     {class: ClassApply, kinds: []string{"FanOut"}, apply: applyPostSpec},
-	"run":           {class: ClassFollowUp, kinds: []string{"Triage", "Plan", "Notes", "Review", "Change", "Summary"}},
-	"edit":          {class: ClassDraft, kinds: []string{"Triage", "Plan", "Notes", "Review", "Change", "Summary", "FanOut"}},
-	"reject":        {class: ClassDraft, kinds: []string{"Triage", "Plan", "Notes", "Review", "Change", "Summary", "FanOut"}},
+	"run":           {class: ClassFollowUp, kinds: []string{"Triage", "Plan", "Notes", "Review", "Change", "Summary", "Digest"}},
+	"edit":          {class: ClassDraft, kinds: []string{"Triage", "Plan", "Notes", "Review", "Change", "Summary", "FanOut", "Digest"}},
+	"reject":        {class: ClassDraft, kinds: []string{"Triage", "Plan", "Notes", "Review", "Change", "Summary", "FanOut", "Digest"}},
 }
 
 // defaultActions are what a kind's result offers when its document
@@ -121,6 +136,11 @@ var defaultActions = map[string][]Action{
 		{Verb: "edit", Field: "spec", Format: "yaml"},
 		{Verb: "open-pr", Label: "Open draft PR"},
 		{Verb: "post-replies", Label: "Post replies"},
+		{Verb: "reject"},
+	},
+	"Digest": {
+		{Verb: "edit", Field: "spec.markdown", Format: "markdown"},
+		{Verb: "open-issue", Label: "Open retro issue"},
 		{Verb: "reject"},
 	},
 }

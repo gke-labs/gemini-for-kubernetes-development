@@ -65,6 +65,10 @@ type Definition struct {
 	Schedule string
 	// Path is the repository path of the definition, recorded on the queued task.
 	Path string
+	// Recipe is the optional recipe name the chore runs as instead of agent create.
+	Recipe string
+	// Inputs are the inputs passed to the recipe.
+	Inputs map[string]string
 }
 
 // Config holds the tuning knobs of a Scheduler.
@@ -249,6 +253,8 @@ func (s *Scheduler) newTask(def Definition, lastRun, now time.Time) *api.QueueTa
 		Status:    api.StatusPending,
 		AgentFile: def.Path,
 		AgentName: def.Name,
+		Recipe:    def.Recipe,
+		Inputs:    def.Inputs,
 	}
 }
 
@@ -303,6 +309,8 @@ func (s *Scheduler) fetchDefinitions(ctx context.Context) ([]Definition, error) 
 			Name:     agentDef.Name,
 			Schedule: agentDef.Schedule,
 			Path:     path,
+			Recipe:   agentDef.Recipe,
+			Inputs:   agentDef.Inputs,
 		})
 	}
 	return defs, nil

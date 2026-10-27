@@ -1,3 +1,17 @@
+// Copyright 2026 The Kubernetes Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package taskoutput
 
 import (
@@ -325,5 +339,74 @@ func applyKeyedComment(ctx context.Context, gh *githubv39.Client, doc *Document,
 			return fmt.Errorf("posting the %s comment: %w", what, err)
 		}
 	}
+	return nil
+}
+
+// applyOpenIssue creates a GitHub issue with the digest content, labelled <trigger>/retro.
+func applyOpenIssue(ctx context.Context, gh *githubv39.Client, doc *Document, dryRun bool, out io.Writer) error {
+	d, err := doc.DigestSpec()
+	if err != nil {
+		return err
+	}
+	owner, repo, err := repoTarget(doc)
+	if err != nil {
+		var itemErr error
+		owner, repo, _, itemErr = itemTarget(doc)
+		if itemErr != nil {
+			return err
+		}
+	}
+	retroLabel := triggerLabel(ctx) + "/retro"
+
+	title := d.Title
+	if title == "" {
+		for _, line := range strings.Split(d.Markdown, "\n") {
+			trimmed := strings.TrimSpace(line)
+			if strings.HasPrefix(trimmed, "#") {
+				title = strings.TrimSpace(strings.TrimLeft(trimmed, "#"))
+				break
+			}
+		}
+	}
+	if title == "" {
+		title = fmt.Sprintf("Weekly Retro - %s", time.Now().UTC().Format("2006-01-02"))
+	}
+
+	// Idempotency: if an issue for this task's digest was already created, don't open another.
+	if doc.Source.Task != "" {
+		m := marker(doc)
+		issues, _, err := gh.Issues.ListByRepo(ctx, owner, repo, &githubv39.IssueListByRepoOptions{
+			Labels:      []string{retroLabel},
+			State:       "all",
+			ListOptions: githubv39.ListOptions{PerPage: 100},
+		})
+		if err == nil {
+			for _, iss := range issues {
+				if strings.Contains(iss.GetBody(), m) {
+					fmt.Fprintf(out, "The digest of task %s is already on %s#%d; not opening again\n", doc.Source.Task, owner+"/"+repo, iss.GetNumber())
+					doc.Target.URL = iss.GetHTMLURL()
+					return nil
+				}
+			}
+		}
+	}
+
+	fmt.Fprintf(out, "%s issue %q on %s/%s with label %s\n", doing(dryRun, "Opening", "open"), title, owner, repo, retroLabel)
+	if dryRun {
+		return nil
+	}
+
+	body := withSessionHint(ctx, d.Markdown) + "\n\n" + marker(doc)
+	req := &githubv39.IssueRequest{
+		Title:  &title,
+		Body:   &body,
+		Labels: &[]string{retroLabel},
+	}
+	created, _, err := gh.Issues.Create(ctx, owner, repo, req)
+	if err != nil {
+		return fmt.Errorf("opening the retro issue: %w", err)
+	}
+	doc.Target.URL = created.GetHTMLURL()
+	fmt.Fprintf(out, "Opened issue %s\n", created.GetHTMLURL())
 	return nil
 }

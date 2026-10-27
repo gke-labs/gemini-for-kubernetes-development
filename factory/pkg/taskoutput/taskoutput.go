@@ -1,3 +1,17 @@
+// Copyright 2026 The Kubernetes Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 // Package taskoutput is the one shape every task's result takes: a typed
 // document naming what it is about (target), where it came from (source)
 // and the result itself (spec). A task leaves it in its task directory as
@@ -133,6 +147,7 @@ var kinds = map[string]kind{
 	"Change":  {parse: parseChange},
 	"Summary": {parse: parseSummary},
 	"FanOut":  {parse: parseFanOut},
+	"Digest":  {parse: parseDigest},
 }
 
 // Known reports whether kind is one taskoutput can wrap and apply.
@@ -310,6 +325,48 @@ func parsePlan(raw string) (any, error) {
 		return nil, fmt.Errorf("the plan is empty")
 	}
 	return &Plan{Markdown: md}, nil
+}
+
+// Digest is a Digest document's spec: the weekly retro scoreboard and findings (open-issue).
+type Digest struct {
+	Title    string `yaml:"title,omitempty" json:"title,omitempty"`
+	Markdown string `yaml:"markdown" json:"markdown"`
+}
+
+// DigestSpec decodes a Digest document's spec.
+func (d *Document) DigestSpec() (*Digest, error) {
+	if d.Kind != "Digest" {
+		return nil, fmt.Errorf("%s task output is not a Digest", d.Kind)
+	}
+	var dig Digest
+	if err := d.Spec.Decode(&dig); err != nil {
+		return nil, fmt.Errorf("Digest spec: %w", err)
+	}
+	if strings.TrimSpace(dig.Markdown) == "" {
+		return nil, fmt.Errorf("Digest spec has no markdown")
+	}
+	return &dig, nil
+}
+
+func parseDigest(raw string) (any, error) {
+	md := CleanAgentMarkdown(raw)
+	if md == "" {
+		return nil, fmt.Errorf("the digest is empty")
+	}
+	var y struct {
+		Digest *Digest `yaml:"digest"`
+		Title  string  `yaml:"title"`
+		Body   string  `yaml:"body"`
+	}
+	if err := yaml.Unmarshal([]byte(raw), &y); err == nil {
+		if y.Digest != nil && strings.TrimSpace(y.Digest.Markdown) != "" {
+			return y.Digest, nil
+		}
+		if strings.TrimSpace(y.Body) != "" {
+			return &Digest{Title: y.Title, Markdown: y.Body}, nil
+		}
+	}
+	return &Digest{Markdown: md}, nil
 }
 
 // CleanAgentMarkdown is the markdown in an agent's reply, without a fence

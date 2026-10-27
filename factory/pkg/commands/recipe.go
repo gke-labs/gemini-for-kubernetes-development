@@ -1,3 +1,17 @@
+// Copyright 2026 The Kubernetes Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package commands
 
 import (
@@ -386,6 +400,9 @@ func runRecipeIn(ctx context.Context, opts recipeRunOpts, recipeArg, itemURL, ru
 	}
 	if apply.on && rec.TaskOutput == nil {
 		return fmt.Errorf("recipe %s declares no task output; there is nothing to --apply", rec.Name)
+	}
+	if rec.Name == "retro" && sandboxKey == "" {
+		sandboxKey = "retro"
 	}
 	if err := checkSandboxKey(rec, it, opts, sandboxKey); err != nil {
 		return err
@@ -1561,6 +1578,20 @@ func writeTaskOutput(taskDir, repoDir string, inputs map[string]string, engine s
 	if task.Output.Kind != "Change" {
 		if _, err := taskoutput.Refresh(taskDir, task.Output.From); err != nil {
 			return err
+		}
+		if changeRaw, err := os.ReadFile(filepath.Join(taskDir, "change.yaml")); err == nil && len(changeRaw) > 0 {
+			changeDoc, err := taskoutput.Wrap("Change", string(changeRaw), target, source)
+			if err == nil {
+				if err := fillChange(changeDoc, task, taskDir, inputs); err == nil {
+					changeDoc.Actions = taskoutput.DefaultActions("Change")
+					digestData, _ := os.ReadFile(filepath.Join(taskDir, taskoutput.File))
+					existingDocs, _ := taskoutput.Parse(digestData)
+					allDocs := append(existingDocs, changeDoc)
+					if out, err := taskoutput.Marshal(allDocs...); err == nil {
+						_ = os.WriteFile(filepath.Join(taskDir, taskoutput.File), out, 0o644)
+					}
+				}
+			}
 		}
 		fmt.Printf("::task-output %s %s\n", task.Output.Kind, taskoutput.File)
 		return nil

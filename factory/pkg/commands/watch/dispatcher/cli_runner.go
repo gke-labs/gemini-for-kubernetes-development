@@ -1,3 +1,17 @@
+// Copyright 2026 The Kubernetes Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package dispatcher
 
 import (
@@ -65,6 +79,18 @@ func NewCLIRunner(cfg CLIRunnerConfig) *CLIRunner {
 func (r *CLIRunner) BuildArgs(t *api.QueueTask, selectedUser string) []string {
 	var args []string
 	switch {
+	case t.Recipe != "" && t.Recipe != "workflow":
+		// Its result applied by the CLI as the user picked (--user).
+		args = []string{"recipe", t.Recipe, "--url", t.URL, "--run-name", api.RunNameOf(t)}
+		if _, _, err := recipe.Builtin(t.Recipe); err != nil {
+			// A repository's recipe has no command of its name.
+			args = []string{"recipe", "run", "--recipe", t.Recipe, "--url", t.URL, "--run-name", api.RunNameOf(t)}
+		}
+		args = append(args, api.RecipeArgs(t)...)
+		for _, inst := range t.Instructions {
+			args = append(args, "--instruction", inst)
+		}
+		return r.withCommonArgs(args, selectedUser)
 	case t.AgentFile != "":
 		args = []string{"agent", "create", "--url", t.URL, "--agent", t.AgentFile, "--run-name", api.RunNameOf(t)}
 		if t.SessionID != "" {
@@ -72,10 +98,8 @@ func (r *CLIRunner) BuildArgs(t *api.QueueTask, selectedUser string) []string {
 		}
 		return r.withCommonArgs(args, selectedUser)
 	case t.Recipe != "":
-		// Its result applied by the CLI as the user picked (--user).
 		args = []string{"recipe", t.Recipe, "--url", t.URL, "--run-name", api.RunNameOf(t)}
 		if _, _, err := recipe.Builtin(t.Recipe); err != nil {
-			// A repository's recipe has no command of its name.
 			args = []string{"recipe", "run", "--recipe", t.Recipe, "--url", t.URL, "--run-name", api.RunNameOf(t)}
 		}
 		args = append(args, api.RecipeArgs(t)...)
