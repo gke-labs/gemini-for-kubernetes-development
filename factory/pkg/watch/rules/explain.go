@@ -350,6 +350,9 @@ func policyHold(r *Rule, it Item, env Env, runs []PastRun) (string, time.Time) {
 		if d == 0 {
 			d = defaultWorkflowCooldown
 		}
+		if !last.Failed {
+			d += workflowJitter(it.Number, last.StartedAt, d)
+		}
 	}
 	if d == 0 || env.Now.Sub(last.EndedAt) >= d {
 		return "", time.Time{}

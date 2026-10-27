@@ -352,7 +352,7 @@ engine does not fill in there is an error when the rule loads.
 | `{{pr-labels}}` | issue recipe inputs | the trigger, the configuration's additional labels and the issue's labels (what `--pr-labels` resolves) |
 | `{{review-instructions}}` | PR recipe inputs, whole | the review instructions in the PR's body, else in the issues it closes (a `Review instructions` heading), given to the recipe as its `--instruction` flags; the prebaked review asks for them |
 | `{{pr-inactivity-timeout}}` | a duration | the overseer's `prInactivityTimeout` |
-| `{{workflow-cooldown}}` | a duration | the cooldown the workflow definition declares (10m when it sets none) |
+| `{{workflow-cooldown}}` | a duration | the cooldown the workflow definition declares (10m when it sets none); as a success cooldown, plus up to a fifth more, by item and last run, so a batch of workflows does not step again as one |
 
 ---
 
@@ -517,6 +517,11 @@ alone (the nudge steps inside the workflow's cooldown). A comments task
 acknowledges its feedback (👀) only when it starts, so the feedback is
 still new at this check. A task already running when the watch restarts
 is followed by its run name, never dropped.
+
+A workflow step whose sandbox's pod does not start in time (a node still
+scaling up) is dropped once it has started, not failed: no failure
+cooldown, no on-failure writes, and its sandbox stays up for the pod; the
+next scan queues it again.
 
 ---
 

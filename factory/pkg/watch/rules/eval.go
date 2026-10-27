@@ -2,6 +2,7 @@ package rules
 
 import (
 	"fmt"
+	"hash/fnv"
 	"slices"
 	"strings"
 	"time"
@@ -389,6 +390,16 @@ func (it Item) could(fact string) bool { return fact != "" && it.unknown(fact) &
 // defaultWorkflowCooldown is a workflow definition's cooldown when it sets
 // none.
 const defaultWorkflowCooldown = 10 * time.Minute
+
+// workflowJitter is what a workflow's success cooldown waits on top, up
+// to a fifth of it: workflows a batch started together step again spread
+// out rather than as one batch every cooldown. The same for the item's
+// same last run, so every scan holds it to the same time.
+func workflowJitter(number int, lastStart time.Time, d time.Duration) time.Duration {
+	h := fnv.New64a()
+	_, _ = fmt.Fprintf(h, "%d/%d", number, lastStart.UnixNano())
+	return time.Duration(h.Sum64() % uint64(d/5+1))
+}
 
 // rulesRuns are the item's runs of one rule, in the order they ended.
 func rulesRuns(rule string, runs []PastRun) []PastRun {
