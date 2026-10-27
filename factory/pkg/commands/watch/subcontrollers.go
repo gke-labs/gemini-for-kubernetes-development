@@ -569,6 +569,11 @@ func shortSHA(sha string) string {
 // assignee recorded on the task and otherwise falling back to role selection.
 func (c *watcherTaskCoordinator) SelectUser(ctx context.Context, task *api.QueueTask) (string, error) {
 	w := c.w
+	if api.IsPRTask(task.Type) && w.recipeAs(task.Recipe) == recipe.AsAuthor {
+		// It pushes to the PR's branch, which only the PR's author can: the
+		// author, never the bot the PR is assigned to (a reviewer can be).
+		return w.selectUserForTask(ctx, task.Type, task.Recipe, task.Number)
+	}
 	selectedUser := task.Assignee
 	if selectedUser == "" || (api.IsPRTask(task.Type) && strings.EqualFold(selectedUser, w.targetAssignee)) || !w.inPool(w.recipeAs(task.Recipe), selectedUser) {
 		return w.selectUserForTask(ctx, task.Type, task.Recipe, task.Number)
@@ -577,10 +582,10 @@ func (c *watcherTaskCoordinator) SelectUser(ctx context.Context, task *api.Queue
 }
 
 // inPool reports whether user may run a task that runs as as: any user
-// for author (the PR's own bot) or a task no rule decided, else a member
-// of that pool - a review the PR's author was put on runs as a reviewer.
+// for a task no rule decided, else a member of that pool - a review the
+// PR's author was put on runs as a reviewer.
 func (w *Watcher) inPool(as, user string) bool {
-	if as == "" || as == recipe.AsAuthor || w.cfg == nil {
+	if as == "" || w.cfg == nil {
 		return true
 	}
 	role, ok := w.cfg.Roles[as]

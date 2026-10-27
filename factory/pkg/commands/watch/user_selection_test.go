@@ -90,3 +90,30 @@ func TestSelectUser_KeyedCommentAuthor(t *testing.T) {
 		t.Errorf("fix (no key) read the comments: %d reads, %v", commentReads-reads, err)
 	}
 }
+
+// A care recipe (as: author) runs as the PR's author, whichever bot the
+// task was queued with - a reviewer or another coder the PR is assigned to:
+// only the author can push to its branch.
+func TestSelectUser_AuthorRecipeRunsAsTheAuthor(t *testing.T) {
+	w := newTestWatcher(t, t.TempDir())
+	w.cfg = &config.FactoryConfig{Roles: map[string]config.RoleConfig{
+		"coder":    {Users: []string{"ada-coder-bot", "hopper-coder-bot"}},
+		"reviewer": {Users: []string{"review-bot"}},
+	}}
+	srv := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		rw.Header().Set("Content-Type", "application/json")
+		_, _ = rw.Write([]byte(`{"number": 7, "user": {"login": "ada-coder-bot"}}`))
+	}))
+	t.Cleanup(srv.Close)
+	gh := githubv39.NewClient(nil)
+	gh.BaseURL, _ = url.Parse(srv.URL + "/")
+	w.ghClient = gh
+	coordinator := &watcherTaskCoordinator{w: w}
+
+	for _, assignee := range []string{"review-bot", "hopper-coder-bot", ""} {
+		user, err := coordinator.SelectUser(context.Background(), &api.QueueTask{Type: api.TypePRRule, Recipe: "care-ci", Assignee: assignee, Number: 7})
+		if err != nil || user != "ada-coder-bot" {
+			t.Errorf("care-ci queued with %q: %q, %v; want ada-coder-bot", assignee, user, err)
+		}
+	}
+}

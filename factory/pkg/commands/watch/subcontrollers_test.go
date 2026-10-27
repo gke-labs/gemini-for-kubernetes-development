@@ -466,7 +466,6 @@ func TestWatcherTaskCoordinator_SelectUser_RunsAs(t *testing.T) {
 		task *api.QueueTask
 		want string
 	}{
-		"author":                     {&api.QueueTask{Type: api.TypePRRule, Recipe: "care-comments", Assignee: "coder-bot", Number: 7}, "coder-bot"},
 		"a pool member":              {&api.QueueTask{Type: api.TypeIssueRule, Recipe: "fix", Assignee: "coder-bot", Number: 7}, "coder-bot"},
 		"reviewer, not the PR's bot": {&api.QueueTask{Type: api.TypePRRule, Recipe: "review", Assignee: "coder-bot", Number: 7}, "review-bot"},
 	} {

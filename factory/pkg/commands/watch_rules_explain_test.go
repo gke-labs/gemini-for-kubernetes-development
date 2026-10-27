@@ -20,7 +20,7 @@ func TestWatchRulesFlow(t *testing.T) {
 		"closed            the PR is closed",
 		"merge-queue       the PR is in the merge queue: no rule decides\n",
 		" 30 ● ci\n",
-		"wait 2h after a success (a new head ends it; not when assignee: pool)",
+		"wait 2h after a success, 20m after a failure (a new head ends it; not when assignee: pool)",
 		"after 3 runs since head, human, pause → the stop label",
 		"run care-ci → post-replies",
 	} {
