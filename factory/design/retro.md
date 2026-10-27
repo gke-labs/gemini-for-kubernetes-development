@@ -152,26 +152,32 @@ When a bot PR is closed unmerged by someone other than the bot, the watch commen
 - For 7 days, the watch reads new comments on the PRs it asked about, with the cached GitHub client. The first reply from the closer or a member becomes `closeReason`. A `<trigger>/closed-<reason>` label counts as an answer too.
 - A PR the bot closed itself gets no comment: factory records its own reason.
 
-### 6. The retro recipe
+### 6. The retro: a command that stages, a recipe that reads
 
-A built-in recipe, **`retro`**, on a repository (`on: [repo]`), run weekly per overseer from the chores scheduler. The scheduler learns to run a recipe: a chore definition with `recipe: retro`, `inputs:` and `schedule: "@weekly"`.
+The retro is two parts. **`factory retro`** gathers the week's data from the collector, in the process that runs it. **`retro`** is an ordinary recipe that reads that data from its task's directory and does the analysis. Only the command touches the collector; the recipe and its sandbox never do.
 
-**Inputs, staged by the watch before the task starts:**
-- the week's outcome records and the per-skill rollup;
-- for every PR worth a look, its archived tasks' transcripts and logs: closed unmerged, 3 or more care passes, human feedback (§4), or human edits above a threshold;
-- the PR's human feedback (`feedback.jsonl`, §4) and `closeReason`.
+Why not one recipe that stages its own inputs: staging needs the collector, and the sandbox should not have it. The collector takes no credentials and, besides serving every task's archived traces, accepts writes of outcomes, feedback and usage. An agent that reads untrusted issue and PR text, given that access, could plant feedback that next week's retro turns into skill edits. It reaches the collector today only because the cluster has no NetworkPolicies. A recipe phase that runs in the caller before the task (`prepare:`) would keep the access out of the sandbox, but no other recipe needs one; harvesting is not a recipe step either.
 
-The staged files go into the task's directory, so the agent needs no GCP credentials. The recipe runs with `credentials: clone`.
+#### The recipe: `retro`
 
-Reading the archive is the one new piece: today nothing reads `tasks/` back, and the collector never serves a task's files. The collector already holds the bucket's credentials, so it gets a read endpoint, `GET /v1/tasks/{sandbox}/{task}/files/{name}`, that streams one archived file (unzipped) from the bucket; the watch stages through it and needs no GCS access of its own.
+A built-in recipe on a repository (`on: [repo]`, `credentials: clone`), listed in the catalog like the others. A repository can replace it with `.agents/recipes/retro.yaml`; what it may not change is its input, the staged layout below.
+
+**Input: the week's data in `staged/`**, in the task's directory, before the first step runs:
+- `staged.json`: the repository, the window (`since`, `until`), what was staged and why each PR was picked;
+- `rollups/skill.json`, `rollups/workflow.json`: the per-skill and per-workflow rollups (§3);
+- `outcomes.jsonl`: the window's outcome records;
+- `prs/<n>/feedback.jsonl`: each picked PR's human feedback (§4), with its `closeReason` on its outcome record;
+- `prs/<n>/tasks/<sandbox>/<task>/…`: the picked PR's archived tasks as archived (§1) - the transcript (`session/stream.ndjson`), logs, inputs, recipe, and each task's `manifest.json` with its skill stretches (§2).
+
+A PR is picked when it was closed unmerged, took 3 or more care passes, has human feedback (§4), or has human edits above a threshold.
 
 **The agent:**
-1. For each PR, finds what went wrong. It lines up the human feedback (§4) and the human edits (by path) with the trace, and with the skill in play at that point (the manifest's `firstSeq`–`lastSeq`). It also lines them up with the automated review of the same head.
+1. For each picked PR, finds what went wrong. It lines up the human feedback (§4) and the human edits (by path) with the trace, and with the skill in play at that point (the task manifest's `firstSeq`–`lastSeq`). It also lines them up with the automated review of the same head.
 2. Classifies each finding, using §4's classes for feedback: the coding skill was wrong, missed a step, was ignored, or there was none; the review instructions missed it or were noise; the workflow's order was wrong; environment or tooling; bad issue; or fine.
 3. Groups across PRs: one lesson that three PRs show beats three anecdotes.
 4. Proposes edits to the skill, workflow or review instructions responsible, at the default branch's current version, citing PRs, feedback items and trace positions. A lesson with no skill to own it becomes a new skill or a line in `AGENTS.md`. Environment and factory problems change no instruction: they go in the week's journal (below), for a human to file.
 
-**Result: one `Change`**, as `fix` and the agent chores produce, opened as one PR by the existing `open-pr` action. No new task-output kind and no new action. It holds:
+**Result: one `Change`**, as `fix` produces, pushed to the bot's fork and opened as one PR by the existing `open-pr` action. No new task-output kind and no new action. It holds:
 - the edits to skills, workflows and review instructions;
 - **the week's journal**, `.agents/journals/retro/<YYYY-MM-DD>.md`: the scoreboard (per skill and per workflow, compared with last week, plus the automated review's misses and noise), the classified PRs, what was proposed and why, and the environment and factory problems to file.
 
@@ -181,7 +187,21 @@ A journal is a file in the repository, as `.gemini/journals/` is on KCC, not an 
 
 Nothing is applied automatically. The next retro reads the journals on the default branch and last week's retro PR: for each skill edited and merged, whether its numbers moved; for a PR closed unmerged, or edits a reviewer removed, what was rejected. A rejected proposal isn't made again unless new PRs back it.
 
-A repository can carry its own retro in `.agents/recipes/retro.yaml` if the built-in doesn't suit it.
+#### The command: `factory retro --url <repo> [--since 7d]`
+
+1. **Stages**, in the caller: reads the window's rollups and outcome records from the collector, picks the PRs, and fetches each one's feedback (`GET /v1/prs/{owner}/{repo}/{n}/feedback`) and archived task files (`GET /v1/tasks/{sandbox}/{task}/files/{name}`) into the layout above. `--stage-only <dir>` stops here, writing it to `<dir>`: what a run would analyse, to read or to check the picks. `--staged <dir>` skips it and uses a layout already staged - for trying a change to the recipe's prompt against the same week.
+2. **Runs the `retro` recipe** through the ordinary recipe runner, giving it the staged files to write into the task's `staged/` with the task's submission, so they are there before the first step.
+3. **Applies `open-pr`**, as any recipe run does.
+
+The runner needs one thing it lacks: **files from the caller, written into the task when it is submitted.** That is an option of a run in Go (the files, and where in the task's directory they go), not something a recipe file declares; the task server already accepts file writes. Only `factory retro` uses it.
+
+#### Weekly
+
+A watch built-in, as the closed-PR sweep is: on `spec.retro.schedule` (e.g. `@weekly`, unset off), the watch runs the same code as `factory retro` for its repository. Not a chore: a chore runs an agent definition or a recipe, and the retro needs its staging first.
+
+#### What #2171 taught
+
+A first build (#2171, closed unmerged) had the pieces - a staging helper, the feedback endpoint, chores that run a recipe, the recipe - but nothing called the helper, so the recipe would have read an empty directory; it shipped no schedule, and the recipe had no fork or push step for `open-pr` to open from. The design had said "staged by the watch before the task starts" without saying how the files reach the sandbox, and the plan made it one step of six features, each passing its own tests. The steps below put the hand-off (step 6b) in its own step, and end with a run by hand.
 
 ### 7. Evaluating a change before making it (later)
 
@@ -194,7 +214,11 @@ Archived traces and outcome records are also what an offline evaluation needs. T
 3. **Outcome records and rollups:** the record from the closed-PR sweep, `humanEdit`, the collector's endpoints including `by=skill|workflow`.
 4. **Human feedback:** the closed-PR sweep captures the PR's human reviews and comments (with `afterBotReview` and `answeredBy`) into `prs/.../feedback.jsonl` through the collector, with counts on the outcome record.
 5. **Why closed:** the comment and the reply harvest.
-6. **The retro recipe:** chores that run a recipe, staging traces as inputs, the recipe (one `Change`: the edits and the week's journal). Run it by hand on KCC first (`factory recipe retro --url <repo>`), then weekly on overseer-kcc.
+6. **The retro** (§6), in four:
+   - **6a. Staging:** picking the PRs and fetching their data from the collector, the feedback read endpoint, `factory retro --stage-only <dir>`, and the staged layout written down as the recipe's input.
+   - **6b. Files from the caller:** a recipe run that writes files the caller gives it into the task's directory with the submission, before the first step.
+   - **6c. The `retro` recipe and `factory retro`:** the recipe (fork, push, one `Change`: the edits and the week's journal) and the command that stages, runs it and opens the PR. Run by hand on KCC: `factory retro --url https://github.com/GoogleCloudPlatform/k8s-config-connector`.
+   - **6d. Weekly:** `spec.retro.schedule`, the watch running the same code.
 
 Steps 1, 2 and 4 are worth having on their own: an archived trace already answers "what did the agent do?" for any PR after its sandbox is gone - today by reading the bucket directly.
 
