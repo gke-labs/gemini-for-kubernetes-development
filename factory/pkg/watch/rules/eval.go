@@ -112,10 +112,6 @@ type PastRun struct {
 	StartedAt time.Time
 	EndedAt   time.Time
 	Failed    bool
-	// NotRun is a failed run refused before doing anything (its recipe
-	// does not run on the item, no bot may run it): it holds a cooldown,
-	// but a give-up does not count it - no attempt was made.
-	NotRun bool
 	// Head is the PR's head the run worked on.
 	Head string
 }
@@ -433,12 +429,14 @@ func since(events Since, it Item) time.Time {
 	return t
 }
 
-// giveUpRuns are the runs a give-up counts: every one, or the failed
-// ones - never a run refused before doing anything (NotRun).
+// giveUpRuns are the runs a give-up counts: every one, or the failed ones.
 func giveUpRuns(g *GiveUp, runs []PastRun) []PastRun {
+	if !g.Failed {
+		return runs
+	}
 	var out []PastRun
 	for _, r := range runs {
-		if !r.NotRun && (r.Failed || !g.Failed) {
+		if r.Failed {
 			out = append(out, r)
 		}
 	}

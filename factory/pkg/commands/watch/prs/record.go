@@ -157,7 +157,7 @@ func fillChecks(it *rules.Item, a prCheckAnalysis, approved bool) {
 func pastRuns(ended []api.EndedRun) []rules.PastRun {
 	out := make([]rules.PastRun, 0, len(ended))
 	for _, r := range ended {
-		out = append(out, rules.PastRun{StartedAt: r.StartedAt, Failed: r.Failed, NotRun: r.CannotRun})
+		out = append(out, rules.PastRun{StartedAt: r.StartedAt, Failed: r.Failed})
 	}
 	return out
 }
