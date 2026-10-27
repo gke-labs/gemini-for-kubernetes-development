@@ -137,7 +137,7 @@ What the humans said on an agent's PR is captured whole, not just counted. It's 
 | **review miss** | `afterBotReview`: the automated review saw that head and didn't raise it | an edit to the review instructions: the review skill, or the `## Review Instructions` source (the workflow or graph step that writes it), or the repository's `review` recipe |
 | **review noise** | a human dismissed the bot reviewer's point | the same targets, to drop or narrow an instruction |
 | **repository knowledge** | a fact about the code base no skill owns | a line in `AGENTS.md` / `GEMINI.md`, or a new skill |
-| **scope or plan** | the issue or the plan was the problem | nothing to the instructions; noted in the digest |
+| **scope or plan** | the issue or the plan was the problem | nothing to the instructions; noted in the journal |
 | **taste** | a one-off preference | nothing, unless several PRs show it |
 
 A point that recurs across PRs, or across reviewers, is a lesson; a single comment is evidence. Coding and review lessons from the same feedback item are proposed together: fix the skill that let the agent write it, and the review instruction that let it through.
@@ -169,13 +169,17 @@ Reading the archive is the one new piece: today nothing reads `tasks/` back, and
 1. For each PR, finds what went wrong. It lines up the human feedback (§4) and the human edits (by path) with the trace, and with the skill in play at that point (the manifest's `firstSeq`–`lastSeq`). It also lines them up with the automated review of the same head.
 2. Classifies each finding, using §4's classes for feedback: the coding skill was wrong, missed a step, was ignored, or there was none; the review instructions missed it or were noise; the workflow's order was wrong; environment or tooling; bad issue; or fine.
 3. Groups across PRs: one lesson that three PRs show beats three anecdotes.
-4. Proposes edits to the skill, workflow or review instructions responsible, at the default branch's current version, citing PRs, feedback items and trace positions. A lesson with no skill to own it becomes a new skill or a line in `AGENTS.md`. Environment and factory problems become issues instead.
+4. Proposes edits to the skill, workflow or review instructions responsible, at the default branch's current version, citing PRs, feedback items and trace positions. A lesson with no skill to own it becomes a new skill or a line in `AGENTS.md`. Environment and factory problems change no instruction: they go in the week's journal (below), for a human to file.
 
-**Results:**
-- **a `Change`**: the edits to skills, workflows and review instructions, opened as one PR by the existing `open-pr` action. Its body is a table of `instruction → lesson → PRs (feedback and trace links)`.
-- **a `Digest`** (a new task-output kind): the week's scoreboard (per skill and per workflow, compared with last week, plus the automated review's misses and noise), the classified PRs, and the issues to file. The new `open-issue` action posts it, labelled `<trigger>/retro`.
+**Result: one `Change`**, as `fix` and the agent chores produce, opened as one PR by the existing `open-pr` action. No new task-output kind and no new action. It holds:
+- the edits to skills, workflows and review instructions;
+- **the week's journal**, `.agents/journals/retro/<YYYY-MM-DD>.md`: the scoreboard (per skill and per workflow, compared with last week, plus the automated review's misses and noise), the classified PRs, what was proposed and why, and the environment and factory problems to file.
 
-Nothing is applied automatically. The next retro reads the previous digest and reports, for each skill edited last week, whether its numbers moved. A proposal the humans rejected isn't made again unless new PRs back it.
+The PR body is a table of `instruction → lesson → PRs (feedback and trace links)`, and links the journal.
+
+A journal is a file in the repository, as `.gemini/journals/` is on KCC, not an issue: it is reviewed with the edits it explains, needs nothing beyond the PR to produce, and the history of retros is the folder.
+
+Nothing is applied automatically. The next retro reads the journals on the default branch and last week's retro PR: for each skill edited and merged, whether its numbers moved; for a PR closed unmerged, or edits a reviewer removed, what was rejected. A rejected proposal isn't made again unless new PRs back it.
 
 A repository can carry its own retro in `.agents/recipes/retro.yaml` if the built-in doesn't suit it.
 
@@ -190,7 +194,7 @@ Archived traces and outcome records are also what an offline evaluation needs. T
 3. **Outcome records and rollups:** the record from the closed-PR sweep, `humanEdit`, the collector's endpoints including `by=skill|workflow`.
 4. **Human feedback:** the closed-PR sweep captures the PR's human reviews and comments (with `afterBotReview` and `answeredBy`) into `prs/.../feedback.jsonl` through the collector, with counts on the outcome record.
 5. **Why closed:** the comment and the reply harvest.
-6. **The retro recipe:** chores that run a recipe, staging traces as inputs, the `Digest` kind and `open-issue` action, the recipe. Run it by hand on KCC first (`factory recipe retro --url <repo>`), then weekly on overseer-kcc.
+6. **The retro recipe:** chores that run a recipe, staging traces as inputs, the recipe (one `Change`: the edits and the week's journal). Run it by hand on KCC first (`factory recipe retro --url <repo>`), then weekly on overseer-kcc.
 
 Steps 1, 2 and 4 are worth having on their own: an archived trace already answers "what did the agent do?" for any PR after its sandbox is gone - today by reading the bucket directly.
 
@@ -200,4 +204,4 @@ Steps 1, 2 and 4 are worth having on their own: an archived trace already answer
 - **Skills outside the repository** (user-level or engine-bundled): recorded in the manifest by name, but the retro proposes no edits to them.
 - **Trace access:** whether members who can see the board should read archived traces through repo-agent (through the collector's read endpoint, or a signed URL), or only through the bucket.
 - **Retention of `tasks/`:** the collector's prefix has no lifecycle rule, as it is the only copy of the usage records. Task folders are the bulk (KCC transcripts reach megabytes per task); a rule on `<prefix>/tasks/` alone (e.g. 180 days, after the retro has read them) would bound the cost without touching the records.
-- **Repositories the bot can't push to:** the digest carries the diffs inline instead of a PR.
+- **Repositories the bot can't push to:** no PR, so the journal and the proposed diffs stay in the task's output, for a human to apply.
