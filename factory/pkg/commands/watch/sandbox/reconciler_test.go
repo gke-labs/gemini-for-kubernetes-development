@@ -1588,3 +1588,71 @@ func TestComputeHumanEditRebaseNoChange(t *testing.T) {
 		t.Errorf("expected 0 files changed on clean rebase, got %+v", edit)
 	}
 }
+
+// An issue's fix sandbox, labelled with the PR its fix opened, is that PR's
+// only sandbox when no review ran: collected with its closed issue, it
+// records the closed PR's outcome. One serving no PR records none.
+func TestClosedIssueSandboxRecordsItsPROutcome(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		pr   string
+		want int
+	}{
+		{"labelled with its closed PR", "99", 1},
+		{"no PR", "", 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var outcomes []tokenusage.OutcomeRecord
+			collectorSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, "/v1/outcomes/") {
+					var rec tokenusage.OutcomeRecord
+					_ = json.NewDecoder(r.Body).Decode(&rec)
+					outcomes = append(outcomes, rec)
+				}
+				w.WriteHeader(http.StatusOK)
+			}))
+			defer collectorSrv.Close()
+			t.Setenv("COLLECTOR_URL", collectorSrv.URL)
+			withTasks(t, &fakeTaskServer{}, nil)
+
+			ghMux := http.NewServeMux()
+			ghMux.HandleFunc("/repos/test-owner/test-repo/issues/42", func(w http.ResponseWriter, r *http.Request) {
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{"number": 42, "state": "closed"})
+			})
+			ghMux.HandleFunc("/repos/test-owner/test-repo/pulls/99", func(w http.ResponseWriter, r *http.Request) {
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"number": 99, "state": "closed", "merged": true,
+					"head": map[string]string{"sha": "h", "ref": "issue-42-1"}, "base": map[string]string{"ref": "main"},
+					"user": map[string]string{"login": "ada-coder-bot", "type": "User"}, "body": "Fixes #42",
+				})
+			})
+			ghMux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+				_ = json.NewEncoder(w).Encode([]interface{}{})
+			})
+			ghSrv := httptest.NewServer(ghMux)
+			defer ghSrv.Close()
+			client := githubv39.NewClient(nil)
+			client.BaseURL, _ = url.Parse(ghSrv.URL + "/")
+
+			sb := newSandbox("fix-test-repo-42", map[string]interface{}{annotationLastTaskState: "Completed"})
+			if tc.pr != "" {
+				sb.SetLabels(map[string]string{labelPR: tc.pr})
+			}
+			r := New(Config{}, Deps{
+				Sandboxes: NewService(ServiceConfig{Namespace: testNamespace, Owner: "test-owner", Repo: "test-repo"}, ServiceDeps{
+					Kube: newFakeKubeClient(t, sb), GitHub: client,
+				}),
+				Locks:    concurrency.NewSandboxLockRegistry(),
+				Entities: warmCache(),
+			})
+			r.CollectGarbage(context.Background())
+
+			if len(outcomes) != tc.want {
+				t.Fatalf("outcomes uploaded: %d, want %d", len(outcomes), tc.want)
+			}
+			if tc.want == 1 && (outcomes[0].PR != 99 || outcomes[0].State != "merged") {
+				t.Errorf("outcome = %+v", outcomes[0])
+			}
+		})
+	}
+}
