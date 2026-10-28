@@ -62,7 +62,7 @@ func NewServer(incomingDir, tasksDir string, launch spool.Launcher) *Server {
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/version", func(w http.ResponseWriter, r *http.Request) {
-		v := Version{API: APIVersion, Secrets: SecretsVersion}
+		v := Version{API: APIVersion, Secrets: SecretsVersion, Uploads: UploadsVersion}
 		if s.sessions != nil {
 			v.Sessions = SessionsVersion
 		}
@@ -76,6 +76,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/tasks/{id}/files/{name}", s.handleReadFile)
 	mux.HandleFunc("GET /v1/tasks/{id}/files/{dir}/{name}", s.handleReadSubdirFile)
 	mux.HandleFunc("PUT /v1/tasks/{id}/files/{name}", s.handleWriteFile)
+	mux.HandleFunc("PUT /v1/uploads/{name}", s.handleUpload)
 	mux.HandleFunc("POST /v1/tasks/{id}/cancel", s.handleCancel)
 	if s.sessions != nil {
 		mux.Handle("/v1/sessions", s.sessionsHandler())
@@ -188,6 +189,9 @@ func (s *Server) handlePost(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, e := range entries {
 		if e.ID == task.ID || (task.RunName != "" && e.RunName == task.RunName) {
+			if req.Upload != "" && name.MatchString(req.Upload) {
+				_ = os.RemoveAll(filepath.Join(s.uploadsDir(), req.Upload)) // the task has its files already
+			}
 			writeJSON(w, http.StatusOK, PostResponse{Task: e, Existed: true})
 			return
 		}
@@ -198,6 +202,13 @@ func (s *Server) handlePost(w http.ResponseWriter, r *http.Request) {
 		_ = os.RemoveAll(taskDir)
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	if req.Upload != "" {
+		if err := s.takeUpload(taskDir, req.Upload, req.UploadTo); err != nil {
+			_ = os.RemoveAll(taskDir)
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 	}
 	if err := s.launch(taskDir, req.Env); err != nil {
 		spool.Fail(taskDir, err)

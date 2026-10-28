@@ -1,6 +1,8 @@
 package taskapi
 
 import (
+	"archive/tar"
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -436,5 +438,79 @@ func TestAllFiles(t *testing.T) {
 	}
 	if top, _ := c.Files(ctx, resp.Task.ID); contains(top, "steps/01-clone.log") {
 		t.Errorf("Files lists a subdirectory's file: %v", top)
+	}
+}
+
+// Files uploaded before a task are in its directory when its first step
+// runs; a task naming no such upload, or an unsafe place for it, is
+// refused and nothing runs.
+func TestPostTakesAnUpload(t *testing.T) {
+	c, tasks := newTestServer(t)
+	ctx := context.Background()
+	src := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(src, "prs", "7"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range map[string]string{"staged.json": `{"repo":"o/r"}`, "prs/7/feedback.jsonl": "{}\n"} {
+		if err := os.WriteFile(filepath.Join(src, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := c.Upload(ctx, "retro-20261028-120000", src); err != nil {
+		t.Fatalf("Upload: %v", err)
+	}
+	req := post("retro-20261028-120000", "", `cat staged/staged.json staged/prs/7/feedback.jsonl > seen.txt`)
+	req.Upload, req.UploadTo = "retro-20261028-120000", "staged"
+	resp, err := c.Post(ctx, req)
+	if err != nil {
+		t.Fatalf("Post: %v", err)
+	}
+	readLog(t, c, resp.Task.ID, 0)
+	if seen, _ := os.ReadFile(filepath.Join(tasks, resp.Task.ID, "seen.txt")); string(seen) != `{"repo":"o/r"}{}`+"\n" {
+		t.Errorf("the task read %q", seen)
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(tasks), "uploads", "retro-20261028-120000")); !os.IsNotExist(err) {
+		t.Errorf("the upload is left behind: %v", err)
+	}
+
+	for name, tc := range map[string]struct{ upload, to string }{
+		"no such upload": {"retro-missing", "staged"},
+		"outside":        {"retro-20261028-130000", "../escape"},
+	} {
+		if tc.upload != "retro-missing" {
+			if err := c.Upload(ctx, tc.upload, src); err != nil {
+				t.Fatal(err)
+			}
+		}
+		req := post(tc.upload, "", `touch ran`)
+		req.Upload, req.UploadTo = tc.upload, tc.to
+		var se *StatusError
+		if _, err := c.Post(ctx, req); !errors.As(err, &se) || se.Code != 400 {
+			t.Errorf("%s: %v, want 400", name, err)
+		}
+		if _, err := os.Stat(filepath.Join(tasks, tc.upload)); !os.IsNotExist(err) {
+			t.Errorf("%s: the task directory is left: %v", name, err)
+		}
+	}
+}
+
+// An upload holding anything but directories and regular files, or a
+// path out of it, is refused.
+func TestUntarRefusesUnsafeEntries(t *testing.T) {
+	for name, hdr := range map[string]*tar.Header{
+		"parent":  {Name: "../x", Typeflag: tar.TypeReg, Size: 1, Mode: 0o644},
+		"symlink": {Name: "l", Typeflag: tar.TypeSymlink, Linkname: "/etc/passwd"},
+		"abs":     {Name: "/etc/x", Typeflag: tar.TypeReg, Size: 1, Mode: 0o644},
+	} {
+		var buf bytes.Buffer
+		tw := tar.NewWriter(&buf)
+		_ = tw.WriteHeader(hdr)
+		if hdr.Size > 0 {
+			_, _ = tw.Write([]byte("x"))
+		}
+		_ = tw.Close()
+		if err := untar(t.TempDir(), &buf, 1<<20); err == nil {
+			t.Errorf("%s: unpacked", name)
+		}
 	}
 }
