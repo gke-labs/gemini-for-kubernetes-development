@@ -3,6 +3,7 @@ package graph
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"testing"
@@ -134,6 +135,63 @@ func TestReconcileCreate(t *testing.T) {
 	m, ok := ParseChildMarker("body\n\n" + b.Child.Marker())
 	if !ok || m != b.Child {
 		t.Errorf("marker round trip: %+v, %v", m, ok)
+	}
+}
+
+// The parent's humans are handed down: to each child at creation, and to
+// each open child when one is added to the parent later - once: one
+// already handed down and taken off a child by hand is not put back.
+func TestReconcileInheritsParentHumans(t *testing.T) {
+	s := abc(t, "")
+	withHumans := func(o Observed, humans ...string) Observed {
+		o.Parent.Humans = humans
+		return o
+	}
+	assigned := func(r Result) map[string][]string {
+		out := map[string][]string{}
+		for _, a := range r.Actions {
+			if a.Kind == ActAddChildAssignees || a.Kind == ActCreateChild {
+				out[a.Kind+":"+a.Step] = a.Assignees
+			}
+		}
+		return out
+	}
+	bob := func(n int) Child { c := open(n); c.Assignees = []string{"bob"}; return c }
+	for _, tc := range []struct {
+		name      string
+		children  map[string][]Child
+		inherited []string
+		humans    []string
+		want      map[string][]string
+		state     []string
+	}{
+		{"created with the parent's humans", nil, nil, []string{"bob"},
+			map[string][]string{"create-child:a": {"bob"}}, []string{"bob"}},
+		{"one added later: to every open child, not a closed one", map[string][]Child{"a": {closed(101)}, "b": {bob(102)}, "c": {bob(103)}},
+			[]string{"bob"}, []string{"bob", "carol"},
+			map[string][]string{"add-child-assignees:b": {"carol"}, "add-child-assignees:c": {"carol"}}, []string{"bob", "carol"}},
+		{"already handed down, taken off a child by hand: left off", map[string][]Child{"a": {closed(101)}, "b": {open(102)}, "c": {bob(103)}},
+			[]string{"bob"}, []string{"bob"},
+			map[string][]string{}, []string{"bob"}},
+		{"a child already assigned: nothing to add", map[string][]Child{"a": {closed(101)}, "b": {bob(102)}, "c": {bob(103)}},
+			nil, []string{"Bob"},
+			map[string][]string{}, []string{"Bob"}},
+		{"taken off the parent: forgotten, so put back is handed down again", map[string][]Child{"a": {open(101)}},
+			[]string{"bob"}, nil,
+			map[string][]string{}, nil},
+		{"a child a merged bot PR completes: closed, not assigned", map[string][]Child{"a": {closed(101)}, "b": {{Number: 102, Open: true, Linked: true, Labels: []string{"overseer"}, MergedBotPR: 300}}, "c": {bob(103)}},
+			[]string{"bob"}, []string{"bob", "carol"},
+			map[string][]string{"add-child-assignees:c": {"carol"}}, []string{"bob", "carol"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := Reconcile(withHumans(observed(s, tc.children, State{Inherited: tc.inherited}), tc.humans...))
+			if got := assigned(r); !maps.EqualFunc(got, tc.want, slices.Equal) {
+				t.Errorf("assigned %v, want %v", got, tc.want)
+			}
+			if !slices.Equal(r.State.Inherited, tc.state) {
+				t.Errorf("state inherited %v, want %v", r.State.Inherited, tc.state)
+			}
+		})
 	}
 }
 

@@ -32,6 +32,10 @@ type State struct {
 	// Children are the children created, by step id: GitHub's listings
 	// can lag a creation; this cannot.
 	Children map[string]int `json:"children,omitempty"`
+	// Inherited are the parent's human assignees already handed down to
+	// its open children: one added to the parent later is added to them
+	// once, and one taken off a child by hand is not put back.
+	Inherited []string `json:"inherited,omitempty"`
 }
 
 // ParseState reads the state block from a status comment; the zero State
@@ -52,6 +56,8 @@ func ParseState(body string) (State, bool) {
 func (st State) Block() string {
 	st.Checkpoints = slices.Clone(st.Checkpoints)
 	slices.Sort(st.Checkpoints)
+	st.Inherited = slices.Clone(st.Inherited)
+	slices.Sort(st.Inherited)
 	data, _ := json.Marshal(st)
 	return fmt.Sprintf("<!-- factory:graph-state %s -->", data)
 }
@@ -62,6 +68,7 @@ func (st State) clone() State {
 	c := st
 	c.Checkpoints = slices.Clone(st.Checkpoints)
 	c.Children = maps.Clone(st.Children)
+	c.Inherited = slices.Clone(st.Inherited)
 	return c
 }
 

@@ -139,10 +139,15 @@ func Observe(ctx context.Context, gh GitHub, opts Options) (*Pass, *githubv39.Is
 	}
 
 	o := Observed{
-		Parent:   Parent{Number: opts.Issue, Open: parent.GetState() == "open", Labels: labelNames(parent.Labels), Assignees: logins(parent.Assignees)},
+		Parent:   Parent{Number: opts.Issue, Open: parent.GetState() == "open", Labels: labelNames(parent.Labels)},
 		Trigger:  opts.Trigger,
 		MaxDepth: opts.MaxDepth,
 		Children: map[string][]Child{},
+	}
+	for _, a := range logins(parent.Assignees) {
+		if isHuman(opts, a) {
+			o.Parent.Humans = append(o.Parent.Humans, a)
+		}
 	}
 	if m, ok := ParseChildMarker(parent.GetBody()); ok {
 		o.Parent.Depth = m.Depth
@@ -182,7 +187,7 @@ func Observe(ctx context.Context, gh GitHub, opts Options) (*Pass, *githubv39.Is
 // comment has a Breakdown (PlanShape graph). The label is the approval.
 func implicitPlanStart(parent *githubv39.Issue, comments []*githubv39.IssueComment, opts Options) bool {
 	labels := labelNames(parent.Labels)
-	if !hasLabel(labels, opts.Trigger+"/graph") && !hasLabel(labels, "overseer/graph") {
+	if !containsFold(labels, opts.Trigger+"/graph") && !containsFold(labels, "overseer/graph") {
 		return false
 	}
 	return PlanShape(comments, opts.env()) == ShapeGraph
@@ -310,6 +315,7 @@ func observeChildren(ctx context.Context, gh GitHub, opts Options, o *Observed) 
 			NotPlanned: !ref.Open && ref.StateReason == "not_planned",
 			Linked:     slices.Contains(linked, n),
 			Labels:     ref.Labels,
+			Assignees:  ref.Assignees,
 		}
 		if c.Open {
 			refs, err := gh.ListCrossReferences(ctx, n)
@@ -368,7 +374,7 @@ func applyOne(ctx context.Context, gh GitHub, opts Options, p *Pass, a Action) e
 		}
 		assignees := a.Assignees
 		if len(assignees) == 0 && a.AskPerson {
-			assignees = askAssignees(ctx, gh, opts, p.Observed.Parent)
+			assignees = approverAssignees(ctx, gh, opts, p.Observed.Parent)
 		}
 		if len(assignees) > 0 {
 			// Not the pass's failure: the child stands, and a login GitHub
@@ -387,6 +393,15 @@ func applyOne(ctx context.Context, gh GitHub, opts Options, p *Pass, a Action) e
 		return gh.SetIssueState(ctx, a.Issue, "closed", "not_planned")
 	case ActAddChildLabels, ActAddParentLabels:
 		return gh.AddLabels(ctx, a.Issue, a.Labels)
+	case ActAddChildAssignees:
+		// Not the pass's failure - the rest of the graph goes on - but not
+		// forgotten either: the logins are left out of the state this pass
+		// writes, so the next pass hands them down again.
+		if err := gh.AddAssignees(ctx, a.Issue, a.Assignees); err != nil {
+			opts.logf("assigning #%d (step %s) to %s, retried next pass: %v", a.Issue, a.Step, strings.Join(a.Assignees, ", "), err)
+			p.Result.State.Inherited = slices.DeleteFunc(p.Result.State.Inherited, func(l string) bool { return containsFold(a.Assignees, l) })
+		}
+		return nil
 	case ActCloseChildCompleted:
 		if err := gh.AddComment(ctx, a.Issue, fmt.Sprintf("Completed by #%d.", a.Of)); err != nil {
 			return err
@@ -416,7 +431,7 @@ func describe(a Action, dryRun bool) string {
 		case len(a.Assignees) > 0:
 			assigned = ", assigned to " + strings.Join(a.Assignees, ", ")
 		case a.AskPerson:
-			assigned = ", assigned to the parent's humans or the graph's approver"
+			assigned = ", assigned to the graph's approver"
 		}
 		return fmt.Sprintf("%screate step %s's child %q, labelled %s%s", would, a.Step, a.Title, strings.Join(a.Labels, ", "), assigned)
 	case ActLinkChild:
@@ -425,6 +440,8 @@ func describe(a Action, dryRun bool) string {
 		return fmt.Sprintf("%sclose #%d as a duplicate of #%d (step %s)", would, a.Issue, a.Of, a.Step)
 	case ActAddChildLabels:
 		return fmt.Sprintf("%slabel #%d (step %s) %s", would, a.Issue, a.Step, strings.Join(a.Labels, ", "))
+	case ActAddChildAssignees:
+		return fmt.Sprintf("%sassign #%d (step %s) to %s, from the parent", would, a.Issue, a.Step, strings.Join(a.Assignees, ", "))
 	case ActAddParentLabels:
 		return fmt.Sprintf("%slabel the parent #%d %s (checkpoint %s)", would, a.Issue, strings.Join(a.Labels, ", "), a.Step)
 	case ActCloseChildCompleted:
@@ -437,26 +454,19 @@ func describe(a Action, dryRun bool) string {
 	return would + a.Kind
 }
 
-// askAssignees is who an ask step's child goes to when its step names no
-// one: the parent's human assignees, else whoever approved the graph - the
-// last human to label the parent <trigger>/implement or <trigger>/graph
-// (the label takes triage access, so GitHub can assign them). Humans are
-// neither the pool's bots, the watcher, nor an app. None found, or the
-// timeline unreadable, is no one: the label and the body still say it.
-func askAssignees(ctx context.Context, gh GitHub, opts Options, parent Parent) []string {
-	human := func(login string) bool {
-		return login != "" && !strings.EqualFold(login, opts.BotLogin) && !strings.HasSuffix(login, "[bot]") &&
-			!slices.ContainsFunc(opts.Pool, func(p string) bool { return strings.EqualFold(p, login) })
-	}
-	var out []string
-	for _, a := range parent.Assignees {
-		if human(a) {
-			out = append(out, a)
-		}
-	}
-	if len(out) > 0 {
-		return out
-	}
+// isHuman is whether login is a person's: neither the pool's bots, the
+// watcher, nor an app.
+func isHuman(opts Options, login string) bool {
+	return login != "" && !strings.EqualFold(login, opts.BotLogin) && !strings.HasSuffix(login, "[bot]") && !containsFold(opts.Pool, login)
+}
+
+// approverAssignees is who an ask step's child goes to when neither its
+// step nor the parent names a human: whoever approved the graph - the last
+// human to label the parent <trigger>/implement or <trigger>/graph (the
+// label takes triage access, so GitHub can assign them). None found, or
+// the timeline unreadable, is no one: the label and the body still say it.
+func approverAssignees(ctx context.Context, gh GitHub, opts Options, parent Parent) []string {
+	human := func(login string) bool { return isHuman(opts, login) }
 	events, _, err := gh.ListIssueTimeline(ctx, parent.Number)
 	if err != nil {
 		opts.logf("reading #%d's timeline for who approved its graph: %v", parent.Number, err)
