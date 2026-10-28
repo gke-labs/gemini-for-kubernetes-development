@@ -280,7 +280,9 @@ func applyOpenPR(ctx context.Context, gh *githubv39.Client, doc *Document, dryRu
 	if err != nil {
 		return err
 	}
-	owner, repo, _, _, err := parseItemURL(doc.Target.URL)
+	// An issue's, a PR's, or a repository's: a task on a repository (the
+	// retro) opens its PR there.
+	owner, repo, err := parseRepoURL(doc.Target.URL)
 	if err != nil {
 		return err
 	}
