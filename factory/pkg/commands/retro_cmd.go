@@ -58,35 +58,11 @@ The collector is COLLECTOR_URL, or --collector.`,
 			if stageOnly != "" && staged != "" {
 				return fmt.Errorf("give --stage-only or --staged, not both")
 			}
-			out := c.OutOrStdout()
-			dir := staged
-			if dir == "" {
-				if dir = stageOnly; dir == "" {
-					if dir, err = os.MkdirTemp("", "retro-"); err != nil {
-						return err
-					}
-					defer os.RemoveAll(dir)
-				}
-				if collector == "" {
-					collector = os.Getenv("COLLECTOR_URL")
-				}
-				st, err := retro.Stage(ctx, retro.Config{Collector: collector, Owner: owner, Repo: repo, Since: from, Dir: dir})
-				if err != nil {
-					return err
-				}
-				printStaged(out, st, dir)
-				if stageOnly != "" {
-					return nil
-				}
-			} else if _, err := os.Stat(filepath.Join(dir, retro.StagedFile)); err != nil {
-				return fmt.Errorf("--staged %s holds no staged week: %w", dir, err)
-			}
-			if runName == "" {
-				runName = "retro-" + time.Now().UTC().Format("20060102")
-			}
-			repoURL := "https://github.com/" + owner + "/" + repo
-			return runRecipeIn(ctx, recipeRunOpts{files: &taskapi.Files{Dir: dir, To: "staged"}}, "retro", repoURL, runName, retroSandboxKey, "", false,
-				applyMode{on: apply, dryRun: dryRun, verb: "open-pr"}, map[string]string{}, nil)
+			return runRetro(ctx, c.OutOrStdout(), retroRun{
+				owner: owner, repo: repo, since: from, collector: collector,
+				stageOnly: stageOnly, staged: staged, runName: runName,
+				apply: applyMode{on: apply, dryRun: dryRun, verb: "open-pr"},
+			})
 		},
 	}
 	cmd.Flags().StringVar(&rawURL, "url", "", "the repository, https://github.com/<owner>/<repo>")
@@ -104,6 +80,74 @@ The collector is COLLECTOR_URL, or --collector.`,
 // retroSandboxKey is the one key factory retro runs under: every week's
 // retro of a repository shares its retro sandbox, and its checkout.
 const retroSandboxKey = "weekly"
+
+// retroRun is one retro: the repository, the window's start, and where
+// the week comes from and goes.
+type retroRun struct {
+	owner, repo string
+	since       time.Time
+	// collector is the collector's URL; empty, COLLECTOR_URL.
+	collector string
+	// stageOnly stages into this directory and stops; staged runs the
+	// recipe on the week staged in it.
+	stageOnly, staged string
+	// runName is the run's; empty, retro-<today>.
+	runName string
+	// user is the account the recipe runs as; empty, the coder pool's.
+	user  string
+	apply applyMode
+}
+
+// runRetro stages the week, unless it is staged already, and runs the
+// retro recipe on it with the staged files in its task: factory retro,
+// and the watch's weekly retro.
+func runRetro(ctx context.Context, out io.Writer, r retroRun) error {
+	if r.stageOnly != "" && r.staged != "" {
+		return fmt.Errorf("give --stage-only or --staged, not both")
+	}
+	dir := r.staged
+	if dir == "" {
+		if dir = r.stageOnly; dir == "" {
+			var err error
+			if dir, err = os.MkdirTemp("", "retro-"); err != nil {
+				return err
+			}
+			defer os.RemoveAll(dir)
+		}
+		collector := r.collector
+		if collector == "" {
+			collector = os.Getenv("COLLECTOR_URL")
+		}
+		st, err := retro.Stage(ctx, retro.Config{Collector: collector, Owner: r.owner, Repo: r.repo, Since: r.since, Dir: dir})
+		if err != nil {
+			return err
+		}
+		printStaged(out, st, dir)
+		if r.stageOnly != "" {
+			return nil
+		}
+	} else if _, err := os.Stat(filepath.Join(dir, retro.StagedFile)); err != nil {
+		return fmt.Errorf("--staged %s holds no staged week: %w", dir, err)
+	}
+	runName := r.runName
+	if runName == "" {
+		runName = "retro-" + time.Now().UTC().Format("20060102")
+	}
+	repoURL := "https://github.com/" + r.owner + "/" + r.repo
+	return runRecipeIn(ctx, recipeRunOpts{files: &taskapi.Files{Dir: dir, To: "staged"}}, "retro", repoURL, runName, retroSandboxKey, r.user, false,
+		r.apply, map[string]string{}, nil)
+}
+
+// watchRetro is the watch's weekly retro (watch.Watcher.Retro): the week
+// since since, run as user, its Change opened as a PR with user's token.
+func watchRetro(ctx context.Context, repoURL, user string, since time.Time) error {
+	owner, repo, err := parseGitHubRepoURL(repoURL)
+	if err != nil {
+		return err
+	}
+	return runRetro(ctx, os.Stdout, retroRun{owner: owner, repo: repo, since: since, user: user,
+		apply: applyMode{on: true, verb: "open-pr", asUser: user != ""}})
+}
 
 // printStaged says what was staged, and what was skipped.
 func printStaged(out io.Writer, st *retro.Staged, dir string) {

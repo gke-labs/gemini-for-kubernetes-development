@@ -107,6 +107,11 @@ spec:
                 type: object
               repoURL:
                 type: string
+              retro:
+                properties:
+                  schedule:
+                    type: string
+                type: object
               robotAccount:
                 type: string
               roles:
