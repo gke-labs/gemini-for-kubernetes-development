@@ -160,7 +160,7 @@ Why not one recipe that stages its own inputs: staging needs the collector, and 
 
 #### The recipe: `retro`
 
-A built-in recipe on a repository (`on: [repo]`, `credentials: clone`), listed in the catalog like the others. A repository can replace it with `.agents/recipes/retro.yaml`; what it may not change is its input, the staged layout below.
+A built-in recipe on a repository (`on: [repo]`), listed in the catalog like the others. It holds the GitHub token as `fix` does (`credentials: full`): its edits are pushed to the bot's fork to become a PR, and `setup-fork` and `push` need the token, which `credentials: clone` keeps from every step but the clone. The collector stays out of the sandbox all the same. A repository can replace it with `.agents/recipes/retro.yaml`; what it may not change is its input, the staged layout below.
 
 **Input: the week's data in `staged/`**, in the task's directory, before the first step runs:
 - `staged.json`: the repository, the window (`since`, `until`), what was staged and why each PR was picked;
@@ -193,7 +193,7 @@ Nothing is applied automatically. The next retro reads the journals on the defau
 2. **Runs the `retro` recipe** through the ordinary recipe runner, giving it the staged files to write into the task's `staged/` with the task's submission, so they are there before the first step.
 3. **Applies `open-pr`**, as any recipe run does.
 
-The runner needs one thing it lacks: **files from the caller, written into the task when it is submitted.** That is an option of a run in Go (the files, and where in the task's directory they go), not something a recipe file declares; the task server already accepts file writes. Only `factory retro` uses it.
+The runner needs one thing it lacks: **files from the caller, written into the task when it is submitted.** That is an option of a run in Go (the files, and where in the task's directory they go), not something a recipe file declares. The task server's file writes are a small whitelist and a post starts the task at once, so the files go up first as a tar (`PUT /v1/uploads/{name}`) and the post names the upload, which the server moves into the task before it starts (#2179). Only `factory retro` uses it.
 
 #### Weekly
 

@@ -231,6 +231,19 @@ func parseItemURL(raw string) (owner, repo string, num int, isPR bool, err error
 	return p[0], p[1], num, p[2] == "pull", nil
 }
 
+// parseRepoURL is the repository of a GitHub repository, issue or PR URL.
+func parseRepoURL(raw string) (owner, repo string, err error) {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "", "", fmt.Errorf("target %q: %w", raw, err)
+	}
+	p := strings.Split(strings.Trim(u.Path, "/"), "/")
+	if u.Host != "github.com" || len(p) < 2 || p[0] == "" || p[1] == "" {
+		return "", "", fmt.Errorf("target %q is not a GitHub repository, issue or PR URL", raw)
+	}
+	return p[0], p[1], nil
+}
+
 func indent(s string) string {
 	return "  " + strings.ReplaceAll(s, "\n", "\n  ")
 }

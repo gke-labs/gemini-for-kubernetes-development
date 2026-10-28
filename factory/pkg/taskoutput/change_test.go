@@ -225,6 +225,20 @@ func TestOpenPR(t *testing.T) {
 		}
 	})
 
+	// A task on a repository (the retro) opens its PR there.
+	t.Run("a repository's Change opens on the repository", func(t *testing.T) {
+		doc := changeDoc(t)
+		doc.Target.URL = "https://github.com/o/r"
+		f := &fakePRs{}
+		var out bytes.Buffer
+		if err := ApplyAction(ctx, f.client(t), doc, "open-pr", false, &out); err != nil {
+			t.Fatal(err)
+		}
+		if len(f.created) != 1 || f.created[0].GetBase() != "main" || doc.Target.URL != "https://github.com/o/r/pull/12" {
+			t.Errorf("opened %d, target %s:\n%s", len(f.created), doc.Target.URL, out.String())
+		}
+	})
+
 	t.Run("draft: false opens it ready for review", func(t *testing.T) {
 		doc := changeDoc(t)
 		if err := doc.SetDraft(false); err != nil {
