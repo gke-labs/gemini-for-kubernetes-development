@@ -553,8 +553,20 @@ func (r *Reconciler) deleteClosedIssueSandbox(ctx context.Context, item *unstruc
 
 	meta := common.SandboxUsageMeta(item, r.repoSlug())
 	meta.Issue = num
+	pr := r.closedPRServed(ctx, item)
+	if pr != nil {
+		meta.PR = pr.GetNumber()
+	}
 	usagereport.HarvestSandbox(ctx, r.sandboxes.namespace, name, meta)
 	usagereport.ReportIssueSubject(ctx, r.repoSlug(), issue)
+	// The fix sandbox of an issue whose PR is closed is that PR's only
+	// sandbox when no review ran: the PR's feedback and outcome are recorded
+	// here, as the PR's own collection does, or not at all.
+	if pr != nil {
+		usagereport.ReportPRSubject(ctx, r.repoSlug(), pr)
+		feedbackItems := r.captureAndUploadFeedback(ctx, pr, name, pr.GetNumber())
+		r.recordAndUploadOutcome(ctx, pr, name, pr.GetNumber(), feedbackItems)
+	}
 	if strings.HasPrefix(name, "wf-issue-") {
 		usagereport.PostWorkflowSummaryIfNeeded(ctx, gh, r.sandboxes.owner, r.sandboxes.repo, num)
 	}
@@ -689,6 +701,25 @@ func (r *Reconciler) servedClosedPR(item *unstructured.Unstructured) bool {
 		return false
 	}
 	return !r.entities.IsOpenPR(pr)
+}
+
+// closedPRServed is the closed pull request an issue's sandbox served
+// (its PR label: the PR its fix opened), nil for none, one still open, or
+// one GitHub would not read.
+func (r *Reconciler) closedPRServed(ctx context.Context, item *unstructured.Unstructured) *githubv39.PullRequest {
+	num, err := strconv.Atoi(item.GetLabels()[labelPR])
+	if err != nil || num <= 0 || r.sandboxes.gh == nil {
+		return nil
+	}
+	pr, _, err := r.sandboxes.gh.PullRequests.Get(ctx, r.sandboxes.owner, r.sandboxes.repo, num)
+	if err != nil {
+		klog.Warningf("Failed to fetch PR #%d served by sandbox '%s': %v", num, item.GetName(), err)
+		return nil
+	}
+	if pr.GetState() != "closed" {
+		return nil
+	}
+	return pr
 }
 
 // prNumberFromSandbox returns the pull request a PR sandbox
