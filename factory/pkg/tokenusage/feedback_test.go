@@ -32,6 +32,7 @@ package tokenusage
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -204,5 +205,48 @@ func TestFeedbackEmptyPayload(t *testing.T) {
 	data := gunzipped(t, a, archivedName)
 	if data != "" {
 		t.Errorf("expected empty string from gunzipped empty feedback, got %q", data)
+	}
+}
+
+// A PR's feedback reads back unzipped: spooled before a flush, archived
+// after, and 404 for a PR with none.
+func TestFeedbackGet(t *testing.T) {
+	ctx := context.Background()
+	s := openArchived(t, t.TempDir(), newMemArchive())
+	srv := httptest.NewServer(NewServerForStore(s).Handler())
+	defer srv.Close()
+	get := func(path string) (int, string) {
+		t.Helper()
+		resp, err := http.Get(srv.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode, string(b)
+	}
+
+	payload := `{"author":"alice","kind":"review","body":"use the helper"}` + "\n"
+	req, _ := http.NewRequestWithContext(ctx, http.MethodPut, srv.URL+"/v1/prs/o/r/7/feedback", strings.NewReader(payload))
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+
+	if code, body := get("/v1/prs/o/r/7/feedback"); code != http.StatusOK || body != payload {
+		t.Errorf("spooled: %d %q", code, body)
+	}
+	if err := s.Flush(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if code, body := get("/v1/prs/o/r/7/feedback"); code != http.StatusOK || body != payload {
+		t.Errorf("archived: %d %q", code, body)
+	}
+	if code, _ := get("/v1/prs/o/r/8/feedback"); code != http.StatusNotFound {
+		t.Errorf("no feedback: %d, want 404", code)
+	}
+	if code, _ := get("/v1/prs/o/r/x/feedback"); code != http.StatusBadRequest {
+		t.Errorf("bad number: %d, want 400", code)
 	}
 }

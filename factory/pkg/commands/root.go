@@ -139,6 +139,10 @@ effects or host dependencies.`,
 	applyCmd.GroupID = "workflows"
 	cmd.AddCommand(applyCmd)
 
+	retroCmd := NewRetroCommand(ctx)
+	retroCmd.GroupID = "workflows"
+	cmd.AddCommand(retroCmd)
+
 	return cmd
 }
 
