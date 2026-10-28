@@ -32,6 +32,8 @@ package tokenusage
 
 import (
 	"bufio"
+	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"errors"
@@ -40,6 +42,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -187,4 +190,48 @@ func (s *Store) uploadFeedbackEntry(ctx context.Context, dir string) error {
 	}
 
 	return os.RemoveAll(dir)
+}
+
+// ReadFeedback is a PR's feedback.jsonl, unzipped: the archive's, else the
+// newest spooled copy not yet uploaded. ErrNoArchive without an archive,
+// ErrNotFound when the PR has none.
+func (s *Store) ReadFeedback(ctx context.Context, owner, repo string, n int) (io.ReadCloser, error) {
+	if s.archive == nil {
+		return nil, ErrNoArchive
+	}
+	if !pathPart.MatchString(owner) || !pathPart.MatchString(repo) || n <= 0 {
+		return nil, fmt.Errorf("invalid pr %s/%s#%d", owner, repo, n)
+	}
+	// A spooled copy is newer than the archive's: the next flush uploads
+	// it over it.
+	if data, ok := s.spooledFeedback(owner, repo, n); ok {
+		return io.NopCloser(bytes.NewReader(data)), nil
+	}
+	data, err := s.archive.Read(ctx, fmt.Sprintf("prs/%s/%s/%d/feedback.jsonl.gz", owner, repo, n))
+	if err != nil {
+		return nil, err
+	}
+	zr, err := gzip.NewReader(bytes.NewReader(data))
+	if err != nil {
+		return nil, fmt.Errorf("decompressing feedback of %s/%s#%d: %w", owner, repo, n, err)
+	}
+	return zr, nil
+}
+
+// spooledFeedback is the newest spooled feedback.jsonl of a PR, if any.
+func (s *Store) spooledFeedback(owner, repo string, n int) ([]byte, bool) {
+	entries, err := os.ReadDir(s.feedbackSpoolDir())
+	if err != nil {
+		return nil, false
+	}
+	suffix := fmt.Sprintf("-%s-%s-%d", owner, repo, n)
+	// Entry names start with their spool time: the last match is newest.
+	for i := len(entries) - 1; i >= 0; i-- {
+		if e := entries[i]; e.IsDir() && strings.HasSuffix(e.Name(), suffix) {
+			if data, err := os.ReadFile(filepath.Join(s.feedbackSpoolDir(), e.Name(), "feedback.jsonl")); err == nil {
+				return data, true
+			}
+		}
+	}
+	return nil, false
 }
