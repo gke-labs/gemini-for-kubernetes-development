@@ -40,6 +40,9 @@ type Version struct {
 	// when it does not: a client must not send secrets to a server that
 	// would put them in the task's environment, or leave them on disk.
 	Secrets int `json:"secrets,omitempty"`
+	// Uploads is the version of uploads this server serves (UploadsVersion),
+	// 0 when it does not.
+	Uploads int `json:"uploads,omitempty"`
 }
 
 // SecretsVersion is the PostRequest.Secrets this server honours.
@@ -61,6 +64,18 @@ type PostRequest struct {
 	// written to the task directory as spool.SecretsFile, mode 0600, for
 	// the runner to read and delete as it starts, and never served.
 	Secrets map[string]string `json:"secrets,omitempty"`
+	// Upload names files uploaded before the task (PUT /v1/uploads/{name})
+	// for the server to move into the task's directory at UploadTo, before
+	// the task starts.
+	Upload   string `json:"upload,omitempty"`
+	UploadTo string `json:"uploadTo,omitempty"`
+}
+
+// Files are files the caller gives a task: Dir's, at To in the task's
+// directory before its first step.
+type Files struct {
+	Dir string
+	To  string
 }
 
 // PostResponse is the task as started, or as found when Existed: a task

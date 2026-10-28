@@ -104,6 +104,19 @@ func (c *Client) WriteFile(ctx context.Context, id, name string, data []byte) er
 
 // Log is the task's log from offset; following, it goes on until the task
 // ends. The caller closes it.
+// Upload sends dir's files, for a task posted next to take
+// (PostRequest.Upload).
+func (c *Client) Upload(ctx context.Context, upload, dir string) error {
+	pr, pw := io.Pipe()
+	go func() { pw.CloseWithError(tarDir(pw, dir)) }()
+	resp, err := c.send(ctx, http.MethodPut, "/v1/uploads/"+url.PathEscape(upload), pr, "application/x-tar")
+	_ = pr.CloseWithError(io.ErrClosedPipe)
+	if err != nil {
+		return err
+	}
+	return resp.Body.Close()
+}
+
 func (c *Client) Log(ctx context.Context, id string, offset int64, follow bool) (io.ReadCloser, error) {
 	q := url.Values{"offset": {strconv.FormatInt(offset, 10)}, "follow": {strconv.FormatBool(follow)}}
 	resp, err := c.send(ctx, http.MethodGet, "/v1/tasks/"+url.PathEscape(id)+"/log?"+q.Encode(), nil, "")

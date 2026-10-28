@@ -29,8 +29,10 @@ type Sandbox interface {
 	// started. spool.ErrNotClaimed: the sandbox has no daemon to start it,
 	// and nothing of it runs. secrets go to the task outside its
 	// environment (PostRequest.Secrets); a sandbox that cannot keep them
-	// so refuses them, and nothing of the task runs.
-	Start(ctx context.Context, task spool.Task, recipe, source []byte, inputs, env, secrets map[string]string) error
+	// so refuses them, and nothing of the task runs. files, if any, are in
+	// the task's directory before it starts; a sandbox that cannot take
+	// them refuses the task.
+	Start(ctx context.Context, task spool.Task, recipe, source []byte, inputs, env, secrets map[string]string, files *Files) error
 	// AwaitStart waits for a task in the spool to start.
 	AwaitStart(ctx context.Context, id string, claimTimeout, startTimeout time.Duration) error
 	// Attach follows a started task's log to stdout until it ends, and
@@ -95,6 +97,7 @@ func ConnectServer(ctx context.Context, namespace, name string) (*ServerSandbox,
 		return nil, fmt.Errorf("its task server serves version %d, this factory needs %d", v.API, APIVersion)
 	}
 	s.secrets = v.Secrets >= SecretsVersion
+	s.uploads = v.Uploads >= UploadsVersion
 	return s, nil
 }
 
@@ -146,6 +149,8 @@ type ServerSandbox struct {
 
 	// secrets: the server keeps a task's secrets out of its environment.
 	secrets bool
+	// uploads: the server takes files for a task (PostRequest.Upload).
+	uploads bool
 
 	mu  sync.Mutex
 	fwd *forward
@@ -230,13 +235,24 @@ func (s *ServerSandbox) get(ctx context.Context, id string) (spool.Entry, error)
 	return e, err
 }
 
-func (s *ServerSandbox) Start(ctx context.Context, task spool.Task, recipe, source []byte, inputs, env, secrets map[string]string) error {
+func (s *ServerSandbox) Start(ctx context.Context, task spool.Task, recipe, source []byte, inputs, env, secrets map[string]string, files *Files) error {
 	if len(secrets) > 0 && !s.secrets {
 		return errNoSecrets(s.name)
 	}
+	req := PostRequest{Task: task, Recipe: recipe, Source: source, Inputs: inputs, Env: env, Secrets: secrets}
+	if files != nil {
+		if !s.uploads {
+			return fmt.Errorf("sandbox %s's image cannot take files for a task; recreate the sandbox", s.name)
+		}
+		// Uploaded under the task's id: a retry replaces it.
+		if err := s.call(ctx, func(c *Client) error { return c.Upload(ctx, task.ID, files.Dir) }); err != nil {
+			return fmt.Errorf("uploading %s for task %s: %w", files.Dir, task.ID, err)
+		}
+		req.Upload, req.UploadTo = task.ID, files.To
+	}
 	var resp PostResponse
 	err := s.call(ctx, func(c *Client) (err error) {
-		resp, err = c.Post(ctx, PostRequest{Task: task, Recipe: recipe, Source: source, Inputs: inputs, Env: env, Secrets: secrets})
+		resp, err = c.Post(ctx, req)
 		return err
 	})
 	if err != nil {

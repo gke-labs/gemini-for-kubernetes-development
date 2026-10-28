@@ -367,6 +367,9 @@ type recipeRunOpts struct {
 	// usage adds to the usage record of the run's task what only the
 	// caller knows: a workflow's session and name.
 	usage func(*usagereport.Meta)
+	// files are files the caller gives the run's task, in its directory
+	// before its first step: factory retro's staged week.
+	files *taskapi.Files
 }
 
 // runRecipeIn is runRecipe with opts.
@@ -628,7 +631,7 @@ func runRecipeIn(ctx context.Context, opts recipeRunOpts, recipeArg, itemURL, ru
 	if apply.on {
 		fmt.Println("Interrupting stops the waiting, not the task: run the same command again to wait for it and apply its result.")
 	}
-	if done, err := startRecipeTask(ctx, kubeClient, sb, it, rec, task, recipeBytes, inputs, envMap, secrets, opts.usage); err != nil || !done {
+	if done, err := startRecipeTask(ctx, kubeClient, sb, it, rec, task, recipeBytes, inputs, envMap, secrets, opts); err != nil || !done {
 		return err
 	}
 	if apply.on {
@@ -958,7 +961,7 @@ func needsAPerson(e spool.Entry) string {
 // startRecipeTask records the task on its sandbox and hands it over.
 // Unless --detached it follows the task to its end and prints its
 // outputs, and returns true.
-func startRecipeTask(ctx context.Context, kubeClient *clients.KubernetesClient, sb taskapi.Sandbox, it githubItem, rec *recipe.Recipe, task spool.Task, recipeBytes []byte, inputs, envMap, secrets map[string]string, usage func(*usagereport.Meta)) (bool, error) {
+func startRecipeTask(ctx context.Context, kubeClient *clients.KubernetesClient, sb taskapi.Sandbox, it githubItem, rec *recipe.Recipe, task spool.Task, recipeBytes []byte, inputs, envMap, secrets map[string]string, opts recipeRunOpts) (bool, error) {
 	sandboxName := sb.Name()
 	taskType, side := recipeTaskType(rec, it)
 	update := factorysandbox.UpdateSandboxTaskAnnotation
@@ -966,7 +969,7 @@ func startRecipeTask(ctx context.Context, kubeClient *clients.KubernetesClient, 
 		update = factorysandbox.UpdateSandboxSideTaskAnnotation
 	}
 	_ = factorysandbox.MarkSandboxRunStarted(ctx, kubeClient, rootFlags.Namespace, sandboxName, taskType, rootFlags.Engine, side, recordedRun(task, rec, time.Now().UTC()))
-	if err := spoolRecipe(ctx, sb, task, recipeBytes, inputs, envMap, secrets); err != nil {
+	if err := spoolRecipe(ctx, sb, task, recipeBytes, inputs, envMap, secrets, opts.files); err != nil {
 		_ = update(ctx, kubeClient, rootFlags.Namespace, sandboxName, taskType, "Failed")
 		return false, fmt.Errorf("running recipe: %w", err)
 	}
@@ -992,8 +995,8 @@ func startRecipeTask(ctx context.Context, kubeClient *clients.KubernetesClient, 
 	default:
 		meta.Issue = it.Number
 	}
-	if usage != nil {
-		usage(&meta)
+	if opts.usage != nil {
+		opts.usage(&meta)
 	}
 	taskDir := spool.TaskDir(task.ID)
 	usagereport.HarvestTask(ctx, sb, task.ID, meta)
@@ -1034,14 +1037,14 @@ func newSpoolTask(recipeName, runName, itemURL string) spool.Task {
 
 // spoolRecipe hands a recipe to the sandbox and follows it, or, with
 // --detached, returns once the sandbox has started it.
-func spoolRecipe(ctx context.Context, sb taskapi.Sandbox, task spool.Task, recipeBytes []byte, inputs, envMap, secrets map[string]string) error {
+func spoolRecipe(ctx context.Context, sb taskapi.Sandbox, task spool.Task, recipeBytes []byte, inputs, envMap, secrets map[string]string, files *taskapi.Files) error {
 	stripped, err := recipe.ForSandbox(recipeBytes)
 	if err != nil {
 		return err
 	}
 	// The task keeps the recipe it ran, whole, for its resumes and
 	// applies to read (taskRecipe).
-	if err := sb.Start(ctx, task, stripped, recipeBytes, inputs, envMap, secrets); err != nil {
+	if err := sb.Start(ctx, task, stripped, recipeBytes, inputs, envMap, secrets, files); err != nil {
 		return err
 	}
 	if rootFlags.Detached {
