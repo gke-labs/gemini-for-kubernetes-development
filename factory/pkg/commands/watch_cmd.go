@@ -65,6 +65,7 @@ func NewWatchCommand(ctx context.Context) *cobra.Command {
 			watcher := watch.NewWatcher(rootFlags, flags)
 			watcher.ProposeFanout = proposeFanout
 			watcher.WarmWorkspace = warmWorkspace
+			watcher.Retro = watchRetro
 			watcher.RepoRules = repoWatchRules(flags.Repo.Owner, flags.Repo.Repo)
 			watcher.RepoRecipes = repoRecipes(flags.Repo.Owner, flags.Repo.Repo)
 			return watcher.Run(ctx)
@@ -92,6 +93,7 @@ func NewWatchCommand(ctx context.Context) *cobra.Command {
 	cmd.Flags().StringVar(&flags.RulesRecord, "rules-record", os.Getenv("WATCH_RULES_RECORD"), "File the watch records each decision in, with the facts it was made on, for `factory watch rules replay` and `explain --record`; empty records nothing (defaults to the WATCH_RULES_RECORD env)")
 	cmd.Flags().StringVar(&flags.ScanState, "scan-state", os.Getenv("WATCH_SCAN_STATE"), "File the shared scan's snapshot persists in (defaults to the WATCH_SCAN_STATE env, else scan_state.json in the queue directory)")
 	cmd.Flags().BoolVar(&flags.SharedScan, "shared-scan", envBool("WATCH_SHARED_SCAN"), "Have the issue and PR scanners read one shared set of GitHub listings, refreshed incrementally (since the last pass) and kept in the queue directory across restarts, instead of each listing for itself; what they decide is unchanged (defaults to the WATCH_SHARED_SCAN env)")
+	cmd.Flags().StringVar(&flags.RetroSchedule, "retro-schedule", os.Getenv("WATCH_RETRO_SCHEDULE"), "When to run the weekly retro (factory retro: the week's PR outcomes, feedback and traces from the collector, the retro recipe on them, its Change opened as a PR): cron's five fields or a descriptor such as @weekly; empty, never (factory/design/retro.md; defaults to the WATCH_RETRO_SCHEDULE env)")
 	cmd.Flags().BoolVar(&flags.Graphs, "graphs", envBool("WATCH_GRAPHS"), "Run the issue graph subcontroller: keep every graph parent (an issue labelled <trigger>/graph, or a planned issue whose graph started) moving - children created as their steps become ready, the parent closed at the end, a status comment kept (factory/design/issue-graph.md; defaults to the WATCH_GRAPHS env)")
 	cmd.Flags().BoolVar(&flags.GraphQLPRDetails, "graphql-pr-details", envBool("WATCH_GRAPHQL_PR_DETAILS"), "Have the PR scanner read the pull requests it evaluates (the PR, its merge queue entry, commits, comments, reviews and inline comments) in one GraphQL query per batch rather than six REST calls each; CI stays REST (defaults to the WATCH_GRAPHQL_PR_DETAILS env)")
 	cmd.Flags().DurationVar(&flags.PRInactivityTimeout, "pr-inactivity-timeout", common.GetEnvDuration("PR_INACTIVITY_TIMEOUT", 0), "Time of inactivity with no human comments before pausing automated processing on a PR (e.g. '24h', '168h')")

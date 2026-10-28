@@ -487,3 +487,25 @@ func TestRecipeAs(t *testing.T) {
 		}
 	}
 }
+
+// The weekly retro runs only with a schedule that parses, a way to run it
+// and a queue directory to keep when it last did.
+func TestNewRetroController(t *testing.T) {
+	run := func(context.Context, string, string, time.Time) error { return nil }
+	for name, tc := range map[string]struct {
+		schedule string
+		retro    func(context.Context, string, string, time.Time) error
+		want     bool
+	}{
+		"weekly":      {"@weekly", run, true},
+		"no schedule": {"", run, false},
+		"bad":         {"weekly", run, false},
+		"no runner":   {"@weekly", nil, false},
+	} {
+		w := newTestWatcher(t, t.TempDir())
+		w.RetroSchedule, w.Retro = tc.schedule, tc.retro
+		if got := w.newRetroController() != nil; got != tc.want {
+			t.Errorf("%s: controller %t, want %t", name, got, tc.want)
+		}
+	}
+}

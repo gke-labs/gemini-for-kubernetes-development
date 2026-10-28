@@ -76,6 +76,14 @@ type OverseerRepoRecipe struct {
 	GitCommit string `json:"gitCommit,omitempty"`
 }
 
+// RetroSpec is when the weekly retro runs.
+type RetroSpec struct {
+	// Schedule is cron's five fields or a descriptor, such as @weekly.
+	// Empty, the retro never runs.
+	// +kubebuilder:validation:Optional
+	Schedule string `json:"schedule,omitempty"`
+}
+
 // OverseerSpec defines the desired state of Overseer
 type OverseerSpec struct {
 	// The full URL of the GitHub repository to watch.
@@ -169,6 +177,15 @@ type OverseerSpec struct {
 	// Off, the graph label does nothing.
 	// +kubebuilder:validation:Optional
 	Graphs bool `json:"graphs,omitempty"`
+
+	// Retro runs the weekly retro (factory/design/retro.md): on its
+	// schedule the watcher stages the week's PR outcomes, human feedback
+	// and agent traces from the token-usage collector, runs the retro
+	// recipe on them, and opens its edits to the skills, workflows and
+	// review instructions, with the week's journal, as one PR. Unset, no
+	// retro runs.
+	// +kubebuilder:validation:Optional
+	Retro RetroSpec `json:"retro,omitempty"`
 
 	// SharedScan makes the watcher's issue and PR scanners read one shared
 	// set of GitHub listings, refreshed with what changed since the last

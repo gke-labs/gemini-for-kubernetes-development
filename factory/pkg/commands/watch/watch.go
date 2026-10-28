@@ -45,6 +45,10 @@ func (w *Watcher) Run(ctx context.Context) error {
 				w.warmWorkspace.SyncOnce(ctx)
 				w.warmWorkspace.Wait()
 			}
+			if w.retro != nil {
+				w.retro.SyncOnce(ctx)
+				w.retro.Wait()
+			}
 		}
 		fmt.Println("Running in once mode. Waiting for active tasks to complete...")
 		w.Wait()
@@ -107,6 +111,13 @@ func (w *Watcher) Run(ctx context.Context) error {
 			go func() {
 				defer wg.Done()
 				_ = w.warmWorkspace.Run(daemonCtx)
+			}()
+		}
+		if w.retro != nil {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				_ = w.retro.Run(daemonCtx)
 			}()
 		}
 	}

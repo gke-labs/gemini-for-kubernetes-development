@@ -296,6 +296,19 @@ func TestBuildSandboxManifest_Graphs(t *testing.T) {
 	}
 }
 
+// spec.retro.schedule reaches the watcher as WATCH_RETRO_SCHEDULE, and
+// only when set.
+func TestBuildSandboxManifest_RetroSchedule(t *testing.T) {
+	o := &overseerv1alpha1.Overseer{Spec: overseerv1alpha1.OverseerSpec{RepoURL: "https://github.com/owner/repo"}}
+	if _, ok := overseerEnv(t, o)["WATCH_RETRO_SCHEDULE"]; ok {
+		t.Error("WATCH_RETRO_SCHEDULE is set with retro unset")
+	}
+	o.Spec.Retro.Schedule = "@weekly"
+	if got := overseerEnv(t, o)["WATCH_RETRO_SCHEDULE"]; got != "@weekly" {
+		t.Errorf("WATCH_RETRO_SCHEDULE = %v", got)
+	}
+}
+
 // spec.graphqlPRDetails reaches the watcher as WATCH_GRAPHQL_PR_DETAILS, and
 // only when set.
 func TestBuildSandboxManifest_GraphQLPRDetails(t *testing.T) {

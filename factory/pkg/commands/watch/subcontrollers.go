@@ -23,6 +23,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/graphs"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/issues"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/prs"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/retros"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/sandbox"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/scan"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/warmworkspace"
@@ -222,6 +223,32 @@ func (w *Watcher) newWarmWorkspaceController() *warmworkspace.Controller {
 				return fmt.Errorf("choosing the account for the warm recipe: %w", err)
 			}
 			return w.WarmWorkspace(ctx, repoURL, user, cfg)
+		},
+	})
+}
+
+// newRetroController constructs the weekly retro, or nil without a
+// schedule (or with a wrong one, which is logged: the rest of the watch
+// runs on).
+func (w *Watcher) newRetroController() *retros.Controller {
+	if w.RetroSchedule == "" || w.Retro == nil || w.QueueDir == "" {
+		return nil
+	}
+	sched, err := retros.ParseSchedule(w.RetroSchedule)
+	if err != nil {
+		klog.Errorf("No retro: %v", err)
+		return nil
+	}
+	repoURL := fmt.Sprintf("https://github.com/%s/%s", w.Repo.Owner, w.Repo.Repo)
+	return retros.New(retros.DefaultInterval, sched, w.QueueDir, retros.Deps{
+		Paused: w.draining,
+		Run: func(ctx context.Context, since time.Time) error {
+			// The account a coder recipe on the repository runs as.
+			user, err := w.selectUserForTask(ctx, api.TypeIssueRule, "retro", 0)
+			if err != nil {
+				return fmt.Errorf("choosing the account for the retro: %w", err)
+			}
+			return w.Retro(ctx, repoURL, user, since)
 		},
 	})
 }

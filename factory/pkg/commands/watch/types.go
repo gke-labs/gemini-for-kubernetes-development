@@ -17,6 +17,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/graphs"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/issues"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/prs"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/retros"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/sandbox"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/scan"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/warmworkspace"
@@ -97,6 +98,9 @@ type Flags struct {
 	// replay (`factory watch rules replay`); empty records nothing. What
 	// they decide is unchanged.
 	RulesRecord string
+	// RetroSchedule is when the weekly retro runs (package retros): cron's
+	// five fields or a descriptor (@weekly). Empty, it never does.
+	RetroSchedule string
 }
 
 type Watcher struct {
@@ -112,6 +116,10 @@ type Watcher struct {
 	// step (pkg/commands' warmWorkspace), cloning as user. Nil, or no
 	// warmWorkspace in the config, the repository is not warmed.
 	WarmWorkspace func(ctx context.Context, repoURL, user string, cfg config.WarmWorkspaceConfig) error
+	// Retro runs the retro of the repository for the window since, as
+	// user, and opens its Change as a PR (pkg/commands' watchRetro, what
+	// factory retro runs). Nil, or no RetroSchedule, no retro runs.
+	Retro func(ctx context.Context, repoURL, user string, since time.Time) error
 	// RepoRules lays the repository's own watch rules (.agents/watch) over
 	// factory's (base), as the repository recipe mode says, and says where
 	// they came from ("" for none) - pkg/commands' repoWatchRules. Nil,
@@ -167,6 +175,7 @@ type Watcher struct {
 	fanouts       *fanouts.Controller
 	graphs        *graphs.Controller
 	warmWorkspace *warmworkspace.Controller
+	retro         *retros.Controller
 	whyClosed     *whyclosed.Tracker
 	timeoutChan   <-chan time.Time
 }
@@ -211,6 +220,7 @@ func (w *Watcher) initComponents() {
 	w.fanouts = w.newFanoutController()
 	w.graphs = w.newGraphController()
 	w.warmWorkspace = w.newWarmWorkspaceController()
+	w.retro = w.newRetroController()
 	w.whyClosed = w.newWhyClosed()
 	w.reconciler = w.newReconciler()
 	w.chores = w.newChoreScheduler()
