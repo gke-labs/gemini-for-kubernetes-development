@@ -15,6 +15,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/client-go/util/retry"
 	"k8s.io/klog/v2"
 )
 
@@ -615,58 +616,62 @@ func updateSandboxTask(ctx context.Context, kubeClient *clients.KubernetesClient
 		defer cancel()
 	}
 
-	unstructObj, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, sandboxName, metav1.GetOptions{})
-	if err != nil {
-		return fmt.Errorf("getting sandbox %s: %w", sandboxName, err)
-	}
-
-	unpaused := false
-	if taskType != "" && taskState != "Completed" && taskState != "Failed" {
-		replicas, found, _ := unstructured.NestedInt64(unstructObj.Object, "spec", "replicas")
-		if found && replicas == 0 {
-			_ = unstructured.SetNestedField(unstructObj.Object, int64(1), "spec", "replicas")
-			unpaused = true
+	// Read and written again on a conflict: a sandbox just made is
+	// updated by its controller too, and a write lost to that (the run
+	// record, the task's state) is not made again.
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		unstructObj, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, sandboxName, metav1.GetOptions{})
+		if err != nil {
+			return fmt.Errorf("getting sandbox %s: %w", sandboxName, err)
 		}
-	}
 
-	annotations := unstructObj.GetAnnotations()
-	if annotations == nil {
-		annotations = make(map[string]string)
-	}
-	if unpaused {
-		annotations["sandbox.gemini.google.com/unpaused-at"] = time.Now().UTC().Format(time.RFC3339)
-	}
+		unpaused := false
+		if taskType != "" && taskState != "Completed" && taskState != "Failed" {
+			replicas, found, _ := unstructured.NestedInt64(unstructObj.Object, "spec", "replicas")
+			if found && replicas == 0 {
+				_ = unstructured.SetNestedField(unstructObj.Object, int64(1), "spec", "replicas")
+				unpaused = true
+			}
+		}
 
-	if taskType != "" {
-		if side {
-			annotations[SideTaskStateAnnotation(taskType)] = taskState
+		annotations := unstructObj.GetAnnotations()
+		if annotations == nil {
+			annotations = make(map[string]string)
+		}
+		if unpaused {
+			annotations["sandbox.gemini.google.com/unpaused-at"] = time.Now().UTC().Format(time.RFC3339)
+		}
+
+		if taskType != "" {
+			if side {
+				annotations[SideTaskStateAnnotation(taskType)] = taskState
+			} else {
+				annotations["sandbox.gemini.google.com/last-task-type"] = taskType
+				annotations["sandbox.gemini.google.com/last-task-state"] = taskState
+			}
+			if engine != "" {
+				annotations[AnnotationTaskEngine] = engine
+			}
+			for k, v := range extra {
+				annotations[k] = v
+			}
+			withRunState(annotations, taskType, taskState, time.Now().UTC().Truncate(time.Second))
+			if taskState == "Completed" || taskState == "Failed" {
+				nowStr := time.Now().UTC().Format(time.RFC3339)
+				annotations["sandbox.gemini.google.com/completion-time"] = nowStr
+				annotations["sandbox.gemini.google.com/last-task-time"] = nowStr
+			}
 		} else {
-			annotations["sandbox.gemini.google.com/last-task-type"] = taskType
-			annotations["sandbox.gemini.google.com/last-task-state"] = taskState
+			delete(annotations, "sandbox.gemini.google.com/last-task-type")
+			delete(annotations, "sandbox.gemini.google.com/last-task-state")
 		}
-		if engine != "" {
-			annotations[AnnotationTaskEngine] = engine
-		}
-		for k, v := range extra {
-			annotations[k] = v
-		}
-		withRunState(annotations, taskType, taskState, time.Now().UTC().Truncate(time.Second))
-		if taskState == "Completed" || taskState == "Failed" {
-			nowStr := time.Now().UTC().Format(time.RFC3339)
-			annotations["sandbox.gemini.google.com/completion-time"] = nowStr
-			annotations["sandbox.gemini.google.com/last-task-time"] = nowStr
-		}
-	} else {
-		delete(annotations, "sandbox.gemini.google.com/last-task-type")
-		delete(annotations, "sandbox.gemini.google.com/last-task-state")
-	}
 
-	unstructObj.SetAnnotations(annotations)
-	_, err = kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Update(ctx, unstructObj, metav1.UpdateOptions{})
-	if err != nil {
-		return fmt.Errorf("updating sandbox %s task annotations: %w", sandboxName, err)
-	}
-	return nil
+		unstructObj.SetAnnotations(annotations)
+		if _, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Update(ctx, unstructObj, metav1.UpdateOptions{}); err != nil {
+			return fmt.Errorf("updating sandbox %s task annotations: %w", sandboxName, err)
+		}
+		return nil
+	})
 }
 
 func IncrementSandboxEvictionCount(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, sandboxName string) error {

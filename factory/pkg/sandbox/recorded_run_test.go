@@ -3,11 +3,16 @@ package sandbox
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
+	dynamicfake "k8s.io/client-go/dynamic/fake"
+	k8stesting "k8s.io/client-go/testing"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/k8s"
 )
@@ -87,5 +92,39 @@ func TestTheRecordedRunCarriesItsState(t *testing.T) {
 	}
 	if got := sb().GetAnnotations()["sandbox.gemini.google.com/last-task-state"]; got != "Completed" {
 		t.Errorf("last-task-state = %q, want Completed", got)
+	}
+}
+
+// A run record lost to a conflicting update (the controller writing a
+// sandbox just made) is written again, not dropped.
+func TestTheRunRecordSurvivesAConflict(t *testing.T) {
+	ctx, ns := context.Background(), "u"
+	kc := fakeKube(t, ns, &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "agents.x-k8s.io/v1alpha1",
+		"kind":       "Sandbox",
+		"metadata":   map[string]interface{}{"name": "fix-r-8", "namespace": ns},
+		"spec":       map[string]interface{}{"replicas": int64(1)},
+	}})
+	conflicts := 1
+	kc.DynamicClient.(*dynamicfake.FakeDynamicClient).PrependReactor("update", "sandboxes", func(k8stesting.Action) (bool, runtime.Object, error) {
+		if conflicts == 0 {
+			return false, nil, nil
+		}
+		conflicts--
+		return true, nil, apierrors.NewConflict(k8s.SandboxGVR.GroupResource(), "fix-r-8", errors.New("the object has been modified"))
+	})
+	run := RecordedRun{Task: "recipe-fix-1", StartedAt: time.Now().UTC(), Recipe: "fix", State: "Running"}
+	if err := MarkSandboxRunStarted(ctx, kc, ns, "fix-r-8", "fix", "gemini", false, run); err != nil {
+		t.Fatal(err)
+	}
+	got := recordedRunOn(t, func() *unstructured.Unstructured {
+		o, err := kc.DynamicClient.Resource(k8s.SandboxGVR).Namespace(ns).Get(ctx, "fix-r-8", metav1.GetOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return o
+	}, RunAnnotation("fix"))
+	if got.Task != "recipe-fix-1" || conflicts != 0 {
+		t.Errorf("run = %+v, conflicts left %d", got, conflicts)
 	}
 }
