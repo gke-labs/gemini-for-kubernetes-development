@@ -575,9 +575,25 @@ func resolveWrites(run Run, it Item, env Env) Writes {
 	}
 	if run.Stop != nil && !hasLabel(it.Labels, env.Prefixes, "*/stop") {
 		w.Stop, w.Comment = true, run.Stop.Comment
+		stopAssign(&w, it, env)
 	}
 	w.Drop = run.Drop
 	return w
+}
+
+// stopAssign hands a pull request that w stops to the humans of the
+// issues it closes: their human assignees ({{closing-issue-assignees}})
+// join w's assign, those the PR lacks and w does not unassign, so a
+// paused PR has a person to look at it, as a ready one does.
+func stopAssign(w *Writes, it Item, env Env) {
+	if !w.Stop || it.Kind != OnPR {
+		return
+	}
+	for _, a := range assignees("{{closing-issue-assignees}}", it, env) {
+		if !anyIn(it.Assignees, []string{a}) && !anyIn(w.Assign, []string{a}) && !anyIn(w.Unassign, []string{a}) {
+			w.Assign = append(w.Assign, a)
+		}
+	}
 }
 
 // Bot is the bot a task runs as, in an on-start hook's assign or

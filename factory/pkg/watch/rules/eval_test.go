@@ -226,6 +226,39 @@ func TestDecideGiveUpWrites(t *testing.T) {
 	}
 }
 
+// A stop on a PR - a give-up (ci's, on failing checks), or a rule's stop
+// (inactive's) - hands it to the closing issues' humans: they are
+// assigned, not the pool's bots or the watcher, nor one assigned already.
+func TestDecideStopAssignsClosingIssueHumans(t *testing.T) {
+	set, _ := Builtin()
+	closes := []Closing{{Number: 1, Assignees: []string{"maintainer", "ada-coder-bot", "argus-watcher-bot", "reviewer"}}, {Number: 2, Assignees: []string{"Maintainer"}}}
+	ci := pr(func(it *Item) {
+		it.Checks = "failing"
+		it.Assignees = append(it.Assignees, "reviewer")
+		it.Closes = closes
+		for i := range 3 {
+			start := time.Duration(150-50*i) * time.Minute
+			it.Runs = append(it.Runs, PastRun{Rule: "ci", StartedAt: ago(start), EndedAt: ago(start - time.Minute), Head: "h2"})
+		}
+	})
+	ds := set.Decide(ci, testEnv)
+	if len(ds) != 1 || ds[0].Rule != "ci" || ds[0].Outcome != OutcomeGiveUp || strings.Join(ds[0].Writes.Assign, ",") != "maintainer" {
+		t.Errorf("ci give-up: decisions = %+v", ds)
+	}
+
+	env := testEnv
+	env.PRInactivityTimeout = 168 * time.Hour
+	stale := pr(func(it *Item) {
+		it.LastTrustedActivity = ago(200 * time.Hour)
+		it.Checks = "pending"
+		it.Closes = closes
+	})
+	ds = set.Decide(stale, env)
+	if len(ds) != 1 || ds[0].Rule != "inactive" || !ds[0].Writes.Stop || strings.Join(ds[0].Writes.Assign, ",") != "maintainer,reviewer" {
+		t.Errorf("inactive: decisions = %+v", ds)
+	}
+}
+
 // inactive is on but needs the overseer's timeout: without one it decides
 // nothing; with one, it pauses a PR nobody touched for that long. Turned
 // off by a repository, it decides nothing either way.
