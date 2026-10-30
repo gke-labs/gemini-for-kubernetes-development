@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestSetGitHubURLRewrite pins the fix for sandboxes shared by several
@@ -627,6 +628,34 @@ quiet="$HOME/quiet.log"
 				t.Errorf("not the first 200 matching lines, then […] and the last 10:\n%s", out)
 			}
 		})
+	}
+}
+
+// TestCILogExcerptOfAHugeStep: a failed step of 15MB, as KCC's e2e jobs
+// log, is excerpted in seconds. awk holding the step in a string took
+// time growing with the square of its size: a 76MB log held a care-ci
+// task's sandbox for 19 hours (#14621, 2026-10-29).
+func TestCILogExcerptOfAHugeStep(t *testing.T) {
+	setup := `log="$HOME/job.log"
+awk 'BEGIN{print "##[group]Run setup"; print "set up"; print "##[group]Run make e2e"; for(i=0;i<150000;i++) printf "    fixture_test.go:42: step %d of a chatty fixture, padded to a long-ish line\n", i; print "--- FAIL: TestFixture/last (1.00s)"; print "##[error]Process completed with exit code 1."; print "##[group]Run cleanup"}' > "$log"
+`
+	start := time.Now()
+	out, _, err := runLib(t, nil, setup, `ciLogExcerpt "$log"`)
+	took := time.Since(start)
+	if err != nil {
+		t.Fatalf("ciLogExcerpt failed: %v\n%s", err, out)
+	}
+	if took > 30*time.Second {
+		t.Errorf("ciLogExcerpt took %s on a 15MB step; want seconds", took)
+	}
+	if !strings.Contains(out, "--- FAIL: TestFixture/last") || !strings.Contains(out, "step 149999 of") {
+		t.Errorf("want the failure and what came before it:\n%s", out)
+	}
+	if !strings.HasSuffix(strings.TrimSpace(out), "##[error]Process completed with exit code 1.") {
+		t.Errorf("want the excerpt to end with the step's last line, the error:\n%s", out)
+	}
+	if strings.Contains(out, "set up") || strings.Contains(out, "Run cleanup") {
+		t.Errorf("want the failed step only, not the steps around it:\n%s", out)
 	}
 }
 
