@@ -628,26 +628,36 @@ function ciFailedJobsOfCommit {
 # the step that failed, whole if short, else its test failures (or errors)
 # and its last lines.
 function ciLogExcerpt {
-    local log="$1" section
-    section="$(awk '/##\[group\]Run /{buf=""} {buf=buf $0 "\n"} /##\[error\]/{printf "%s", buf; found=1; exit} END{if(!found) printf "%s", buf}' "${log}")"
-    if [ "$(printf '%s\n' "${section}" | wc -l)" -le 150 ]; then
-        printf '%s\n' "${section}"
-        return
-    fi
-    # Go's test output: what a failed test printed comes before its
-    # --- FAIL line. Error-ish words alone match every log line of a
-    # chatty test, so they are only the fallback.
-    # No reader here stops early: under pipefail, head or grep -q leaving
-    # a pipe SIGPIPEs its writer (exit 141) once the log outgrows the pipe
-    # buffer, failing the step; so grep reads a here-string, and sed reads
-    # to the end. A grep that matches nothing is not a failure.
-    if grep -q -e '--- FAIL' <<< "${section}"; then
-        { grep -B25 -A2 -e '--- FAIL' <<< "${section}" || true; } | sed -n '1,200p'
+    local log="$1" start end section
+    # The failed step runs from the last "##[group]Run" before the first
+    # "##[error]" to that line (with no error, from the last step to the
+    # end). awk notes line numbers only and sed prints the range: awk
+    # holding the step in a string took time growing with the square of
+    # its size, 19 hours on a 76MB KCC e2e log (#14621, 2026-10-29).
+    read -r start end < <(awk '/##\[group\]Run /{start=NR} /##\[error\]/{print start+0, NR; found=1; exit} END{if(!found) print start+0, NR}' "${log}")
+    [ "${start:-0}" -ge 1 ] || start=1
+    section="$(mktemp "${TMPDIR:-/tmp}/ci-log-step.XXXXXX")"
+    sed -n "${start},${end:-0}p" "${log}" > "${section}"
+    if [ "$(wc -l < "${section}")" -le 150 ]; then
+        cat "${section}"
     else
-        { grep -E -B5 -A40 -e 'ERROR|Error:|FAIL|panic:' <<< "${section}" || true; } | sed -n '1,200p'
+        # Go's test output: what a failed test printed comes before its
+        # --- FAIL line. Error-ish words alone match every log line of a
+        # chatty test, so they are only the fallback.
+        # No reader here stops early: under pipefail, head or grep -q
+        # leaving a pipe SIGPIPEs its writer (exit 141) once the log
+        # outgrows the pipe buffer, failing the step; so grep reads the
+        # file, and sed reads to the end. A grep that matches nothing is
+        # not a failure.
+        if grep -q -e '--- FAIL' "${section}"; then
+            { grep -B25 -A2 -e '--- FAIL' "${section}" || true; } | sed -n '1,200p'
+        else
+            { grep -E -B5 -A40 -e 'ERROR|Error:|FAIL|panic:' "${section}" || true; } | sed -n '1,200p'
+        fi
+        echo "[…]"
+        tail -n 10 "${section}"
     fi
-    echo "[…]"
-    tail -n 10 <<< "${section}"
+    rm -f "${section}"
 }
 
 # fetchCIJobLogs REPO DIR reads "<job id> <job name>" lines, saves each
