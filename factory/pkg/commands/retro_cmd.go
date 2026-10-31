@@ -61,7 +61,7 @@ The collector is COLLECTOR_URL, or --collector.`,
 			return runRetro(ctx, c.OutOrStdout(), retroRun{
 				owner: owner, repo: repo, since: from, collector: collector,
 				stageOnly: stageOnly, staged: staged, runName: runName,
-				apply: applyMode{on: apply, dryRun: dryRun, verb: "open-pr"},
+				apply: retroApplyMode(apply, dryRun, rootFlags.User),
 			})
 		},
 	}
@@ -146,7 +146,15 @@ func watchRetro(ctx context.Context, repoURL, user string, since time.Time) erro
 		return err
 	}
 	return runRetro(ctx, os.Stdout, retroRun{owner: owner, repo: repo, since: since, user: user,
-		apply: applyMode{on: true, verb: "open-pr", asUser: user != ""}})
+		apply: retroApplyMode(true, false, user)})
+}
+
+// retroApplyMode is how factory retro applies its Change: open-pr, and,
+// run as a bot (-u), with that bot's token, as the watch's weekly retro
+// does. With the caller's token, open-pr refused the branch the bot had
+// pushed to its own fork ("not on your fork").
+func retroApplyMode(on, dryRun bool, user string) applyMode {
+	return applyMode{on: on, dryRun: dryRun, verb: "open-pr", asUser: user != ""}
 }
 
 // printStaged says what was staged, and what was skipped.
