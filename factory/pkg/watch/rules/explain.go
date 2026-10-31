@@ -120,6 +120,7 @@ func explainRule(r *Rule, it Item, env Env, st Step) Step {
 	if g != nil && countSince(giveUpRuns(g, runs), since(g.Since, it)) >= g.Attempts {
 		d := Decision{Rule: r.Name, Kind: it.Kind, Number: it.Number, Outcome: OutcomeGiveUp}
 		d.Writes = Writes{Stop: true, Comment: g.Comment}
+		stopAssign(&d.Writes, it, env)
 		st.Decision = &d
 		return st
 	}

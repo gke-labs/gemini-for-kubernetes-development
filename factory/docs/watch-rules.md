@@ -403,6 +403,11 @@ label then keeps every rule off the item until a person takes it off; no
 run happens while it is on, so a count since `pause` starts again from
 zero.
 
+On a pull request, every stop the watcher writes - a give-up, or a
+`run.stop` (a rule's or a hook's) - also assigns the human assignees of the
+issues it closes (`{{closing-issue-assignees}}`: not the pool's bots or
+the watcher), so a paused PR has a person to look at it.
+
 ---
 
 ## Order
