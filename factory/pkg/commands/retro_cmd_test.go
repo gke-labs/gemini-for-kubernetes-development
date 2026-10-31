@@ -55,3 +55,16 @@ func TestRetroCommandRefuses(t *testing.T) {
 		}
 	}
 }
+
+// Run as a bot (-u), factory retro opens its PR with the bot's token, as
+// the watch's weekly retro does: the bot pushed the branch to its own fork,
+// and open-pr refuses a branch on a fork that is not the token's. Run as
+// the caller, it applies as the caller.
+func TestRetroApplyModeAsUser(t *testing.T) {
+	if m := retroApplyMode(true, false, "lovelace-coder-bot"); !m.on || m.verb != "open-pr" || !m.asUser {
+		t.Errorf("-u lovelace-coder-bot: %+v", m)
+	}
+	if m := retroApplyMode(true, true, ""); !m.on || !m.dryRun || m.asUser {
+		t.Errorf("no -u: %+v", m)
+	}
+}
