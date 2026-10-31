@@ -146,15 +146,15 @@ func TestWriteTaskOutputCopiesActions(t *testing.T) {
 // A document from a runner older than actions gets the ones its task
 // declared; one that has actions, or a declaration without any, is left
 // as it is.
-func TestWithDeclaredActions(t *testing.T) {
-	doc, err := taskoutput.Wrap("Plan", "## Summary\nDo it.", taskoutput.Target{URL: "https://github.com/o/r/issues/1"}, taskoutput.Source{Task: "t"})
+func TestCompleteTaskOutputActions(t *testing.T) {
+	doc, err := taskoutput.Wrap("Plan", "## Summary\nDo it.", taskoutput.Target{URL: "https://github.com/o/r/issues/1"}, taskoutput.Source{Sandbox: "sb", Task: "t"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	bare, _ := taskoutput.Marshal(doc)
 	decl := &taskoutput.Decl{Kind: "Plan", From: "plan-output.md", Actions: []taskoutput.Action{{Verb: "comment"}}}
 
-	out, err := withDeclaredActions(bare, decl)
+	out, err := completeTaskOutput(bare, decl, "sb")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -162,13 +162,42 @@ func TestWithDeclaredActions(t *testing.T) {
 	if err != nil || len(docs[0].Actions) != 1 || docs[0].Actions[0].Verb != "comment" {
 		t.Errorf("backfilled = %s (%v)", out, err)
 	}
-	if out, _ := withDeclaredActions(bare, &taskoutput.Decl{Kind: "Plan"}); string(out) != string(bare) {
+	if out, _ := completeTaskOutput(bare, &taskoutput.Decl{Kind: "Plan"}, "sb"); string(out) != string(bare) {
 		t.Errorf("no declared actions changed the document:\n%s", out)
 	}
 	doc.Actions = []taskoutput.Action{{Verb: "reject"}}
 	own, _ := taskoutput.Marshal(doc)
-	if out, _ := withDeclaredActions(own, decl); string(out) != string(own) {
+	if out, _ := completeTaskOutput(own, decl, "sb"); string(out) != string(own) {
 		t.Errorf("a document's own actions were replaced:\n%s", out)
+	}
+}
+
+// A document its runner wrote without the sandbox - a retro's Change on its
+// repository - gets the sandbox it was read from, so apply aliases that
+// one to the PR it opens rather than looking it up by the repository's
+// URL, which every sandbox working on the repository matches
+// (GoogleCloudPlatform/k8s-config-connector#14722, 2026-10-30). A sandbox
+// it names already is kept.
+func TestCompleteTaskOutputSandbox(t *testing.T) {
+	change := "change:\n  fork: bot/r\n  branch: retro-1\n  base: abc\n  title: Retro\n  body: Lessons.\n"
+	doc, err := taskoutput.Wrap("Change", change, taskoutput.Target{URL: "https://github.com/o/r"}, taskoutput.Source{Task: "recipe-retro-1", Recipe: "retro"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bare, _ := taskoutput.Marshal(doc)
+	out, err := completeTaskOutput(bare, nil, "retro-r-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	docs, err := taskoutput.Parse(out)
+	if err != nil || len(docs) != 1 || docs[0].Source.Sandbox != "retro-r-1" || docs[0].Source.Task != "recipe-retro-1" {
+		t.Errorf("source = %+v (%v):\n%s", docs[0].Source, err, out)
+	}
+
+	doc.Source.Sandbox = "other"
+	named, _ := taskoutput.Marshal(doc)
+	if out, _ := completeTaskOutput(named, nil, "retro-r-1"); string(out) != string(named) {
+		t.Errorf("the sandbox the document names was replaced:\n%s", out)
 	}
 }
 

@@ -3,11 +3,13 @@ package k8s
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/clients"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 )
@@ -40,11 +42,18 @@ func SandboxPod(ctx context.Context, namespace, sandboxName string) (string, err
 
 func sandboxPod(ctx context.Context, kube *clients.KubernetesClient, namespace, sandboxName string) (string, error) {
 	sb, err := kube.DynamicClient.Resource(SandboxGVR).Namespace(namespace).Get(ctx, sandboxName, v1.GetOptions{})
-	if err != nil {
+	if apierrors.IsNotFound(err) {
 		return "", fmt.Errorf("sandbox '%s' does not exist in namespace '%s'", sandboxName, namespace)
 	}
+	if err != nil {
+		// Not "does not exist": the cluster could not be asked (no
+		// credentials, no network), and the sandbox may well be there.
+		return "", fmt.Errorf("getting sandbox '%s' in namespace '%s': %w", sandboxName, namespace, err)
+	}
 	if replicas, found, _ := unstructuredInt(sb.Object, "spec", "replicas"); found && replicas == 0 {
-		fmt.Printf("Sandbox %s is currently suspended (replicas=0). Setting replicas to 1 to bring up the pod back...\n", sandboxName)
+		// On stderr: what a command prints on stdout may be piped on
+		// (sandbox task output | apply -f -).
+		fmt.Fprintf(os.Stderr, "Sandbox %s is currently suspended (replicas=0). Setting replicas to 1 to bring up the pod back...\n", sandboxName)
 		patch := fmt.Sprintf(`{"spec":{"replicas":1},"metadata":{"annotations":{"sandbox.gemini.google.com/unpaused-at":%q}}}`, time.Now().UTC().Format(time.RFC3339))
 		_, _ = kube.DynamicClient.Resource(SandboxGVR).Namespace(namespace).Patch(ctx, sandboxName, types.MergePatchType, []byte(patch), v1.PatchOptions{})
 	}

@@ -361,7 +361,7 @@ func readTaskOutput(ctx context.Context, sb taskapi.Sandbox, e spool.Entry) ([]b
 	}
 	decl := e.Output
 	if len(out) > 0 {
-		return withDeclaredActions(out, decl)
+		return completeTaskOutput(out, decl, sandboxName)
 	}
 	if decl == nil {
 		return nil, nil
@@ -390,18 +390,30 @@ func readTaskOutput(ctx context.Context, sb taskapi.Sandbox, e spool.Entry) ([]b
 	return taskoutput.Marshal(doc)
 }
 
-// withDeclaredActions is a task output with the actions its task declared,
-// when its runner, older than actions, left them out. Anything else is
-// returned as it is.
-func withDeclaredActions(data []byte, decl *taskoutput.Decl) ([]byte, error) {
-	if decl == nil || len(decl.Actions) == 0 {
-		return data, nil
-	}
+// completeTaskOutput is a task output with what its runner left out: the
+// sandbox it was read from (source.sandbox), and the actions its task
+// declared when the runner, older than actions, left them out. apply
+// aliases that sandbox to the PR an open-pr opens; without it, apply looked
+// the sandbox up by the target's URL, and a Change on a repository (a
+// retro's, a chore's) matched every sandbox that works on it. Anything
+// else is returned as it is.
+func completeTaskOutput(data []byte, decl *taskoutput.Decl, sandbox string) ([]byte, error) {
 	docs, err := taskoutput.Parse(data)
-	if err != nil || len(docs) != 1 || len(docs[0].Actions) > 0 || docs[0].Kind != decl.Kind {
+	if err != nil || len(docs) != 1 {
 		return data, nil
 	}
-	docs[0].Actions = decl.Actions
+	changed := false
+	if docs[0].Source.Sandbox == "" && sandbox != "" {
+		docs[0].Source.Sandbox = sandbox
+		changed = true
+	}
+	if decl != nil && len(decl.Actions) > 0 && len(docs[0].Actions) == 0 && docs[0].Kind == decl.Kind {
+		docs[0].Actions = decl.Actions
+		changed = true
+	}
+	if !changed {
+		return data, nil
+	}
 	return taskoutput.Marshal(docs[0])
 }
 
