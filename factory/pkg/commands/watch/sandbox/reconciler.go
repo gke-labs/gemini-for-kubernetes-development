@@ -826,6 +826,10 @@ func (r *Reconciler) recordAndUploadOutcome(ctx context.Context, pr *githubv39.P
 	var agentHead string
 	var carePasses int
 
+	// The agent's head is its last push: the pushing task that started
+	// last. The first one listed was often an early push a later care
+	// pass replaced, and what changed since read as human edits.
+	var agentHeadAt time.Time
 	// First try to list tasks from the collector
 	if collectorTasks, err := usagereport.ListTasksForPR(ctx, r.sandboxes.owner, r.sandboxes.repo, num); err == nil && len(collectorTasks) > 0 {
 		for _, t := range collectorTasks {
@@ -838,8 +842,11 @@ func (r *Reconciler) recordAndUploadOutcome(ctx context.Context, pr *githubv39.P
 			if strings.Contains(t.Task, "care") || strings.Contains(t.Recipe, "care") {
 				carePasses++
 			}
-			if t.PushedHead != "" && agentHead == "" {
-				agentHead = t.PushedHead
+			if t.PushedHead != "" {
+				at, _ := time.Parse(time.RFC3339, t.StartedAt)
+				if agentHead == "" || at.After(agentHeadAt) {
+					agentHead, agentHeadAt = t.PushedHead, at
+				}
 			}
 		}
 	}
@@ -867,7 +874,8 @@ func (r *Reconciler) recordAndUploadOutcome(ctx context.Context, pr *githubv39.P
 				}
 			}
 			if agentHead == "" {
-				// entries are ordered newest first
+				// The task server lists tasks by ID, not by when they ran.
+				sort.SliceStable(entries, func(i, j int) bool { return entries[i].Started.After(entries[j].Started) })
 				for _, entry := range entries {
 					data, err := sb.ReadFile(ctx, entry.ID, "push.json")
 					if err == nil && len(data) > 0 {
@@ -920,8 +928,15 @@ func (r *Reconciler) recordAndUploadOutcome(ctx context.Context, pr *githubv39.P
 	}
 
 	finalHead := pr.GetHead().GetSHA()
-	baseRef := pr.GetBase().GetRef()
-	humanEdit := r.computeHumanEdit(ctx, baseRef, agentHead, finalHead)
+	// Both heads are compared with the base commit, not the base branch:
+	// once the PR is merged its head is on the branch, the branch's
+	// compare with it is empty, and every file the agent changed read as
+	// deleted by a human ("+0 -N").
+	base := pr.GetBase().GetSHA()
+	if base == "" {
+		base = pr.GetBase().GetRef()
+	}
+	humanEdit := r.computeHumanEdit(ctx, base, agentHead, finalHead)
 
 	prState := "closed"
 	if pr.GetMerged() {
@@ -975,7 +990,10 @@ func (r *Reconciler) recordAndUploadOutcome(ctx context.Context, pr *githubv39.P
 	}
 }
 
-func (r *Reconciler) computeHumanEdit(ctx context.Context, baseRef, agentHead, finalHead string) *tokenusage.HumanEdit {
+// computeHumanEdit is what changed between the agent's last push and the
+// PR's final head, each compared with base: the PR's base commit (its
+// branch only when the commit is unknown).
+func (r *Reconciler) computeHumanEdit(ctx context.Context, base, agentHead, finalHead string) *tokenusage.HumanEdit {
 	if agentHead == "" || finalHead == "" || agentHead == finalHead {
 		return &tokenusage.HumanEdit{Files: 0, Added: 0, Deleted: 0, Paths: nil}
 	}
@@ -983,18 +1001,18 @@ func (r *Reconciler) computeHumanEdit(ctx context.Context, baseRef, agentHead, f
 	if gh == nil {
 		return &tokenusage.HumanEdit{Files: 0, Added: 0, Deleted: 0, Paths: nil}
 	}
-	if baseRef == "" {
-		baseRef = "main"
+	if base == "" {
+		base = "main"
 	}
 
-	cmpAgent, _, err := gh.Repositories.CompareCommits(ctx, r.sandboxes.owner, r.sandboxes.repo, baseRef, agentHead, nil)
+	cmpAgent, _, err := gh.Repositories.CompareCommits(ctx, r.sandboxes.owner, r.sandboxes.repo, base, agentHead, nil)
 	if err != nil {
-		klog.V(2).Infof("reconciler: compare commits for agent head %s against %s: %v", agentHead, baseRef, err)
+		klog.V(2).Infof("reconciler: compare commits for agent head %s against %s: %v", agentHead, base, err)
 		return nil
 	}
-	cmpFinal, _, err := gh.Repositories.CompareCommits(ctx, r.sandboxes.owner, r.sandboxes.repo, baseRef, finalHead, nil)
+	cmpFinal, _, err := gh.Repositories.CompareCommits(ctx, r.sandboxes.owner, r.sandboxes.repo, base, finalHead, nil)
 	if err != nil {
-		klog.V(2).Infof("reconciler: compare commits for final head %s against %s: %v", finalHead, baseRef, err)
+		klog.V(2).Infof("reconciler: compare commits for final head %s against %s: %v", finalHead, base, err)
 		return nil
 	}
 

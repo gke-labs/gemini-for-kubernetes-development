@@ -1546,6 +1546,114 @@ func TestCollectGarbageUploadsOutcomeRecord(t *testing.T) {
 	}
 }
 
+// An outcome's human edits are what changed after the agent's last push,
+// each head compared with the PR's base commit. Before, the first push the
+// task server listed (by ID, so an early care pass) stood for the agent's
+// head, and the base branch - which holds the merged PR's head - for its
+// base: every file the agent changed read as deleted by a human, "+0 -N"
+// (GoogleCloudPlatform/k8s-config-connector#14370, 2026-10-30).
+func TestOutcomeHumanEditIsFromTheLastPushAndTheBaseCommit(t *testing.T) {
+	for _, tc := range []struct {
+		name                              string
+		finalHead                         string
+		wantFiles, wantAdded, wantDeleted int
+	}{
+		{name: "the agent's last push merged as it was", finalHead: "last-push"},
+		{name: "a human commit after the last push", finalHead: "human-head", wantFiles: 1, wantAdded: 3, wantDeleted: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			prNum := 77
+			var uploaded []tokenusage.OutcomeRecord
+			collectorSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == http.MethodPut && r.URL.Path == fmt.Sprintf("/v1/outcomes/test-owner/test-repo/%d", prNum) {
+					var rec tokenusage.OutcomeRecord
+					if err := json.NewDecoder(r.Body).Decode(&rec); err != nil {
+						t.Errorf("decoding outcome: %v", err)
+					}
+					uploaded = append(uploaded, rec)
+				}
+				w.WriteHeader(http.StatusOK)
+			}))
+			defer collectorSrv.Close()
+			t.Setenv("COLLECTOR_URL", collectorSrv.URL)
+
+			// Listed by ID: the early care pass first.
+			withTasks(t, &fakeTaskServer{
+				entries: []spool.Entry{
+					{Task: spool.Task{ID: "recipe-care-ci-20261024-000510-a9e2"}, Started: time.Date(2026, 10, 24, 0, 5, 10, 0, time.UTC)},
+					{Task: spool.Task{ID: "recipe-care-ci-20261028-201515-6570"}, Started: time.Date(2026, 10, 28, 20, 15, 15, 0, time.UTC)},
+					{Task: spool.Task{ID: "recipe-fix-20261023-223652-e598"}, Started: time.Date(2026, 10, 23, 22, 36, 52, 0, time.UTC)},
+				},
+				files: map[string]string{
+					"recipe-care-ci-20261024-000510-a9e2/push.json": `{"head":"early-push"}`,
+					"recipe-care-ci-20261028-201515-6570/push.json": `{"head":"last-push"}`,
+					"recipe-fix-20261023-223652-e598/push.json":     `{"head":"first-push"}`,
+				},
+			}, nil)
+
+			ghMux := http.NewServeMux()
+			ghMux.HandleFunc(fmt.Sprintf("/repos/test-owner/test-repo/pulls/%d", prNum), func(w http.ResponseWriter, r *http.Request) {
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"number": prNum, "state": "closed", "merged": true,
+					"head": map[string]string{"sha": tc.finalHead, "ref": "fix-branch"},
+					"base": map[string]string{"ref": "main", "sha": "base-sha"},
+					"user": map[string]string{"login": "gemini-bot", "type": "Bot"},
+				})
+			})
+			for _, p := range []string{"commits", "reviews", "comments"} {
+				ghMux.HandleFunc(fmt.Sprintf("/repos/test-owner/test-repo/pulls/%d/%s", prNum, p), func(w http.ResponseWriter, r *http.Request) {
+					_ = json.NewEncoder(w).Encode([]map[string]interface{}{})
+				})
+			}
+			ghMux.HandleFunc(fmt.Sprintf("/repos/test-owner/test-repo/issues/%d/comments", prNum), func(w http.ResponseWriter, r *http.Request) {
+				_ = json.NewEncoder(w).Encode([]map[string]interface{}{})
+			})
+			compare := func(head string, files ...map[string]interface{}) {
+				ghMux.HandleFunc("/repos/test-owner/test-repo/compare/base-sha..."+head, func(w http.ResponseWriter, r *http.Request) {
+					_ = json.NewEncoder(w).Encode(map[string]interface{}{"files": files})
+				})
+			}
+			agentFile := map[string]interface{}{"filename": "apis/foo_types.go", "sha": "sha-agent", "additions": 3687, "deletions": 0}
+			compare("early-push", agentFile)
+			compare("last-push", agentFile)
+			compare("human-head", agentFile, map[string]interface{}{"filename": "pkg/bar.go", "sha": "sha-bar", "additions": 3, "deletions": 1})
+			// The base branch, which holds the merged head: nothing between them.
+			ghMux.HandleFunc("/repos/test-owner/test-repo/compare/", func(w http.ResponseWriter, r *http.Request) {
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{"files": []map[string]interface{}{}})
+			})
+			ghSrv := httptest.NewServer(ghMux)
+			defer ghSrv.Close()
+			client := githubv39.NewClient(nil)
+			client.BaseURL, _ = url.Parse(ghSrv.URL + "/")
+
+			sbName := fmt.Sprintf("factory-pr-%d", prNum)
+			r := New(Config{}, Deps{
+				Sandboxes: NewService(ServiceConfig{Namespace: testNamespace, Owner: "test-owner", Repo: "test-repo"}, ServiceDeps{
+					Kube:   newFakeKubeClient(t, newSandbox(sbName, map[string]interface{}{annotationLastTaskState: "Completed"})),
+					GitHub: client,
+				}),
+				Locks:    concurrency.NewSandboxLockRegistry(),
+				Entities: warmCache(),
+			})
+			r.CollectGarbage(context.Background())
+
+			if len(uploaded) != 1 {
+				t.Fatalf("want 1 outcome uploaded, got %d", len(uploaded))
+			}
+			o := uploaded[0]
+			if o.AgentHead != "last-push" {
+				t.Errorf("agentHead: want the last push, got %q", o.AgentHead)
+			}
+			if o.HumanEdit == nil {
+				t.Fatal("humanEdit was nil")
+			}
+			if e := o.HumanEdit; e.Files != tc.wantFiles || e.Added != tc.wantAdded || e.Deleted != tc.wantDeleted {
+				t.Errorf("humanEdit: want %d files +%d -%d, got %+v", tc.wantFiles, tc.wantAdded, tc.wantDeleted, e)
+			}
+		})
+	}
+}
+
 func TestComputeHumanEditRebaseNoChange(t *testing.T) {
 	agentHead := "agent-head-1"
 	finalHead := "final-head-1"
