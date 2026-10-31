@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -1592,13 +1593,23 @@ func writeTaskOutput(taskDir, repoDir string, inputs map[string]string, engine s
 // input; unset, it is). A Change on a PR — such as care's —
 // is about the PR (pr_url), and keeps
 // the title and body it had (pushed_title, pushed_body) where the agent
-// wrote none.
+// wrote none. A task's names the feedback it was handed (comments.json),
+// for post-replies to mark resolved.
 func fillChange(doc *taskoutput.Document, task spool.Task, taskDir string, inputs map[string]string) error {
 	if u := inputs["pr_url"]; u != "" {
 		doc.Target.URL = u
 	}
 	if err := doc.KeepTitle(inputs["pushed_title"], inputs["pushed_body"]); err != nil {
 		return err
+	}
+	if data, err := os.ReadFile(filepath.Join(taskDir, taskoutput.FeedbackFile)); err == nil && len(bytes.TrimSpace(data)) > 0 {
+		var refs []taskoutput.FeedbackRef
+		if err := json.Unmarshal(data, &refs); err != nil {
+			return fmt.Errorf("parsing %s: %w", taskoutput.FeedbackFile, err)
+		}
+		if err := doc.SetFeedback(refs); err != nil {
+			return err
+		}
 	}
 	data, err := os.ReadFile(filepath.Join(taskDir, taskoutput.PushedFile))
 	if err != nil {
