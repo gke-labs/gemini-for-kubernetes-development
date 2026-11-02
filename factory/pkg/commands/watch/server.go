@@ -8,12 +8,14 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"k8s.io/klog/v2"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/api"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/concurrency"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/geminitokens"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/watch/rules"
 )
 
@@ -41,6 +43,18 @@ func startQueueHTTPServer(ctx context.Context, queueMgr *concurrency.TaskQueueMa
 			resp.Rules = &v
 		}
 		_ = json.NewEncoder(w).Encode(resp)
+	})
+
+	// GET /api/v1/github-usage: this watch's GitHub requests since it
+	// started, by endpoint and outcome (charged reads and writes, free 304s,
+	// GraphQL), and the rate limits GitHub last reported.
+	mux.HandleFunc("/api/v1/github-usage", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(github.Usage())
 	})
 
 	mux.HandleFunc("/api/v1/status", func(w http.ResponseWriter, r *http.Request) {
@@ -106,4 +120,27 @@ func startQueueHTTPServer(ctx context.Context, queueMgr *concurrency.TaskQueueMa
 
 	<-ctx.Done()
 	_ = server.Close()
+}
+
+// githubUsageEvery is how often the watch logs its GitHub usage.
+const githubUsageEvery = 10 * time.Minute
+
+// logGitHubUsage logs, every interval, what the watch asked GitHub in it:
+// the requests charged against the rate limit (reads and writes), the
+// free revalidations, the core limit left, and the endpoints that cost
+// the most - where the budget goes.
+func logGitHubUsage(ctx context.Context, every time.Duration) {
+	t := time.NewTicker(every)
+	defer t.Stop()
+	prev := github.Usage()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			now := github.Usage()
+			klog.Infof("GitHub usage, last %s: %s", every, now.Minus(prev).Summary(12))
+			prev = now
+		}
+	}
 }
