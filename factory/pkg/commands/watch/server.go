@@ -46,15 +46,17 @@ func startQueueHTTPServer(ctx context.Context, queueMgr *concurrency.TaskQueueMa
 	})
 
 	// GET /api/v1/github-usage: this watch's GitHub requests since it
-	// started, by endpoint and outcome (charged reads and writes, free 304s,
-	// GraphQL), and the rate limits GitHub last reported.
+	// started, and its tasks' child processes' (reported so far), by token,
+	// component and endpoint, each by outcome (charged reads and writes, free
+	// 304s, GraphQL), and each token's rate limits GitHub last reported.
 	mux.HandleFunc("/api/v1/github-usage", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(github.Usage())
+		ingestChildUsage()
+		_ = json.NewEncoder(w).Encode(github.ProcessUsage())
 	})
 
 	mux.HandleFunc("/api/v1/status", func(w http.ResponseWriter, r *http.Request) {
@@ -125,20 +127,36 @@ func startQueueHTTPServer(ctx context.Context, queueMgr *concurrency.TaskQueueMa
 // githubUsageEvery is how often the watch logs its GitHub usage.
 const githubUsageEvery = 10 * time.Minute
 
-// logGitHubUsage logs, every interval, what the watch asked GitHub in it:
-// the requests charged against the rate limit (reads and writes), the
-// free revalidations, the core limit left, and the endpoints that cost
-// the most - where the budget goes.
+// githubUsageFile is where the watch's tasks' child processes report their
+// GitHub requests (github.ReportUsage): the pod's own, this process's.
+var githubUsageFile = filepath.Join(os.TempDir(), fmt.Sprintf("factory-github-usage-%d.jsonl", os.Getpid()))
+
+// ingestChildUsage reads what the child processes reported since the last
+// read into the watch's counts.
+func ingestChildUsage() {
+	if err := github.IngestUsage(githubUsageFile); err != nil {
+		klog.Warningf("Reading the tasks' GitHub usage: %v", err)
+	}
+}
+
+// logGitHubUsage logs, every interval, what the watch and its tasks asked
+// GitHub in it: the requests charged against the rate limit (reads and
+// writes), the free revalidations, each token's charges and core limit
+// left, and the components and endpoints that cost the most - where the
+// budget goes. A child's requests are seen as it reports them (every
+// minute, and at its end).
 func logGitHubUsage(ctx context.Context, every time.Duration) {
 	t := time.NewTicker(every)
 	defer t.Stop()
-	prev := github.Usage()
+	_ = os.Remove(githubUsageFile) // another process's, by the same pid
+	prev := github.ProcessUsage()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			now := github.Usage()
+			ingestChildUsage()
+			now := github.ProcessUsage()
 			klog.Infof("GitHub usage, last %s: %s", every, now.Minus(prev).Summary(12))
 			prev = now
 		}

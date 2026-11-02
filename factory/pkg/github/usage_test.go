@@ -5,8 +5,11 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // An endpoint is the method and the path with its repository, numbers and
@@ -28,11 +31,9 @@ func TestEndpoint(t *testing.T) {
 	}
 }
 
-// Requests are counted under the cache, as GitHub bills them: a first read
-// (200) is charged, its revalidation (304) is free, a write is charged, a
-// GraphQL query is its own budget; and the rate limit GitHub reports is
-// kept.
-func TestUsageCountsWhatGitHubCharges(t *testing.T) {
+// fakeGitHub answers like GitHub: an ETag on reads and 304 to a
+// revalidation, the token's rate limit on every response.
+func fakeGitHub(t *testing.T) *httptest.Server {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-RateLimit-Resource", "core")
 		w.Header().Set("X-RateLimit-Limit", "5000")
@@ -50,49 +51,126 @@ func TestUsageCountsWhatGitHubCharges(t *testing.T) {
 			_, _ = w.Write([]byte(`{}`))
 		}
 	}))
-	defer srv.Close()
+	t.Cleanup(srv.Close)
+	return srv
+}
 
-	before := Usage()
-	c := cachedHTTPClient(context.Background(), "usage-test-token-"+t.Name())
-	do := func(method, path string) {
-		t.Helper()
-		req, _ := http.NewRequest(method, srv.URL+path, strings.NewReader(""))
-		resp, err := c.Do(req)
-		if err != nil {
-			t.Fatal(err)
-		}
-		_, _ = io.Copy(io.Discard, resp.Body) // the cache stores a response once its body is read
-		resp.Body.Close()
+func do(ctx context.Context, t *testing.T, c *http.Client, method, url string) {
+	t.Helper()
+	req, _ := http.NewRequestWithContext(ctx, method, url, strings.NewReader(""))
+	resp, err := c.Do(req)
+	if err != nil {
+		t.Fatal(err)
 	}
-	do(http.MethodGet, "/repos/o/r/issues/7") // 200: charged
-	do(http.MethodGet, "/repos/o/r/issues/7") // 304: free
-	do(http.MethodGet, "/repos/o/r/issues/8") // 200: charged (another issue, same endpoint)
-	do(http.MethodPost, "/repos/o/r/issues/7/labels")
-	do(http.MethodPost, "/graphql")
+	_, _ = io.Copy(io.Discard, resp.Body) // the cache stores a response once its body is read
+	resp.Body.Close()
+}
 
-	d := Usage().Minus(before)
+func find(us []Usage, name string) *Usage {
+	for i := range us {
+		if us[i].Name == name {
+			return &us[i]
+		}
+	}
+	return nil
+}
+
+// Requests are counted under the cache, as GitHub bills them: a first read
+// (200) is charged, its revalidation (304) is free, a write is charged, a
+// GraphQL query is its own budget; by the component that asked and the
+// token they went as, whose rate limit GitHub reports is kept.
+func TestUsageCountsWhatGitHubCharges(t *testing.T) {
+	srv := fakeGitHub(t)
+	before := ProcessUsage()
+	token := "usage-test-token-" + t.Name()
+	NameToken(token, "watcher-test")
+	c := cachedHTTPClient(context.Background(), token)
+	graphs := WithComponent(context.Background(), "graphs-test")
+	issues := WithComponent(context.Background(), "issues-test")
+	do(graphs, t, c, http.MethodGet, srv.URL+"/repos/o/r/issues/7") // 200: charged
+	do(graphs, t, c, http.MethodGet, srv.URL+"/repos/o/r/issues/7") // 304: free
+	do(issues, t, c, http.MethodGet, srv.URL+"/repos/o/r/issues/8") // 200: charged (another issue, same endpoint)
+	do(issues, t, c, http.MethodPost, srv.URL+"/repos/o/r/issues/7/labels")
+	do(context.Background(), t, c, http.MethodPost, srv.URL+"/graphql")
+
+	d := ProcessUsage().Minus(before)
 	if d.Charged != 3 || d.Outcomes[OutcomeRead] != 2 || d.Outcomes[OutcomeFree] != 1 || d.Outcomes[OutcomeWrite] != 1 || d.Outcomes[OutcomeGraphQL] != 1 {
 		t.Errorf("counts = charged %d, %v", d.Charged, d.Outcomes)
 	}
-	var issue *EndpointUsage
-	for i := range d.Endpoints {
-		if d.Endpoints[i].Endpoint == "GET /repos/{r}/issues/{n}" {
-			issue = &d.Endpoints[i]
-		}
+	if e := find(d.Endpoints, "GET /repos/{r}/issues/{n}"); e == nil || e.Total != 3 || e.Charged != 2 || e.Statuses[304] != 1 {
+		t.Errorf("GET /repos/{r}/issues/{n} = %+v", e)
 	}
-	if issue == nil || issue.Total != 3 || issue.Charged != 2 || issue.Statuses[304] != 1 {
-		t.Errorf("GET /repos/{r}/issues/{n} = %+v", issue)
+	if d.Endpoints[0].Name != "GET /repos/{r}/issues/{n}" {
+		t.Errorf("most charged first: %v", d.Endpoints[0].Name)
 	}
-	if d.Endpoints[0].Endpoint != "GET /repos/{r}/issues/{n}" {
-		t.Errorf("most charged first: %v", d.Endpoints[0].Endpoint)
+	if g := find(d.Components, "graphs-test"); g == nil || g.Charged != 1 || g.Outcomes[OutcomeFree] != 1 {
+		t.Errorf("graphs-test = %+v", g)
 	}
-	if rl := d.RateLimit["core"]; rl.Remaining != 4321 || rl.Limit != 5000 || rl.Used != 679 || rl.Reset.IsZero() {
+	if i := find(d.Components, "issues-test"); i == nil || i.Charged != 2 {
+		t.Errorf("issues-test = %+v", i)
+	}
+	if o := find(d.Components, componentOther); o == nil || o.Outcomes[OutcomeGraphQL] != 1 {
+		t.Errorf("untagged = %+v", o)
+	}
+	if tk := find(d.Tokens, "watcher-test"); tk == nil || tk.Charged != 3 {
+		t.Errorf("token = %+v (tokens %+v)", tk, d.Tokens)
+	}
+	if rl := d.RateLimits["watcher-test"]["core"]; rl.Remaining != 4321 || rl.Limit != 5000 || rl.Used != 679 || rl.Reset.IsZero() {
 		t.Errorf("core rate limit = %+v", rl)
 	}
 	sum := d.Summary(5)
-	for _, want := range []string{"charged 3 (reads 2, writes 1), free 304s 1, graphql 1", "core limit: 4321 of 5000 left", "top: GET /repos/{r}/issues/{n} 2 (+1 free)"} {
+	for _, want := range []string{
+		"charged 3 (reads 2, writes 1), free 304s 1, graphql 1",
+		"tokens: watcher-test 3 (4321 of 5000 left",
+		"components: issues-test 2, graphs-test 1 (+1 free), other 1",
+		"top: GET /repos/{r}/issues/{n} 2 (+1 free)",
+	} {
 		if !strings.Contains(sum, want) {
 			t.Errorf("summary %q lacks %q", sum, want)
 		}
+	}
+}
+
+// A child process reports what it counted to the file its watch names, as
+// it goes and at its end; the watch reads each report once into its own
+// counts, under the child's component and token, and a line not yet
+// complete waits.
+func TestChildUsageReachesTheWatch(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "usage.jsonl")
+	t.Setenv(EnvUsageFile, path)
+	stop := ReportUsage(time.Hour)
+
+	child := WithComponent(context.Background(), "task:fix-test")
+	processUsage.record(TokenID("bot-token"), componentOf(child), "POST /repos/{r}/pulls", OutcomeWrite, 201, nil, time.Now())
+	stop()
+	stop() // once
+
+	// The watch: another process; here, the same counts read back in.
+	before := ProcessUsage()
+	f, _ := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
+	_, _ = f.WriteString(`{"at":"2026-11-02T07:00:00Z","series":[{"token":"x"`) // a report half written
+	f.Close()
+	if err := IngestUsage(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := IngestUsage(path); err != nil { // nothing new: counted once
+		t.Fatal(err)
+	}
+	d := ProcessUsage().Minus(before)
+	if c := find(d.Components, "task:fix-test"); c == nil || c.Charged != 1 || c.Outcomes[OutcomeWrite] != 1 {
+		t.Errorf("task:fix-test = %+v (components %+v)", c, d.Components)
+	}
+	if tk := find(d.Tokens, TokenID("bot-token")); tk == nil || tk.Charged != 1 {
+		t.Errorf("bot token = %+v", tk)
+	}
+	if err := IngestUsage(filepath.Join(t.TempDir(), "none")); err != nil {
+		t.Errorf("no file yet: %v", err)
+	}
+}
+
+func TestTokenIDHidesTheToken(t *testing.T) {
+	id := TokenID("ghp_secret")
+	if strings.Contains(id, "secret") || !strings.HasPrefix(id, "token-") || len(id) != len("token-")+8 || id != TokenID("ghp_secret") {
+		t.Errorf("TokenID = %q", id)
 	}
 }

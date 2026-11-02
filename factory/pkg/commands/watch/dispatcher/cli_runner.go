@@ -12,6 +12,7 @@ import (
 	"k8s.io/klog/v2"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/api"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/recipe"
 )
 
@@ -30,6 +31,10 @@ type CLIRunnerConfig struct {
 	TaskTimeout time.Duration
 	// ProcessingLogDir is where the per-task log file is written while the task runs.
 	ProcessingLogDir string
+	// GitHubUsageFile is where the child reports its GitHub requests
+	// (github.ReportUsage), counted as its task's ("task:<recipe>"); empty,
+	// it reports none.
+	GitHubUsageFile string
 }
 
 // CLIRunner executes tasks by spawning a child `factory` CLI process.
@@ -142,6 +147,11 @@ func (r *CLIRunner) Run(ctx context.Context, taskFilename string, task *api.Queu
 	}
 
 	cmd := r.execCommand(ctx, executable, args...)
+	if r.cfg.GitHubUsageFile != "" {
+		cmd.Env = append(os.Environ(),
+			github.EnvUsageFile+"="+r.cfg.GitHubUsageFile,
+			github.EnvUsageComponent+"="+UsageComponent(task))
+	}
 
 	logPath := ""
 	if logFile, err := r.openLogFile(taskFilename); err != nil {
@@ -161,6 +171,16 @@ func (r *CLIRunner) Run(ctx context.Context, taskFilename string, task *api.Queu
 	// alone: a run that succeeded in its sandbox and failed applying its
 	// result says so only in its log.
 	return &RunError{Err: err, Reason: failureFromLog(logPath)}
+}
+
+// UsageComponent is the component a task's GitHub requests are counted as:
+// "task:<recipe>", or "task:agent" for an agent definition's (a workflow's
+// step, a chore).
+func UsageComponent(t *api.QueueTask) string {
+	if t.AgentFile != "" {
+		return "task:agent"
+	}
+	return "task:" + t.Recipe
 }
 
 // openLogFile creates the log file that a running task streams its output into.

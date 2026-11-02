@@ -543,6 +543,7 @@ func (w *Watcher) newCLIRunner() *dispatcher.CLIRunner {
 		MemoryLimit:      w.MemoryLimit,
 		TaskTimeout:      w.TaskTimeout,
 		ProcessingLogDir: w.processingLogDir,
+		GitHubUsageFile:  githubUsageFile,
 	})
 }
 
