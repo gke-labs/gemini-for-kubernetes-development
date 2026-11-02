@@ -108,8 +108,9 @@ The parent never opens a PR. `fix` and `workflow` leave it alone
   done for `after`.
 - A child closing wakes its parent at once: the steps after it are created
   on that pass.
-- `<t>/stop` on the parent pauses the graph (status Paused); take it off to
-  resume.
+- `<t>/stop` on the parent pauses the graph; take it off to resume. The
+  sweep skips a stopped parent (it would only rewrite its status), so its
+  status comment says Paused only once a child closing wakes it.
 - A step's `checkpoint`, once, when the step is done: `stop` puts
   `<t>/stop` on the parent, for a maintainer to look; `replan` puts
   `<t>/plan` on it, so the plan is revised (v+1) and the next pass reads

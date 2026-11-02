@@ -178,7 +178,13 @@ func (c *Controller) sync(ctx context.Context, n int) {
 }
 
 // listParents lists every open issue labelled a graph parent, and every
-// open planned issue, in each label's spellings, following pagination.
+// open planned issue, in each label's spellings, following pagination -
+// but not one with the stop label. A stopped graph only has its status
+// rewritten ("paused"), and each parent costs a sweep a dozen GitHub
+// calls: on KCC, 41 of 70 parents were stopped, and the sweep alone took
+// the watcher past its 5,000-an-hour budget. A stopped parent's children
+// closing still wake it (NudgeLinkedWorkflows), and the sweep after its
+// stop label comes off picks it up again.
 func (c *Controller) listParents(ctx context.Context) ([]int, error) {
 	seen := map[int]bool{}
 	var parents []int
@@ -191,10 +197,14 @@ func (c *Controller) listParents(ctx context.Context) ([]int, error) {
 				return parents, err
 			}
 			for _, issue := range page {
-				if issue.PullRequestLinks == nil && !seen[issue.GetNumber()] {
-					seen[issue.GetNumber()] = true
-					parents = append(parents, issue.GetNumber())
+				if issue.PullRequestLinks != nil || seen[issue.GetNumber()] {
+					continue
 				}
+				seen[issue.GetNumber()] = true
+				if conventions.HasStopLabel(issue.Labels, c.cfg.TriggerLabel) {
+					continue
+				}
+				parents = append(parents, issue.GetNumber())
 			}
 			if resp == nil || resp.NextPage == 0 {
 				break
