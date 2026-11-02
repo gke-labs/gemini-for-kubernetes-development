@@ -66,6 +66,11 @@ type FactoryConfig struct {
 	// (design/retro.md §5). Off unless set.
 	AskWhyClosed bool `yaml:"askWhyClosed"`
 	WhyClosed    bool `yaml:"whyClosed"`
+	// GraphsInterval is how often factory watch's issue graph controller
+	// sweeps every graph parent, e.g. "15m". A child closing wakes its
+	// parent at once; the sweep catches what that missed, and reads every
+	// parent. Unset or invalid, graphs.DefaultInterval.
+	GraphsInterval string `yaml:"graphsInterval"`
 }
 
 // WarmWorkspaceConfig is how often the workspace is warmed, how many

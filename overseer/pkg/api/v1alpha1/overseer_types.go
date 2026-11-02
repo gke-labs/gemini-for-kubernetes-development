@@ -178,6 +178,15 @@ type OverseerSpec struct {
 	// +kubebuilder:validation:Optional
 	Graphs bool `json:"graphs,omitempty"`
 
+	// GraphsInterval is how often the issue graph controller sweeps every
+	// graph parent (factory config graphsInterval, e.g. "15m"). A child
+	// closing wakes its parent at once, so the sweep only catches what that
+	// missed - a graph started since, a lost wake - and each sweep reads
+	// every parent: a longer interval spends less of the watcher's GitHub
+	// API budget. Unset, factory's default (5m).
+	// +kubebuilder:validation:Optional
+	GraphsInterval *metav1.Duration `json:"graphsInterval,omitempty"`
+
 	// Retro runs the weekly retro (factory/design/retro.md): on its
 	// schedule the watcher stages the week's PR outcomes, human feedback
 	// and agent traces from the token-usage collector, runs the retro

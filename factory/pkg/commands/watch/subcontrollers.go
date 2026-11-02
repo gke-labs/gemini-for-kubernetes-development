@@ -172,7 +172,7 @@ func (w *Watcher) newGraphController() *graphs.Controller {
 		return nil
 	}
 	return graphs.New(graphs.Config{
-		Interval:     graphs.DefaultInterval,
+		Interval:     graphsInterval(w.cfg.GraphsInterval),
 		TriggerLabel: w.triggerLabel,
 		GitHubLogin:  w.githubLogin,
 		Pool:         w.allBotUsers,
@@ -180,6 +180,20 @@ func (w *Watcher) newGraphController() *graphs.Controller {
 		MinNumber:    w.minIssueNumber(),
 		DryRun:       w.loopDryRun(w.IssueMode),
 	}, graphs.Deps{GitHub: w.repoClient, Paused: w.draining})
+}
+
+// graphsInterval is the factory config's graphsInterval, or
+// graphs.DefaultInterval when it is unset or not a positive duration.
+func graphsInterval(s string) time.Duration {
+	if s == "" {
+		return graphs.DefaultInterval
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil || d <= 0 {
+		klog.Warningf("graphsInterval %q is not a positive duration; sweeping issue graphs every %s", s, graphs.DefaultInterval)
+		return graphs.DefaultInterval
+	}
+	return d
 }
 
 // proposeFanout runs ProposeFanout on parent n, if it is set, as the

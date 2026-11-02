@@ -70,7 +70,10 @@ on an Overseer, `spec.graphs: true`)
 keeps every graph parent moving. A parent is an issue labelled `<t>/graph`;
 one with no start block whose plan has a Breakdown is started from its
 plan - the label is the approval, the watcher's on `implement` or a
-maintainer's.
+maintainer's. It sweeps every parent every 5 minutes (the factory config's
+`graphsInterval`; on an Overseer, `spec.graphsInterval`), and a child
+closing wakes its parent at once, so a longer interval only delays what
+that wake missed while spending less of the watcher's GitHub API budget.
 
 Each pass, on a slow sweep and as soon as a child closes:
 
