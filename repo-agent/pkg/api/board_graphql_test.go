@@ -2,8 +2,10 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"testing"
 	"time"
 
@@ -231,5 +233,67 @@ func TestAnHTTPFailureIsNotAnEmptyBoard(t *testing.T) {
 	_, err := answering(t, http.StatusBadGateway, `<html>bad gateway</html>`)
 	if err == nil {
 		t.Fatal("a 502 must fail the rebuild rather than empty the board")
+	}
+}
+
+// The repository's list is only its 100 most recently updated pull
+// requests; the member's own beyond them - a review request two months
+// old, their own stale PR - come from the searches, each pull request once,
+// and the searches are scoped to the repository and the member.
+func TestTheMembersOwnPRsReachTheBoardBeyondTheNewest(t *testing.T) {
+	const body = `{"data":{"rateLimit":{"cost":4,"remaining":4990},
+	  "requested":{"nodes":[
+	    {"number":12315,"title":"old review request","url":"https://github.com/o/r/pull/12315","updatedAt":"2026-10-20T12:52:12Z",
+	     "author":{"login":"someone"},"labels":{"nodes":[]},
+	     "reviewRequests":{"nodes":[{"requestedReviewer":{"login":"barney-s"}}]},"reviews":{"nodes":[]}},
+	    {"number":270,"title":"also newest","url":"https://github.com/o/r/pull/270","updatedAt":"2026-11-01T00:00:00Z",
+	     "labels":{"nodes":[]},"reviewRequests":{"nodes":[]},"reviews":{"nodes":[]}}]},
+	  "authored":{"nodes":[
+	    {"number":9000,"title":"my stale PR","url":"https://github.com/o/r/pull/9000","updatedAt":"2026-06-01T00:00:00Z",
+	     "author":{"login":"barney-s"},"labels":{"nodes":[]},"reviewRequests":{"nodes":[]},"reviews":{"nodes":[{"state":"COMMENTED"}]}}]},
+	  "assignedPRs":{"nodes":[{}]},
+	  "repository":{
+	    "pullRequests":{"nodes":[{"number":270,"title":"newest","url":"https://github.com/o/r/pull/270","updatedAt":"2026-11-01T00:00:00Z",
+	      "labels":{"nodes":[]},"reviewRequests":{"nodes":[]},"reviews":{"nodes":[]}}]},
+	    "assigned":{"nodes":[]},"created":{"nodes":[]},"triage":{"nodes":[]}}}}`
+	var vars map[string]string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Variables map[string]string `json:"variables"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		vars = req.Variables
+		_, _ = w.Write([]byte(body))
+	}))
+	defer srv.Close()
+	prev := githubGraphQLEndpoint
+	githubGraphQLEndpoint = srv.URL
+	defer func() { githubGraphQLEndpoint = prev }()
+
+	snap, err := fetchBoardSnapshot(context.Background(), srv.Client(), "o", "r", "barney-s")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []int
+	for _, pr := range snap.prs {
+		got = append(got, pr.GetNumber())
+	}
+	if want := []int{270, 12315, 9000}; !reflect.DeepEqual(got, want) {
+		t.Errorf("PRs = %v, want %v (newest first, then the member's own, each once; an empty node skipped)", got, want)
+	}
+	if rr := snap.prs[1].RequestedReviewers; len(rr) != 1 || rr[0].GetLogin() != "barney-s" {
+		t.Errorf("#12315 requested reviewers = %v", rr)
+	}
+	if !snap.reviews[9000].reviewed {
+		t.Error("#9000's review by the member was dropped")
+	}
+	for k, want := range map[string]string{
+		"requested":   "repo:o/r is:pr is:open review-requested:barney-s",
+		"authored":    "repo:o/r is:pr is:open author:barney-s",
+		"assignedPRs": "repo:o/r is:pr is:open assignee:barney-s",
+	} {
+		if vars[k] != want {
+			t.Errorf("variable %s = %q, want %q", k, vars[k], want)
+		}
 	}
 }
