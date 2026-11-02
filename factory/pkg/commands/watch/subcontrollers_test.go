@@ -527,3 +527,26 @@ func TestGraphsInterval(t *testing.T) {
 		}
 	}
 }
+
+// The graph controller is built with the watcher, before init loads the
+// factory config: it reads graphsInterval from the config file itself.
+// It read w.cfg, nil then, and the watch panicked at start whenever graphs
+// were on (overseer-kcc, 2026-11-02).
+func TestNewGraphControllerBeforeConfigLoaded(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".factory.cfg"), []byte("graphsInterval: \"20m\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("FACTORY_CONFIG", dir)
+	w := &Watcher{}
+	w.Graphs = true
+	c := w.newGraphController()
+	if c == nil || c.Interval() != 20*time.Minute {
+		t.Fatalf("graph controller = %v, interval %v; want one sweeping every 20m", c, c.Interval())
+	}
+
+	t.Setenv("FACTORY_CONFIG", t.TempDir()) // no config file
+	if c := w.newGraphController(); c == nil || c.Interval() != graphs.DefaultInterval {
+		t.Errorf("with no config: interval %v, want %v", c.Interval(), graphs.DefaultInterval)
+	}
+}

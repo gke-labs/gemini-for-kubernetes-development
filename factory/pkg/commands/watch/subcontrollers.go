@@ -28,6 +28,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/scan"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/warmworkspace"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/whyclosed"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/config"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/recipe"
 	factorysandbox "github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/sandbox"
@@ -171,8 +172,21 @@ func (w *Watcher) newGraphController() *graphs.Controller {
 	if !w.Graphs {
 		return nil
 	}
+	// The controller is built with the watcher (NewWatcher), before init
+	// loads w.cfg: read the factory config here when it is not loaded yet.
+	cfg := w.cfg
+	if cfg == nil {
+		var err error
+		if cfg, err = config.LoadConfig(); err != nil {
+			klog.Warningf("Reading the factory config for graphsInterval: %v", err)
+		}
+	}
+	interval := graphs.DefaultInterval
+	if cfg != nil {
+		interval = graphsInterval(cfg.GraphsInterval)
+	}
 	return graphs.New(graphs.Config{
-		Interval:     graphsInterval(w.cfg.GraphsInterval),
+		Interval:     interval,
 		TriggerLabel: w.triggerLabel,
 		GitHubLogin:  w.githubLogin,
 		Pool:         w.allBotUsers,

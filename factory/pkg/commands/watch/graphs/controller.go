@@ -216,3 +216,6 @@ func (c *Controller) listParents(ctx context.Context) ([]int, error) {
 }
 
 func (c *Controller) isPaused() bool { return c.paused != nil && c.paused() }
+
+// Interval is how often the controller sweeps every parent.
+func (c *Controller) Interval() time.Duration { return c.cfg.Interval }
