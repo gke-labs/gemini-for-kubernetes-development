@@ -51,6 +51,28 @@ func TestSweep(t *testing.T) {
 	}
 }
 
+// A sweep leaves a stopped parent alone - no child opened, nothing
+// written, not even its status - and moves it again once the stop label
+// is off.
+func TestSweepSkipsStoppedParents(t *testing.T) {
+	f := graphtest.New()
+	f.Issues[100] = &graphtest.Issue{Title: "Stopped", Body: "x", Author: "alice", Open: true, Labels: []string{"overseer/graph", "overseer/stop"}}
+	f.Comment(100, "hopper-coder-bot", "NONE", plan)
+	f.Comment(100, "hopper-coder-bot", "NONE", graph.Start{Source: graph.SourcePlan}.StartComment())
+	before := f.Writes
+
+	controller(f, false).SyncOnce(context.Background())
+	if childOf(f, 100, "a") != 0 || f.Writes != before {
+		t.Errorf("a stopped parent was swept: a=#%d, %d writes", childOf(f, 100, "a"), f.Writes-before)
+	}
+
+	f.Issues[100].Labels = []string{"overseer/graph"}
+	controller(f, false).SyncOnce(context.Background())
+	if childOf(f, 100, "a") == 0 {
+		t.Error("the parent was not swept once its stop label was off")
+	}
+}
+
 func TestSweepDryRun(t *testing.T) {
 	f := graphtest.New()
 	f.Issues[100] = &graphtest.Issue{Title: "Started", Body: "x", Author: "alice", Open: true, Labels: []string{"overseer/planned"}}
