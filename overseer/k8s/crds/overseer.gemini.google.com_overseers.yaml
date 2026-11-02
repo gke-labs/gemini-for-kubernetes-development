@@ -64,6 +64,8 @@ spec:
                 type: boolean
               graphs:
                 type: boolean
+              graphsInterval:
+                type: string
               image:
                 type: string
               minNumber:

@@ -296,6 +296,19 @@ func TestBuildSandboxManifest_Graphs(t *testing.T) {
 	}
 }
 
+// spec.graphsInterval reaches the watcher as GRAPHS_INTERVAL (run.sh writes
+// it to the factory config's graphsInterval), and only when set.
+func TestBuildSandboxManifest_GraphsInterval(t *testing.T) {
+	o := &overseerv1alpha1.Overseer{Spec: overseerv1alpha1.OverseerSpec{RepoURL: "https://github.com/owner/repo"}}
+	if _, ok := overseerEnv(t, o)["GRAPHS_INTERVAL"]; ok {
+		t.Error("GRAPHS_INTERVAL is set with graphsInterval unset")
+	}
+	o.Spec.GraphsInterval = &metav1.Duration{Duration: 15 * time.Minute}
+	if got := overseerEnv(t, o)["GRAPHS_INTERVAL"]; got != "15m0s" {
+		t.Errorf("GRAPHS_INTERVAL = %v", got)
+	}
+}
+
 // spec.retro.schedule reaches the watcher as WATCH_RETRO_SCHEDULE, and
 // only when set.
 func TestBuildSandboxManifest_RetroSchedule(t *testing.T) {

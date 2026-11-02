@@ -20,6 +20,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/act"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/api"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/dispatcher"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/graphs"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/config"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/k8s"
@@ -506,6 +507,23 @@ func TestNewRetroController(t *testing.T) {
 		w.RetroSchedule, w.Retro = tc.schedule, tc.retro
 		if got := w.newRetroController() != nil; got != tc.want {
 			t.Errorf("%s: controller %t, want %t", name, got, tc.want)
+		}
+	}
+}
+
+// The factory config's graphsInterval sets how often the graph controller
+// sweeps; unset or not a positive duration, it is graphs.DefaultInterval.
+func TestGraphsInterval(t *testing.T) {
+	for in, want := range map[string]time.Duration{
+		"":      graphs.DefaultInterval,
+		"15m":   15 * time.Minute,
+		"1h30m": 90 * time.Minute,
+		"soon":  graphs.DefaultInterval,
+		"0s":    graphs.DefaultInterval,
+		"-5m":   graphs.DefaultInterval,
+	} {
+		if got := graphsInterval(in); got != want {
+			t.Errorf("graphsInterval(%q) = %s, want %s", in, got, want)
 		}
 	}
 }

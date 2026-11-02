@@ -87,6 +87,11 @@ function writeFactoryConfig {
         echo "sessionURL: \"$SESSION_URL\"" >> "$CFG_FILE"
     fi
 
+    # How often the issue graph controller sweeps every graph parent.
+    if [ -n "$GRAPHS_INTERVAL" ]; then
+        echo "graphsInterval: \"$GRAPHS_INTERVAL\"" >> "$CFG_FILE"
+    fi
+
     if [ -n "$FACTORY_SECRETS" ]; then
         echo "secrets:" >> "$CFG_FILE"
         echo "$FACTORY_SECRETS" | jq -r '.[] | "  - name: \(.name)\n    mountPath: \(.mountPath)"' >> "$CFG_FILE"
