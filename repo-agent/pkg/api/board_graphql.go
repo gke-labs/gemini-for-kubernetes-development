@@ -32,18 +32,14 @@ import (
 // so this is never free the way a warm REST cache was. It is cheap instead
 // of sometimes-free, and cheap every time is what the budget needs.
 const boardFeedQuery = `
-query($owner:String!,$name:String!,$me:String!) {
+query($owner:String!,$name:String!,$me:String!,$requested:String!,$authored:String!,$assignedPRs:String!) {
   rateLimit { cost remaining resetAt }
+  requested: search(query:$requested, type:ISSUE, first:100) { nodes { ...pr } }
+  authored: search(query:$authored, type:ISSUE, first:100) { nodes { ...pr } }
+  assignedPRs: search(query:$assignedPRs, type:ISSUE, first:100) { nodes { ...pr } }
   repository(owner:$owner, name:$name) {
     pullRequests(first:100, states:OPEN, orderBy:{field:UPDATED_AT, direction:DESC}) {
-      nodes {
-        id number title body url updatedAt isDraft
-        author { login }
-        headRepository { nameWithOwner isFork owner { login } }
-        labels(first:20){ nodes { name } }
-        reviewRequests(first:20){ nodes { requestedReviewer { ... on User { login } } } }
-        reviews(first:10, author:$me){ nodes { state } }
-      }
+      nodes { ...pr }
     }
     assigned: issues(first:100, states:OPEN, filterBy:{assignee:$me}, orderBy:{field:UPDATED_AT, direction:DESC}) {
       nodes { number title body url updatedAt author{login} labels(first:20){nodes{name}} assignees(first:10){nodes{login}} }
@@ -55,7 +51,30 @@ query($owner:String!,$name:String!,$me:String!) {
       nodes { number title body url updatedAt author{login} labels(first:20){nodes{name}} assignees(first:10){nodes{login}} }
     }
   }
+}
+fragment pr on PullRequest {
+  id number title body url updatedAt isDraft
+  author { login }
+  headRepository { nameWithOwner isFork owner { login } }
+  labels(first:20){ nodes { name } }
+  reviewRequests(first:20){ nodes { requestedReviewer { ... on User { login } } } }
+  reviews(first:10, author:$me){ nodes { state } }
 }`
+
+// memberPRSearches are the searches for the member's own open pull
+// requests, by the query variable each fills: those that ask for their
+// review, those they wrote, those assigned to them. The repository's list
+// is only its 100 most recently updated (KCC has ~840 open), so without
+// these an older pull request waiting on the member - a review request
+// two months old - never reached the board at all.
+func memberPRSearches(owner, repo, member string) map[string]string {
+	scope := fmt.Sprintf("repo:%s/%s is:pr is:open ", owner, repo)
+	return map[string]string{
+		"requested":   scope + "review-requested:" + member,
+		"authored":    scope + "author:" + member,
+		"assignedPRs": scope + "assignee:" + member,
+	}
+}
 
 // githubGraphQLEndpoint is a var so a test can answer it without reaching
 // the network; the REST side does the same through githubClientForToken.
@@ -138,6 +157,12 @@ type gqlIssueNodes struct {
 	Nodes []gqlIssue `json:"nodes"`
 }
 
+// gqlPRSearch is a search's pull requests: the query asks only for the
+// PullRequest case, so anything else arrives as an empty node.
+type gqlPRSearch struct {
+	Nodes []gqlPullRequest `json:"nodes"`
+}
+
 type gqlBoardResponse struct {
 	Data struct {
 		RateLimit struct {
@@ -145,7 +170,10 @@ type gqlBoardResponse struct {
 			Remaining int       `json:"remaining"`
 			ResetAt   time.Time `json:"resetAt"`
 		} `json:"rateLimit"`
-		Repository *struct {
+		Requested   gqlPRSearch `json:"requested"`
+		Authored    gqlPRSearch `json:"authored"`
+		AssignedPRs gqlPRSearch `json:"assignedPRs"`
+		Repository  *struct {
 			PullRequests struct {
 				Nodes []gqlPullRequest `json:"nodes"`
 			} `json:"pullRequests"`
@@ -168,9 +196,13 @@ type gqlBoardResponse struct {
 // needs you" is the one wrong answer a work queue must not give. The
 // caller keeps serving the previous feed instead.
 func fetchBoardSnapshot(ctx context.Context, hc *http.Client, owner, repo, member string) (*boardSnapshot, error) {
+	vars := map[string]string{"owner": owner, "name": repo, "me": member}
+	for k, v := range memberPRSearches(owner, repo, member) {
+		vars[k] = v
+	}
 	payload, err := json.Marshal(map[string]any{
 		"query":     boardFeedQuery,
-		"variables": map[string]string{"owner": owner, "name": repo, "me": member},
+		"variables": vars,
 	})
 	if err != nil {
 		return nil, err
@@ -228,10 +260,18 @@ func fetchBoardSnapshot(ctx context.Context, hc *http.Client, owner, repo, membe
 		triage:   issuesOf(repository.Triage.Nodes),
 		reviews:  map[int]reviewStates{},
 	}
-	for i := range repository.PullRequests.Nodes {
-		node := &repository.PullRequests.Nodes[i]
-		snap.prs = append(snap.prs, node.toPullRequest(owner+"/"+repo))
-		snap.reviews[node.Number] = node.states()
+	// The newest first, then the member's own beyond them, each once.
+	seen := map[int]bool{}
+	for _, nodes := range [][]gqlPullRequest{repository.PullRequests.Nodes, out.Data.Requested.Nodes, out.Data.Authored.Nodes, out.Data.AssignedPRs.Nodes} {
+		for i := range nodes {
+			node := &nodes[i]
+			if node.Number == 0 || seen[node.Number] {
+				continue
+			}
+			seen[node.Number] = true
+			snap.prs = append(snap.prs, node.toPullRequest(owner+"/"+repo))
+			snap.reviews[node.Number] = node.states()
+		}
 	}
 	return snap, nil
 }
