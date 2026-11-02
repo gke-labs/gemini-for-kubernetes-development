@@ -73,6 +73,47 @@ func TestSweepSkipsStoppedParents(t *testing.T) {
 	}
 }
 
+// countingFake counts the lists of one account's issues a sweep asks for.
+type countingFake struct {
+	*graphtest.Fake
+	byCreator int
+}
+
+func (f *countingFake) ListIssues(ctx context.Context, opts *githubv39.IssueListByRepoOptions) ([]*githubv39.Issue, *githubv39.Response, error) {
+	if opts != nil && opts.Creator != "" {
+		f.byCreator++
+	}
+	return f.Fake.ListIssues(ctx, opts)
+}
+
+// A sweep lists the bot's recent issues once, not once per parent, and
+// every parent still moves.
+func TestSweepListsBotIssuesOnce(t *testing.T) {
+	f := &countingFake{Fake: graphtest.New()}
+	for _, n := range []int{100, 101, 102} {
+		f.Issues[n] = &graphtest.Issue{Title: "Started", Body: "x", Author: "alice", Open: true, Labels: []string{"overseer/graph"}}
+		f.Comment(n, "hopper-coder-bot", "NONE", plan)
+		f.Comment(n, "hopper-coder-bot", "NONE", graph.Start{Source: graph.SourcePlan}.StartComment())
+	}
+	c := New(Config{TriggerLabel: "overseer", GitHubLogin: "watcher", Pool: []string{"hopper-coder-bot", "watcher"}}, Deps{GitHub: f})
+
+	c.SyncOnce(context.Background())
+	if f.byCreator != 1 {
+		t.Errorf("the bot's issues were listed %d times in one sweep, want 1", f.byCreator)
+	}
+	for _, n := range []int{100, 101, 102} {
+		if childOf(f.Fake, n, "a") == 0 {
+			t.Errorf("#%d got no child", n)
+		}
+	}
+
+	// The next sweep lists them afresh.
+	c.SyncOnce(context.Background())
+	if f.byCreator != 2 {
+		t.Errorf("after two sweeps the bot's issues were listed %d times, want 2", f.byCreator)
+	}
+}
+
 func TestSweepDryRun(t *testing.T) {
 	f := graphtest.New()
 	f.Issues[100] = &graphtest.Issue{Title: "Started", Body: "x", Author: "alice", Open: true, Labels: []string{"overseer/planned"}}

@@ -19,6 +19,8 @@ package graphs
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"time"
 
 	githubv39 "github.com/google/go-github/v39/github"
@@ -107,11 +109,14 @@ func (c *Controller) SyncOnce(ctx context.Context) {
 	if err != nil {
 		klog.Errorf("Listing issue graph parents: %v", err)
 	}
+	// One sweep's GitHub: the bot's recent issues, which every parent's
+	// pass lists to find a child whose link was lost, are listed once.
+	gh := newSweepGitHub(c.gh)
 	for _, n := range parents {
 		if ctx.Err() != nil {
 			return
 		}
-		c.sync(ctx, n)
+		c.sync(ctx, gh, n)
 	}
 }
 
@@ -136,14 +141,14 @@ func (c *Controller) syncParent(ctx context.Context, n int) {
 	if c.isPaused() {
 		return
 	}
-	c.sync(ctx, n)
+	c.sync(ctx, c.gh, n)
 }
 
-func (c *Controller) sync(ctx context.Context, n int) {
+func (c *Controller) sync(ctx context.Context, gh graph.GitHub, n int) {
 	if c.cfg.MinNumber > 0 && n < c.cfg.MinNumber {
 		return
 	}
-	p, err := graph.Sync(ctx, c.gh, graph.Options{
+	p, err := graph.Sync(ctx, gh, graph.Options{
 		Issue: n, Trigger: c.cfg.TriggerLabel, BotLogin: c.cfg.GitHubLogin,
 		Pool: c.cfg.Pool, Members: c.cfg.Members, MaxDepth: c.cfg.MaxDepth, DryRun: c.cfg.DryRun,
 		Logf: func(format string, args ...any) {
@@ -163,7 +168,7 @@ func (c *Controller) sync(ctx context.Context, n int) {
 	// A graph started from a plan has no graph label yet: label it, so the
 	// sweep and the rules (fix and workflow leave a graph's parent alone)
 	// know it.
-	issue, err := c.gh.GetIssue(ctx, n)
+	issue, err := gh.GetIssue(ctx, n)
 	if err != nil || conventions.HasGraphLabel(issue.Labels, c.cfg.TriggerLabel) || p.Result.Phase == graph.PhaseSucceeded {
 		return
 	}
@@ -172,7 +177,7 @@ func (c *Controller) sync(ctx context.Context, n int) {
 		klog.Infof("issue graph #%d: would label it %s", n, label)
 		return
 	}
-	if err := c.gh.AddLabels(ctx, n, []string{label}); err != nil {
+	if err := gh.AddLabels(ctx, n, []string{label}); err != nil {
 		klog.Errorf("Issue graph #%d: labelling it %s: %v", n, label, err)
 	}
 }
@@ -216,3 +221,33 @@ func (c *Controller) listParents(ctx context.Context) ([]int, error) {
 }
 
 func (c *Controller) isPaused() bool { return c.paused != nil && c.paused() }
+
+// sweepGitHub is one sweep's GitHub: a list of the issues one account
+// created (the bot's recent issues, which each parent's pass reads for a
+// child whose sub-issue link was lost) is asked for once, and every other
+// call passes through. On KCC each parent listed the same 100 issues again,
+// one of the dozen calls a parent cost a sweep. What a pass creates during
+// the sweep is its own parent's, which that pass already knows.
+type sweepGitHub struct {
+	graph.GitHub
+	byCreator map[string][]*githubv39.Issue
+}
+
+func newSweepGitHub(gh graph.GitHub) *sweepGitHub {
+	return &sweepGitHub{GitHub: gh, byCreator: map[string][]*githubv39.Issue{}}
+}
+
+func (g *sweepGitHub) ListIssues(ctx context.Context, opts *githubv39.IssueListByRepoOptions) ([]*githubv39.Issue, *githubv39.Response, error) {
+	if opts == nil || opts.Creator == "" {
+		return g.GitHub.ListIssues(ctx, opts)
+	}
+	key := fmt.Sprintf("%s|%s|%s|%s|%s|%d|%d", opts.Creator, opts.State, opts.Sort, opts.Direction, strings.Join(opts.Labels, ","), opts.Page, opts.PerPage)
+	if issues, ok := g.byCreator[key]; ok {
+		return issues, &githubv39.Response{}, nil
+	}
+	issues, resp, err := g.GitHub.ListIssues(ctx, opts)
+	if err == nil {
+		g.byCreator[key] = issues
+	}
+	return issues, resp, err
+}
