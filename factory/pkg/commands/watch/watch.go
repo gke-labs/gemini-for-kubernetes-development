@@ -231,6 +231,7 @@ func (w *Watcher) init(ctx context.Context) error {
 		}
 		go startQueueHTTPServer(ctx, w.queueMgr, ":13338", w.rulesSummary)
 	}
+	go logGitHubUsage(ctx, githubUsageEvery)
 
 	fmt.Printf("Starting watch for repository %s/%s (mode: %s, issues: %s, PRs: %s, chores: %s, queueDir: %s, assignee: '%s', dryRun: %v, watchTimeout: %s)...\n", w.Repo.Owner, w.Repo.Repo, w.Mode, w.IssueMode, w.PRMode, w.ChoresMode, w.QueueDir, w.targetAssignee, w.DryRun, w.WatchTimeout)
 
