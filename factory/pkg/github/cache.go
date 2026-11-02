@@ -68,7 +68,7 @@ func cachedHTTPClient(ctx context.Context, token string) *http.Client {
 		Base: revalidate{&httpcache.Transport{
 			// Under the cache, so what GitHub answered is counted (usage.go):
 			// a revalidation's free 304, a charged 200, a write.
-			Transport: countingTransport{next: base}, Cache: cacheFor(token), MarkCachedResponses: true,
+			Transport: countingTransport{next: base, token: TokenID(token)}, Cache: cacheFor(token), MarkCachedResponses: true,
 		}},
 	}}
 }

@@ -247,6 +247,29 @@ func TestCLIRunner_Run_ExecutesChildProcessAndWritesLog(t *testing.T) {
 	}
 }
 
+// The child is told where to report its GitHub requests, and as whose:
+// its task's recipe.
+func TestCLIRunner_Run_ChildReportsGitHubUsage(t *testing.T) {
+	logDir := t.TempDir()
+	r := testCLIRunner(logDir)
+	r.cfg.GitHubUsageFile = filepath.Join(logDir, "usage.jsonl")
+	r.resolveExecutable = func() (string, error) { return "/usr/bin/factory", nil }
+	r.execCommand = func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		return exec.CommandContext(ctx, "sh", "-c", `echo "$FACTORY_GITHUB_USAGE_FILE $FACTORY_GITHUB_COMPONENT"`)
+	}
+	task := &api.QueueTask{Type: api.TypeIssueRule, Recipe: "fix", Rule: "fix", Number: 12, URL: "https://github.com/o/r/issues/12"}
+	if err := r.Run(context.Background(), "task-12.yaml", task, ""); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := os.ReadFile(filepath.Join(logDir, "task-12.log"))
+	if want := r.cfg.GitHubUsageFile + " task:fix\n"; string(got) != want {
+		t.Errorf("child env = %q, want %q", got, want)
+	}
+	if c := UsageComponent(&api.QueueTask{AgentFile: ".agents/x.md"}); c != "task:agent" {
+		t.Errorf("agent task component = %q", c)
+	}
+}
+
 func TestCLIRunner_Run_ReturnsErrorOnFailure(t *testing.T) {
 	r := testCLIRunner(t.TempDir())
 	r.resolveExecutable = func() (string, error) { return "/usr/bin/factory", nil }

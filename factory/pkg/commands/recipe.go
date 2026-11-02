@@ -420,6 +420,7 @@ func runRecipeIn(ctx context.Context, opts recipeRunOpts, recipeArg, itemURL, ru
 			return fmt.Errorf("secret %s has no %s to apply the result with", secretName, constants.KeyGithubToken)
 		}
 		ghClient = github.NewClientWithToken(ctx, token)
+		github.NameToken(token, user)
 	}
 	var standard map[string]string
 	var htmlURL string

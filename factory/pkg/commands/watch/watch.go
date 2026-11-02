@@ -24,29 +24,29 @@ func (w *Watcher) Run(ctx context.Context) error {
 	}
 
 	if w.Once {
-		w.reconciler.ReconcileOnce(ctx)
+		w.reconciler.ReconcileOnce(github.WithComponent(ctx, "reconciler"))
 		if w.issuesEnabled() {
-			w.issueScanner.ScanOnce(ctx)
-			w.fanouts.SyncOnce(ctx)
+			w.issueScanner.ScanOnce(github.WithComponent(ctx, "issues"))
+			w.fanouts.SyncOnce(github.WithComponent(ctx, "fanouts"))
 			if w.graphs != nil {
-				w.graphs.SyncOnce(ctx)
+				w.graphs.SyncOnce(github.WithComponent(ctx, "graphs"))
 			}
 		}
 		if w.prsEnabled() {
-			w.prScanner.ScanOnce(ctx)
+			w.prScanner.ScanOnce(github.WithComponent(ctx, "prs"))
 		}
 		if w.choresEnabled() {
-			w.chores.ScheduleOnce(ctx)
+			w.chores.ScheduleOnce(github.WithComponent(ctx, "chores"))
 		}
-		w.reconciler.CollectGarbage(ctx)
+		w.reconciler.CollectGarbage(github.WithComponent(ctx, "reconciler"))
 		if w.Mode == "all" || w.Mode == "run" {
-			w.dispatcher.DispatchOnce(ctx)
+			w.dispatcher.DispatchOnce(github.WithComponent(ctx, "dispatcher"))
 			if w.warmWorkspace != nil {
-				w.warmWorkspace.SyncOnce(ctx)
+				w.warmWorkspace.SyncOnce(github.WithComponent(ctx, "warm-workspace"))
 				w.warmWorkspace.Wait()
 			}
 			if w.retro != nil {
-				w.retro.SyncOnce(ctx)
+				w.retro.SyncOnce(github.WithComponent(ctx, "retro"))
 				w.retro.Wait()
 			}
 		}
@@ -65,24 +65,24 @@ func (w *Watcher) Run(ctx context.Context) error {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		_ = w.reconciler.Run(daemonCtx)
+		_ = w.reconciler.Run(github.WithComponent(daemonCtx, "reconciler"))
 	}()
 	if w.issuesEnabled() {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_ = w.issueScanner.Run(daemonCtx)
+			_ = w.issueScanner.Run(github.WithComponent(daemonCtx, "issues"))
 		}()
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_ = w.fanouts.Run(daemonCtx)
+			_ = w.fanouts.Run(github.WithComponent(daemonCtx, "fanouts"))
 		}()
 		if w.graphs != nil {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				_ = w.graphs.Run(daemonCtx)
+				_ = w.graphs.Run(github.WithComponent(daemonCtx, "graphs"))
 			}()
 		}
 	}
@@ -90,34 +90,34 @@ func (w *Watcher) Run(ctx context.Context) error {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_ = w.prScanner.Run(daemonCtx)
+			_ = w.prScanner.Run(github.WithComponent(daemonCtx, "prs"))
 		}()
 	}
 	if w.choresEnabled() {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_ = w.chores.Run(daemonCtx)
+			_ = w.chores.Run(github.WithComponent(daemonCtx, "chores"))
 		}()
 	}
 	if w.Mode == "all" || w.Mode == "run" {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_ = w.dispatcher.Run(daemonCtx)
+			_ = w.dispatcher.Run(github.WithComponent(daemonCtx, "dispatcher"))
 		}()
 		if w.warmWorkspace != nil {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				_ = w.warmWorkspace.Run(daemonCtx)
+				_ = w.warmWorkspace.Run(github.WithComponent(daemonCtx, "warm-workspace"))
 			}()
 		}
 		if w.retro != nil {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				_ = w.retro.Run(daemonCtx)
+				_ = w.retro.Run(github.WithComponent(daemonCtx, "retro"))
 			}()
 		}
 	}
@@ -168,6 +168,9 @@ func (w *Watcher) init(ctx context.Context) error {
 		return fmt.Errorf("creating github client: %w", err)
 	}
 	w.ghClient = ghClient
+	if token, err := github.GetGithubToken(ctx); err == nil {
+		github.NameToken(token, "watcher")
+	}
 
 	kubeClient, err := clients.NewKubernetesClient()
 	if err != nil {
@@ -245,7 +248,7 @@ func (w *Watcher) init(ctx context.Context) error {
 
 	// Recovery: Reconcile any leftover tasks in processingDir on startup, adopting
 	// tasks that are still running inside their sandbox.
-	w.dispatcher.Recover(ctx)
+	w.dispatcher.Recover(github.WithComponent(ctx, "dispatcher"))
 
 	return nil
 }
