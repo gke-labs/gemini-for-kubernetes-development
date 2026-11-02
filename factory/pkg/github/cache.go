@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -65,12 +66,40 @@ func cachedHTTPClient(ctx context.Context, token string) *http.Client {
 	}
 	return &http.Client{Transport: &oauth2.Transport{
 		Source: oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token}),
-		Base: revalidate{&httpcache.Transport{
+		Base: drainOnClose{revalidate{&httpcache.Transport{
 			// Under the cache, so what GitHub answered is counted (usage.go):
 			// a revalidation's free 304, a charged 200, a write.
 			Transport: countingTransport{next: base, token: TokenID(token)}, Cache: cacheFor(token), MarkCachedResponses: true,
-		}},
+		}}},
 	}}
+}
+
+// maxDrain bounds what drainOnClose reads of a body its reader left: the
+// rest of a JSON value already decoded is a newline, or nothing.
+const maxDrain = 64 << 20
+
+// drainOnClose reads a response's body to its end when it is closed. The
+// cache stores a response only once its body has been read to EOF, and
+// go-github's Do decodes the JSON value and closes the body without
+// reading on: over HTTP/2, which is how GitHub is reached, the EOF comes
+// on a read after the last byte, so nothing go-github read was ever
+// stored, and every repeat - a skill file, a commit's statuses - was a
+// charged 200 where a free 304 was due.
+type drainOnClose struct{ next http.RoundTripper }
+
+func (t drainOnClose) RoundTrip(req *http.Request) (*http.Response, error) {
+	resp, err := t.next.RoundTrip(req)
+	if err == nil && resp.Body != nil && (req.Method == http.MethodGet || req.Method == http.MethodHead) {
+		resp.Body = drainingBody{resp.Body}
+	}
+	return resp, err
+}
+
+type drainingBody struct{ io.ReadCloser }
+
+func (b drainingBody) Close() error {
+	_, _ = io.Copy(io.Discard, io.LimitReader(b.ReadCloser, maxDrain))
+	return b.ReadCloser.Close()
 }
 
 // revalidate asks the cache to check every GET with GitHub: GitHub's
