@@ -900,3 +900,75 @@ export WITH_KEY=plan WITH_TO=plan.md WITH_AUTHORS="pool, owner, member, collabor
 		}
 	}
 }
+
+// An engine's co-author trailer ("Co-authored-by: AI Agent
+// <agent@example.com>", gemini's) is taken off the commits about to be
+// pushed - those the base and lease do not have - and nothing else: a
+// person's co-author stays, every commit keeps its tree and author, and
+// upstream's commits (an earlier base, a rebase's) are never rewritten.
+func TestStripAgentCoauthors(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash required")
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git required")
+	}
+	lib, err := scriptsFS.ReadFile("lib.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	libPath := filepath.Join(dir, "lib.sh")
+	if err := os.WriteFile(libPath, lib, 0644); err != nil {
+		t.Fatal(err)
+	}
+	harness := `set -euo pipefail
+source "$LIB"
+cd "$REPO"
+git init -q -b main .
+git config user.name bot; git config user.email bot@example.org
+c() { echo "$1" > "$1"; git add "$1"; GIT_AUTHOR_NAME="$2" GIT_AUTHOR_EMAIL="$2@corp.test" git commit -q -m "$3"; }
+c a ada "a"
+c u ada "$(printf 'upstream\n\nCo-authored-by: AI Agent <agent@example.com>')"
+base=$(git rev-parse HEAD)
+git checkout -q -b fix
+c b ada "$(printf 'step b\n\nCo-authored-by: AI Agent <agent@example.com>')"
+c d ada "$(printf 'step d\n\nCo-authored-by: Jane Doe <jane@corp.test>\nCo-authored-by: Gemini <noreply@google.com>')"
+c e ada "step e"
+treeBefore=$(git rev-parse HEAD^{tree})
+stripAgentCoauthors "$base" ""
+echo "TREE_SAME=$([ "$(git rev-parse HEAD^{tree})" = "$treeBefore" ] && echo yes || echo no)"
+echo "BASE_KEPT=$([ "$(git rev-parse HEAD~3)" = "$base" ] && echo yes || echo no)"
+echo "BRANCH=$(git symbolic-ref --short HEAD)"
+echo "AUTHORS=$(git log --format=%an "$base"..HEAD | sort -u | tr '\n' ' ')"
+echo "---LOG"
+git log --format='%s|%b' "$base"..HEAD
+echo "---AGAIN"
+before=$(git rev-parse HEAD)
+stripAgentCoauthors "$base" ""
+echo "UNCHANGED=$([ "$(git rev-parse HEAD)" = "$before" ] && echo yes || echo no)"
+`
+	cmd := exec.Command(bash, "-c", harness)
+	cmd.Env = append(os.Environ(), "LIB="+libPath, "REPO="+t.TempDir(), "REPO_NAME=repo",
+		"GIT_CONFIG_GLOBAL="+filepath.Join(dir, "gitconfig"), "GIT_CONFIG_NOSYSTEM=1")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("harness failed: %v\n%s", err, out)
+	}
+	got := string(out)
+	for _, want := range []string{
+		"removed agent co-author trailers from 3 commit(s) before pushing",
+		"TREE_SAME=yes", "BASE_KEPT=yes", "BRANCH=fix", "AUTHORS=ada ", "UNCHANGED=yes",
+		"step b|\n", "step d|Co-authored-by: Jane Doe <jane@corp.test>\n",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("output lacks %q:\n%s", want, got)
+		}
+	}
+	for _, unwanted := range []string{"step b|Co-authored-by", "agent@example.com", "Gemini <noreply"} {
+		if strings.Contains(got[strings.Index(got, "---LOG"):], unwanted) {
+			t.Errorf("the pushed commits still carry %q:\n%s", unwanted, got)
+		}
+	}
+}

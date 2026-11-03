@@ -547,6 +547,49 @@ function checkNothingHalfDone {
     return "${failed}"
 }
 
+# An engine signs its commits as a co-author that is no one: gemini
+# writes "Co-authored-by: AI Agent <agent@example.com>", which GitHub shows
+# as a second author linked to no account. The commits are the member's
+# already (their identity is the author); whether an agent wrote the change
+# is the PR description's to say. These trailers: an example.* address, or
+# a name that is an agent's.
+AGENT_COAUTHOR_RE='^co-authored-by:.*(<[^>]*@example\.(com|net|org)>|(^|[^a-z])(ai|agent|gemini|claude|copilot|antigravity|codex)([^a-z]|$))'
+
+# stripAgentCoauthors EXCLUDE... rewrites the commits about to be pushed -
+# those HEAD has and none of EXCLUDE (the base the branch started from, the
+# head it is leased at) has: never upstream's, nor anything pushed - without
+# an agent's co-author trailer (AGENT_COAUTHOR_RE). Each keeps its tree,
+# parents (rewritten ones mapped), author and message otherwise. A branch
+# whose commits carry none is left as it is.
+function stripAgentCoauthors {
+    local exclude=() e commits c p msg new
+    for e in "$@"; do
+        [ -n "${e}" ] && git rev-parse -q --verify "${e}^{commit}" >/dev/null && exclude+=("^${e}")
+    done
+    commits="$(git rev-list --reverse --topo-order HEAD ${exclude[@]+"${exclude[@]}"})"
+    [ -n "${commits}" ] || return 0
+    if ! git log --format=%B --no-walk ${commits} | grep -qiE "${AGENT_COAUTHOR_RE}"; then
+        return 0
+    fi
+    # old → new, a line each (bash 3 has no associative arrays).
+    local rewritten="" mapped
+    for c in ${commits}; do
+        local parents=()
+        for p in $(git rev-list --parents -n 1 "${c}" | cut -d' ' -f2-); do
+            mapped="$(awk -v k="${p}" '$1 == k { print $2 }' <<<"${rewritten}")"
+            parents+=(-p "${mapped:-${p}}")
+        done
+        msg="$(git log -1 --format=%B "${c}" | grep -viE "${AGENT_COAUTHOR_RE}" | git stripspace)"
+        new="$(GIT_AUTHOR_NAME="$(git log -1 --format=%an "${c}")" \
+            GIT_AUTHOR_EMAIL="$(git log -1 --format=%ae "${c}")" \
+            GIT_AUTHOR_DATE="$(git log -1 --format=%aI "${c}")" \
+            git commit-tree "${c}^{tree}" "${parents[@]}" <<<"${msg}")" || return 1
+        rewritten+="${c} ${new}"$'\n'
+    done
+    echo "removed agent co-author trailers from $(wc -w <<<"${commits}" | tr -d ' ') commit(s) before pushing"
+    git reset -q --soft "${new}"
+}
+
 function pushToFork {
     echo "Running pushToFork..."
     local dir="${TASK_DIR:?TASK_DIR is not set}"
@@ -566,6 +609,10 @@ function pushToFork {
         return 1
     fi
     resetRepoGitConfig
+    if ! stripAgentCoauthors "${base}" "${lease}"; then
+        echo "could not remove the agent co-author trailers; not pushing" >&2
+        return 1
+    fi
     head="$(git rev-parse --verify 'HEAD^{commit}')"
     if [ -z "${lease}" ] && [ "${head}" = "${base}" ]; then
         echo "the fix made no change: there is no commit on top of ${base}; nothing to push"

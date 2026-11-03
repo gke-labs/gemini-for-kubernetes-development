@@ -2207,3 +2207,26 @@ func TestBuiltinsDeclareAs(t *testing.T) {
 		t.Errorf("author on PRs: %v", err)
 	}
 }
+
+// Every recipe whose agent commits tells it to sign no co-author into its
+// commit messages (gemini writes "Co-authored-by: AI Agent
+// <agent@example.com>"); the push step takes off what slips through.
+func TestCommittingRecipesNameNoAgentInCommits(t *testing.T) {
+	n := 0
+	for _, name := range BuiltinNames() {
+		_, r, err := Builtin(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(r.Context, "You commit, and that is all you write") {
+			continue
+		}
+		n++
+		if !strings.Contains(r.Context, "no `Co-authored-by` (or other) trailer") {
+			t.Errorf("recipe %s's agent commits but is not told to name no agent in its commits", name)
+		}
+	}
+	if n < 9 {
+		t.Errorf("only %d committing recipes found", n)
+	}
+}
