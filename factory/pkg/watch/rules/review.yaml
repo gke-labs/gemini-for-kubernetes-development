@@ -1,7 +1,5 @@
 # Mirrors prs/handlers.go handlePRReview, gated by prs/labels.go
-# shouldAutoReviewPR and isPRApprovedOrLGTM: a green PR, not a draft (a
-# grouped issue graph's PR is one until its group's last step marks it
-# ready: reviewed once, whole, not after every step), with no pending
+# shouldAutoReviewPR and isPRApprovedOrLGTM: a green PR with no pending
 # trusted feedback, not approved, whose head the automated reviewer has
 # not reviewed, and that wants a review - */review on itself, or, while
 # it is not ready-for-human, on an issue it closes - is reviewed and the
@@ -15,7 +13,6 @@ on: pr
 order: 40
 when:
   author: pool
-  draft: false
   checks: green
   feedback: none
   approved: false
