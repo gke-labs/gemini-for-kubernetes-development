@@ -29,6 +29,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/config"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/constants"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/graph"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/k8s"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/recipe"
 	factorysandbox "github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/sandbox"
@@ -517,6 +518,17 @@ func runRecipeIn(ctx context.Context, opts recipeRunOpts, recipeArg, itemURL, ru
 			return err
 		}
 	}
+	// A grouped graph's step (its child's marker says so): the first opens
+	// the group's PR as a draft; one after it continues that PR.
+	var group graph.ChildInfo
+	if issue != nil && rec.TaskOutput != nil && rec.TaskOutput.Kind == "Change" {
+		if m, ok := graph.ParseChildMarker(issue.GetBody()); ok && m.Group != "" {
+			group = m
+			if err := groupInputs(ctx, ghClient, it, group, login, inputs); err != nil {
+				return err
+			}
+		}
+	}
 	if err := rec.CheckRender(inputs); err != nil {
 		return fmt.Errorf("recipe %s on %s: %w", rec.Name, htmlURL, err)
 	}
@@ -560,8 +572,15 @@ func runRecipeIn(ctx context.Context, opts recipeRunOpts, recipeArg, itemURL, ru
 			sandboxName, err = factorysandbox.EnsurePRSandbox(ctx, kubeClient, rootFlags.Namespace, it.Repo, it.Number, cloneURL, htmlURL, standard["pr_title"], rootFlags.Image, rootFlags.DiskSize, rootFlags.StorageClass, rootFlags.EphemeralStorage, rootFlags.ResolvedSecrets, rootFlags.ResolvedEnvs, user)
 		}
 	default:
-		fmt.Printf("Ensuring the sandbox for #%d...\n", it.Number)
-		sandboxName, err = factorysandbox.EnsureFixSandbox(ctx, kubeClient, rootFlags.Namespace, it.Repo, strconv.Itoa(it.Number), cloneURL, htmlURL, standard["issue_title"], rootFlags.Image, rootFlags.DiskSize, rootFlags.StorageClass, rootFlags.EphemeralStorage, rootFlags.ResolvedSecrets, rootFlags.ResolvedEnvs, user)
+		// A step continuing its group's PR runs in the group's first
+		// step's sandbox: the PR's branch is checked out there, its builds
+		// warm.
+		key := strconv.Itoa(it.Number)
+		if group.Group == graph.GroupNext && group.In > 0 {
+			key = strconv.Itoa(group.In)
+		}
+		fmt.Printf("Ensuring the sandbox for #%s...\n", key)
+		sandboxName, err = factorysandbox.EnsureFixSandbox(ctx, kubeClient, rootFlags.Namespace, it.Repo, key, cloneURL, htmlURL, standard["issue_title"], rootFlags.Image, rootFlags.DiskSize, rootFlags.StorageClass, rootFlags.EphemeralStorage, rootFlags.ResolvedSecrets, rootFlags.ResolvedEnvs, user)
 	}
 	if err != nil {
 		return fmt.Errorf("ensuring the sandbox: %w", err)
@@ -682,6 +701,44 @@ func continuedSession(recorded string, entries []spool.Entry) string {
 		return ""
 	}
 	return session
+}
+
+// groupInputs sets the inputs of a grouped graph's step (its marker,
+// group): the group's first step opens its PR as a draft, for the steps
+// after it to continue; a step after it continues that PR - pushing to its
+// branch as its author, the only one who can, from its head now (the
+// pushed_* inputs, as a PR's Change has) - and the group's last marks it
+// ready. Set past --input, as the draft is the group's to say.
+func groupInputs(ctx context.Context, gh *githubv39.Client, it githubItem, group graph.ChildInfo, login string, inputs map[string]string) error {
+	switch group.Group {
+	case graph.GroupFirst:
+		inputs["draft"] = "true"
+	case graph.GroupNext:
+		if group.As != "" && !strings.EqualFold(group.As, login) {
+			return fmt.Errorf("issue #%d continues PR #%d, which only %s can push to; run as --user %s", it.Number, group.PR, group.As, group.As)
+		}
+		pr, _, err := gh.PullRequests.Get(ctx, it.Owner, it.Repo, group.PR)
+		if err != nil {
+			return fmt.Errorf("fetching PR #%d, the group's issue #%d continues: %w", group.PR, it.Number, err)
+		}
+		if pr.GetState() != "open" {
+			return fmt.Errorf("PR #%d, the group's issue #%d continues, is %s", group.PR, it.Number, pr.GetState())
+		}
+		if err := prPushInputs(ctx, gh, githubItem{Owner: it.Owner, Repo: it.Repo, Number: group.PR, IsPR: true}, pr, inputs); err != nil {
+			return err
+		}
+		// The step's result is the issue's, not the PR's: its Change says
+		// what this step did (open-pr adds it to the PR), and a step that
+		// changed nothing says why on the issue.
+		delete(inputs, "pr_url")
+		delete(inputs, "pushed_title")
+		delete(inputs, "pushed_body")
+		inputs["group_pr"] = strconv.Itoa(group.PR)
+		inputs["draft"] = strconv.FormatBool(!group.Last)
+	default:
+		return fmt.Errorf("issue #%d's graph marker says group=%s, neither %s nor %s", it.Number, group.Group, graph.GroupFirst, graph.GroupNext)
+	}
+	return nil
 }
 
 // prPushInputs sets the pushed_* inputs a Change recipe on a PR pushes
@@ -1619,6 +1676,18 @@ func fillChange(doc *taskoutput.Document, task spool.Task, taskDir string, input
 		}
 	}
 	if err := doc.AddLabels(labels); err != nil {
+		return err
+	}
+	// The PR a grouped graph's step continues is factory's to say, never
+	// the agent's: whatever change.yaml says is replaced.
+	continues := 0
+	if v := inputs["group_pr"]; v != "" {
+		var err error
+		if continues, err = strconv.Atoi(v); err != nil {
+			return fmt.Errorf("the group_pr input %q is not a PR number", v)
+		}
+	}
+	if err := doc.SetContinues(continues); err != nil {
 		return err
 	}
 	if v, ok := inputs["draft"]; ok && v != "" {

@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -41,6 +42,10 @@ type Change struct {
 	// an agent.
 	Adopts       string `yaml:"adopts,omitempty"`
 	CloseAdopted bool   `yaml:"closeAdopted,omitempty"`
+	// Continues is the PR a grouped issue graph's step continues (its
+	// group's, design/issue-graph.md §4.9): open-pr adds the step to that
+	// PR rather than opening one. Factory's, never the agent's.
+	Continues int `yaml:"continues,omitempty"`
 	// Replies answer review and issue comments (address-comments).
 	Replies []Reply `yaml:"replies,omitempty"`
 	// Report is a PR comment (fix-ci).
@@ -193,6 +198,16 @@ func (d *Document) SetDraft(draft bool) error {
 	return d.setSpec(c)
 }
 
+// SetContinues says which PR a Change's step continues (Change.Continues).
+func (d *Document) SetContinues(pr int) error {
+	c, err := d.changeSpec()
+	if err != nil {
+		return err
+	}
+	c.Continues = pr
+	return d.setSpec(c)
+}
+
 // AddLabels adds labels to a Change's, each once.
 func (d *Document) AddLabels(labels []string) error {
 	if len(labels) == 0 {
@@ -309,11 +324,20 @@ func applyOpenPR(ctx context.Context, gh *githubv39.Client, doc *Document, dryRu
 		return fmt.Errorf("looking for an open PR from %s: %w", head, err)
 	}
 	if len(open) > 0 {
+		// A grouped graph's later step (its target an issue, the PR
+		// another's): its section goes on the PR, which then fixes its
+		// issue too; the group's last marks the PR ready.
+		if issue, ok := issueNumber(doc.Target.URL); ok && c.Continues == open[0].GetNumber() && !strings.Contains(open[0].GetBody(), groupStepMarker(issue)) {
+			return continueGroupPR(ctx, gh, owner, repo, open[0], c, issue, dryRun, out)
+		}
 		fmt.Fprintf(out, "%s already has an open PR: %s; not opening another\n", head, open[0].GetHTMLURL())
 		doc.Target.URL = open[0].GetHTMLURL()
 		// Applied again after its labels failed: they go on now.
 		if !dryRun {
 			addPRLabels(ctx, gh, owner, repo, open[0], c.Labels, out)
+			if err := markReady(ctx, gh, open[0], c, out); err != nil {
+				return err
+			}
 			return markAdopted(ctx, gh, c, open[0].GetHTMLURL(), out)
 		}
 		return nil
@@ -350,6 +374,74 @@ func applyOpenPR(ctx context.Context, gh *githubv39.Client, doc *Document, dryRu
 	doc.Target.URL = pr.GetHTMLURL()
 	addPRLabels(ctx, gh, owner, repo, pr, c.Labels, out)
 	return markAdopted(ctx, gh, c, pr.GetHTMLURL(), out)
+}
+
+// groupStepMarker marks a grouped graph's step's section in its group's
+// PR body: the issue it fixes, so a section is added once.
+func groupStepMarker(issue int) string {
+	return fmt.Sprintf("<!-- factory:group-step issue=%d -->", issue)
+}
+
+var issueURLRE = regexp.MustCompile(`/issues/(\d+)/?$`)
+
+// issueNumber is the number of an issue URL; false for anything else (a
+// PR, a repository).
+func issueNumber(url string) (int, bool) {
+	m := issueURLRE.FindStringSubmatch(url)
+	if m == nil {
+		return 0, false
+	}
+	n, err := strconv.Atoi(m[1])
+	return n, err == nil
+}
+
+// continueGroupPR is open-pr for a grouped graph's step whose commits went
+// to its group's open PR: the step's title and body (which fixes its issue)
+// are added to the PR's body as a section of their own, and the group's
+// last step (a Change that is not a draft) marks the PR ready for review.
+func continueGroupPR(ctx context.Context, gh *githubv39.Client, owner, repo string, pr *githubv39.PullRequest, c *Change, issue int, dryRun bool, out io.Writer) error {
+	fmt.Fprintf(out, "%s #%d's step to %s: %q\n", doing(dryRun, "Adding", "add"), issue, pr.GetHTMLURL(), c.Title)
+	if dryRun {
+		return nil
+	}
+	body := strings.TrimRight(pr.GetBody(), "\n") + "\n\n---\n\n### " + strings.TrimSpace(c.Title) + "\n\n" + strings.TrimSpace(c.Body) + "\n\n" + groupStepMarker(issue)
+	edited, _, err := gh.PullRequests.Edit(ctx, owner, repo, pr.GetNumber(), &githubv39.PullRequest{Body: githubv39.String(body)})
+	if err != nil {
+		return fmt.Errorf("adding #%d's step to PR #%d: %w", issue, pr.GetNumber(), err)
+	}
+	fmt.Fprintf(out, "Added #%d's step to %s\n", issue, pr.GetHTMLURL())
+	addPRLabels(ctx, gh, owner, repo, edited, c.Labels, out)
+	return markReady(ctx, gh, edited, c, out)
+}
+
+// markReady marks a draft PR ready for review when its Change is not a
+// draft: a grouped graph's last step, its group's PR done. A draft Change,
+// or a PR already ready, is left as it is.
+func markReady(ctx context.Context, gh *githubv39.Client, pr *githubv39.PullRequest, c *Change, out io.Writer) error {
+	if !pr.GetDraft() || c.Draft == nil || *c.Draft {
+		return nil
+	}
+	// REST cannot; GraphQL's markPullRequestReadyForReview can.
+	req, err := gh.NewRequest("POST", "graphql", map[string]any{
+		"query":     `mutation($id:ID!){markPullRequestReadyForReview(input:{pullRequestId:$id}){pullRequest{isDraft}}}`,
+		"variables": map[string]string{"id": pr.GetNodeID()},
+	})
+	if err != nil {
+		return err
+	}
+	var resp struct {
+		Errors []struct {
+			Message string `json:"message"`
+		} `json:"errors"`
+	}
+	if _, err := gh.Do(ctx, req, &resp); err != nil {
+		return fmt.Errorf("marking PR #%d ready for review: %w", pr.GetNumber(), err)
+	}
+	if len(resp.Errors) > 0 {
+		return fmt.Errorf("marking PR #%d ready for review: %s", pr.GetNumber(), resp.Errors[0].Message)
+	}
+	fmt.Fprintf(out, "Marked %s ready for review\n", pr.GetHTMLURL())
+	return nil
 }
 
 // commentUnchanged is open-pr for a fix that changed nothing: it posts the

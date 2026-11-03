@@ -17,6 +17,13 @@
 # apply --action run:fix`, or the board's "Fix with this plan") starts
 # this recipe with its markdown, as edited, as the plan.
 #
+# A grouped issue graph's step (design/issue-graph.md §4.9) whose group's
+# PR is open already continues it: factory hands it the PR's push facts
+# (INPUT_PUSHED_*, INPUT_GROUP_PR), it commits on the PR's branch, the
+# push step pushes there (leased against the head the PR had), and open-pr
+# adds the step to the PR, marking it ready when the step is the group's
+# last. A step that commits nothing pushes nothing.
+#
 # Changing the fix once its PR is open — as asked (care-iterate), or for
 # review comments, checks, rebasing — is the care recipes'
 # (design/care-recipe.md).
@@ -38,6 +45,11 @@ inputs:
   instructions:
     type: instructions
     description: Additional instructions the agent must follow
+  group_pr:
+    description: >-
+      Set by factory, never by a caller: the PR a grouped issue graph's step
+      continues (design/issue-graph.md §4.9)
+    default: ""
 
 context: |
   You are an automated coding agent. You fix GitHub issues; your commits
@@ -61,12 +73,23 @@ start:
     - run: sleep 5 # lib.sh's HACK: avoid git lock issues
     - uses: configure-engine
     - uses: checkout-default-branch
-    # The branch the push step pushes, and the upstream commit it starts
-    # from.
+    # The branch the push step pushes, and the commit it starts from: a new
+    # branch off the default branch; or, for a grouped graph's step
+    # continuing its group's PR, the PR's branch at its head now, leased
+    # there so a commit someone else pushed meanwhile is never overwritten.
     - run: |
-        git checkout -B "issue-${INPUT_ISSUE_NUMBER}-$(date +%s)"
-        git symbolic-ref --short HEAD > "$TASK_DIR/branch"
-        git rev-parse HEAD > "$TASK_DIR/base"
+        if [ -n "${INPUT_GROUP_PR:-}" ]; then
+          test -n "${INPUT_PUSHED_BRANCH:-}" && test -n "${INPUT_PUSHED_HEAD:-}" || { echo "PR #${INPUT_GROUP_PR}'s branch is not known; there is no branch to continue" >&2; exit 1; }
+          git fetch origin "refs/heads/${INPUT_PUSHED_BRANCH}:refs/remotes/origin/${INPUT_PUSHED_BRANCH}"
+          git checkout -B "${INPUT_PUSHED_BRANCH}" "${INPUT_PUSHED_HEAD}"
+          printf '%s\n' "${INPUT_PUSHED_BRANCH}" > "$TASK_DIR/branch"
+          printf '%s\n' "${INPUT_PUSHED_HEAD}" > "$TASK_DIR/base"
+          printf '%s' "${INPUT_PUSHED_HEAD}" > "$TASK_DIR/lease"
+        else
+          git checkout -B "issue-${INPUT_ISSUE_NUMBER}-$(date +%s)"
+          git symbolic-ref --short HEAD > "$TASK_DIR/branch"
+          git rev-parse HEAD > "$TASK_DIR/base"
+        fi
     # The issue's comments from trusted authors only (maintainers, you):
     # $TASK_DIR/comments.md for the ask. Anyone else's never reaches the
     # agent.
@@ -74,6 +97,15 @@ start:
 
     - ask: |
         Fix this GitHub issue, and commit the fix.
+        {{- if .Inputs.group_pr }}
+
+        This issue is one step of a series that shares one pull request,
+        #{{ .Inputs.group_pr }}: the earlier steps' commits are already on
+        the branch checked out. Build on them, and commit only this step's
+        change on top. Do not rewrite or squash the earlier commits. The
+        title and body you write describe this step alone: factory adds
+        them to #{{ .Inputs.group_pr }} as a section.
+        {{- end }}
 
         <issue_url>{{ .Inputs.issue_url }}</issue_url>
         <issue_number>{{ .Inputs.issue_number }}</issue_number>
@@ -195,6 +227,12 @@ start:
         written.
       expects: change.yaml
 
+    # A step continuing its group's PR that committed nothing pushes
+    # nothing (the push step leases only a branch it changes).
+    - run: |
+        if [ -f "$TASK_DIR/lease" ] && [ "$(git rev-parse HEAD)" = "$(cat "$TASK_DIR/lease")" ]; then
+          rm -f "$TASK_DIR/lease"
+        fi
     - uses: push
 
 outputs:
