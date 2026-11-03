@@ -165,6 +165,7 @@ func TestDecidePRs(t *testing.T) {
 			it.Runs = []PastRun{{Rule: "comments", StartedAt: ago(time.Hour), EndedAt: ago(50 * time.Minute), Head: "h1", Failed: true}}
 		}), "ready run"},
 		{"*/review wanted: review, not ready", pr(func(it *Item) { it.Labels = append(it.Labels, "overseer/review") }), "review run"},
+		{"*/review wanted, a draft (a grouped graph's PR before its last step): not yet", pr(func(it *Item) { it.Labels, it.Draft = append(it.Labels, "overseer/review"), true }), ""},
 		{"*/review on a closing issue: inherited, then review", pr(func(it *Item) {
 			it.Closes = []Closing{{Number: 13173, Labels: []string{"overseer", "overseer/review"}}}
 		}), "inherit-labels run, review run"},
