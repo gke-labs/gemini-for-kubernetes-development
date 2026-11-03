@@ -29,6 +29,12 @@ type Start struct {
 	// green, until a step with group-gate. False, the default, is one PR
 	// per step, each merged before the next starts.
 	Grouped bool `yaml:"grouped,omitempty"`
+	// Gates, when given, are this graph's group gates (grouped only): the
+	// steps whose group's PR ends with them and merges before any step
+	// after them starts, in place of the steps' own group-gate. An empty
+	// list gates none: the steps in a line are one PR. Not given (nil),
+	// the steps' group-gate decides.
+	Gates []string `yaml:"gates,omitempty"`
 }
 
 // SourceName is what a child's marker records: the template's name, or
@@ -83,8 +89,35 @@ func (s *Start) validate() error {
 		return fmt.Errorf("graph %q: a bare name, resolved to .agents/graphs/<name>.yaml in this repository", s.Graph)
 	case s.Source == SourcePlan && len(s.Params) > 0:
 		return fmt.Errorf("params are a template's; a plan's steps take none")
+	case s.Gates != nil && !s.Grouped:
+		return fmt.Errorf("gates are a grouped graph's (grouped: true); without it every step is its own PR")
 	}
 	return nil
+}
+
+// WithGates is spec with the start block's gates as its steps' group gates,
+// when the block gives them: each named step a gate, every other step
+// not. A gate that names no step is an error; the finally step opens its
+// own PR anyway, so naming it gates nothing more. The spec itself is not
+// changed.
+func (s Start) WithGates(spec *Spec) (*Spec, error) {
+	if s.Gates == nil || spec == nil {
+		return spec, nil
+	}
+	for _, g := range s.Gates {
+		if g == FinallyID {
+			continue
+		}
+		if spec.Step(g) == nil {
+			return nil, fmt.Errorf("gates: %s is not a step of the graph", g)
+		}
+	}
+	out := *spec
+	out.Steps = slices.Clone(spec.Steps)
+	for i := range out.Steps {
+		out.Steps[i].GroupGate = slices.Contains(s.Gates, out.Steps[i].ID)
+	}
+	return &out, nil
 }
 
 // StartBlock renders a start block, as the start command posts it.
@@ -98,6 +131,9 @@ func (s Start) StartBlock() string {
 	}
 	if s.Grouped {
 		b.WriteString("grouped: true\n")
+	}
+	if s.Gates != nil {
+		fmt.Fprintf(&b, "gates: [%s]\n", strings.Join(s.Gates, ", "))
 	}
 	if len(s.Params) > 0 {
 		b.WriteString("params:\n")

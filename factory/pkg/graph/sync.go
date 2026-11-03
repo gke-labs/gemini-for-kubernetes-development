@@ -185,6 +185,9 @@ func Observe(ctx context.Context, gh GitHub, opts Options) (*Pass, *githubv39.Is
 	o.Params = start.Params
 	o.Grouped = start.Grouped
 	o.Spec, p.Version, o.SpecErr = readSteps(ctx, gh, start, comments, opts)
+	if o.SpecErr == nil {
+		o.Spec, o.SpecErr = start.WithGates(o.Spec)
+	}
 
 	if !o.Parent.Open {
 		o.Parent.ClosedBy = closedBy(ctx, gh, opts.Issue)
@@ -672,7 +675,11 @@ func StartGraph(ctx context.Context, gh GitHub, opts Options, start Start) error
 	if depth >= maxDepth {
 		return fmt.Errorf("#%d is at depth %d; graphs nest at most %d deep", opts.Issue, depth, maxDepth)
 	}
-	if _, _, err := readSteps(ctx, gh, &start, comments, opts); err != nil {
+	spec, _, err := readSteps(ctx, gh, &start, comments, opts)
+	if err != nil {
+		return err
+	}
+	if _, err := start.WithGates(spec); err != nil {
 		return err
 	}
 	opts.logf("%sstart #%d's graph from its %s", map[bool]string{true: "would ", false: ""}[opts.DryRun], opts.Issue, start.describe())
