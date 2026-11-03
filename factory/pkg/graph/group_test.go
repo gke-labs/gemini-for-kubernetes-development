@@ -303,3 +303,73 @@ func TestSyncGroupedAsksStepReady(t *testing.T) {
 		t.Errorf("a failed judgement: %v", err)
 	}
 }
+
+// The parent's block can say which steps gate (gates:), in place of the
+// graph's own group-gate: each named step a gate, every other not; an
+// empty list gates none. Not given, the graph's decide. Gates are a
+// grouped graph's, and must name its steps.
+func TestStartGates(t *testing.T) {
+	s, err := ParseStart("```factory-graph\ngraph: gf\ngrouped: true\ngates: [controller]\n```\n")
+	if err != nil || s == nil || strings.Join(s.Gates, ",") != "controller" {
+		t.Fatalf("ParseStart: %+v, %v", s, err)
+	}
+	if b := s.StartBlock(); !strings.Contains(b, "gates: [controller]\n") {
+		t.Errorf("StartBlock:\n%s", b)
+	}
+	if _, err := ParseStart("```factory-graph\ngraph: gf\ngates: [controller]\n```\n"); err == nil || !strings.Contains(err.Error(), "grouped: true") {
+		t.Errorf("gates without grouped: %v", err)
+	}
+	if s, err := ParseStart("```factory-graph\ngraph: gf\ngrouped: true\ngates: []\n```\n"); err != nil || s.Gates == nil || len(s.Gates) != 0 {
+		t.Errorf("an empty list is given, not absent: %+v, %v", s, err)
+	}
+
+	spec := groupedSpec(t)
+	groups := func(sp *Spec) string {
+		var out []string
+		for _, st := range sp.Steps {
+			out = append(out, st.ID+"<"+sp.GroupPrev(st.ID))
+		}
+		return strings.Join(out, " ")
+	}
+	for _, tc := range []struct {
+		name  string
+		gates []string
+		want  string
+	}{
+		{"not given: the graph's (types gates)", nil,
+			"prepopulate< types<prepopulate controller< mockgcp<controller alignment<mockgcp"},
+		{"controller instead: prepopulate, types and controller one PR", []string{"controller"},
+			"prepopulate< types<prepopulate controller<types mockgcp< alignment<mockgcp"},
+		{"none: the whole line one PR", []string{},
+			"prepopulate< types<prepopulate controller<types mockgcp<controller alignment<mockgcp"},
+		{"finally named: gates nothing more", []string{"types", FinallyID},
+			"prepopulate< types<prepopulate controller< mockgcp<controller alignment<mockgcp"},
+	} {
+		got, err := Start{Grouped: true, Gates: tc.gates}.WithGates(spec)
+		if err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		if g := groups(got); g != tc.want {
+			t.Errorf("%s:\n  %s\nwant\n  %s", tc.name, g, tc.want)
+		}
+	}
+	if groups(spec) != "prepopulate< types<prepopulate controller< mockgcp<controller alignment<mockgcp" {
+		t.Errorf("WithGates changed the graph's own spec: %s", groups(spec))
+	}
+	if _, err := (Start{Grouped: true, Gates: []string{"nope"}}).WithGates(spec); err == nil || !strings.Contains(err.Error(), "nope is not a step") {
+		t.Errorf("an unknown gate: %v", err)
+	}
+}
+
+// A parent whose gates name no step of its graph is Invalid, saying why,
+// and nothing is created.
+func TestSyncUnknownGateIsInvalid(t *testing.T) {
+	f := graphtest.New()
+	f.Files[".agents/graphs/gf.yaml"] = groupedGraph
+	f.Issues[100] = &graphtest.Issue{Title: "Onboard X", Body: "```factory-graph\ngraph: gf\ngrouped: true\ngates: [typo]\n```\n", Author: "alice", Assoc: "MEMBER", Open: true}
+	opts := Options{Issue: 100, Trigger: "overseer", BotLogin: "watcher", Pool: []string{"watcher"}}
+	p := sync(t, f, opts)
+	if p.Result.Phase != PhaseInvalid || !strings.Contains(p.Result.Reason, "typo is not a step") || childOf(f, 100, "prepopulate") != 0 {
+		t.Errorf("phase %s (%s), prepopulate #%d", p.Result.Phase, p.Result.Reason, childOf(f, 100, "prepopulate"))
+	}
+}
