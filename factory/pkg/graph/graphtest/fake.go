@@ -28,6 +28,10 @@ type Issue struct {
 	IsPR, Merged   bool
 	Refs           []int // issues or PRs that cross-reference it
 	ClosedByCommit bool
+	// Head and Checks are a PR's head commit and its check runs'
+	// conclusions ("" for one still running).
+	Head   string
+	Checks []string
 }
 
 // Fake is an in-memory repository: GitHub as a pass sees it.
@@ -139,6 +143,35 @@ func (f *Fake) ListCrossReferences(_ context.Context, n int) ([]github.IssueRef,
 		out = append(out, f.ref(r))
 	}
 	return out, nil
+}
+
+func (f *Fake) GetPullRequest(_ context.Context, n int) (*githubv39.PullRequest, error) {
+	is, err := f.issue(n)
+	if err != nil || !is.IsPR {
+		return nil, fmt.Errorf("no PR #%d", n)
+	}
+	return &githubv39.PullRequest{Number: githubv39.Int(n), Head: &githubv39.PullRequestBranch{SHA: githubv39.String(is.Head)}}, nil
+}
+
+func (f *Fake) ListCheckRuns(_ context.Context, ref string) ([]*githubv39.CheckRun, error) {
+	for _, is := range f.Issues {
+		if is.IsPR && is.Head == ref {
+			var out []*githubv39.CheckRun
+			for _, c := range is.Checks {
+				run := &githubv39.CheckRun{Status: githubv39.String("in_progress")}
+				if c != "" {
+					run.Status, run.Conclusion = githubv39.String("completed"), githubv39.String(c)
+				}
+				out = append(out, run)
+			}
+			return out, nil
+		}
+	}
+	return nil, nil
+}
+
+func (f *Fake) ListStatuses(context.Context, string) ([]*githubv39.RepoStatus, error) {
+	return nil, nil
 }
 
 func (f *Fake) ListSubIssues(_ context.Context, n int) ([]int, error) {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -31,6 +32,10 @@ type GitHub interface {
 	AddComment(ctx context.Context, number int, body string) error
 	EditComment(ctx context.Context, commentID int64, body string) error
 	SetIssueState(ctx context.Context, number int, state, reason string) error
+	// A grouped graph's PR: its head, and its head's checks.
+	GetPullRequest(ctx context.Context, number int) (*githubv39.PullRequest, error)
+	ListCheckRuns(ctx context.Context, ref string) ([]*githubv39.CheckRun, error)
+	ListStatuses(ctx context.Context, ref string) ([]*githubv39.RepoStatus, error)
 }
 
 var _ GitHub = (*github.Client)(nil)
@@ -168,6 +173,7 @@ func Observe(ctx context.Context, gh GitHub, opts Options) (*Pass, *githubv39.Is
 	}
 	o.Source = start.SourceName()
 	o.Params = start.Params
+	o.Grouped = start.Grouped
 	o.Spec, p.Version, o.SpecErr = readSteps(ctx, gh, start, comments, opts)
 
 	if !o.Parent.Open {
@@ -327,10 +333,83 @@ func observeChildren(ctx context.Context, gh GitHub, opts Options, o *Observed) 
 					c.MergedBotPR = r.Number
 				}
 			}
+			if o.Grouped && o.Spec != nil && o.Spec.GroupNext(m.Step) != "" && c.MergedBotPR == 0 {
+				if c.GroupPR, err = groupPR(ctx, gh, opts, n, refs); err != nil {
+					return err
+				}
+			}
 		}
 		o.Children[m.Step] = append(o.Children[m.Step], c)
 	}
 	return nil
+}
+
+// groupPR is the open bot PR that fixes child n (its body says so, as
+// the fix's does: "Fixes #n"), the newest of them, and whether its head's
+// checks are green; nil for none. Only a step another continues reads it.
+func groupPR(ctx context.Context, gh GitHub, opts Options, n int, refs []github.IssueRef) (*GroupPR, error) {
+	fixes := regexp.MustCompile(fmt.Sprintf(`(?i)\b(fix(es|ed)?|close[sd]?|resolve[sd]?)\s+#%d\b`, n))
+	var found *github.IssueRef
+	for i, r := range refs {
+		if r.IsPR && r.Open && slices.ContainsFunc(opts.Pool, func(b string) bool { return strings.EqualFold(b, r.Author) }) &&
+			fixes.MatchString(r.Body) && (found == nil || r.Number > found.Number) {
+			found = &refs[i]
+		}
+	}
+	if found == nil {
+		return nil, nil
+	}
+	pr, err := gh.GetPullRequest(ctx, found.Number)
+	if err != nil {
+		return nil, err
+	}
+	green, err := checksGreen(ctx, gh, pr.GetHead().GetSHA())
+	if err != nil {
+		return nil, err
+	}
+	return &GroupPR{Number: found.Number, Author: found.Author, Green: green}, nil
+}
+
+// checksGreen is whether a commit's checks all passed: at least one check
+// run or status, none pending, none failed. A commit no check has reported
+// on yet is not green: CI has not started.
+func checksGreen(ctx context.Context, gh GitHub, sha string) (bool, error) {
+	if sha == "" {
+		return false, nil
+	}
+	runs, err := gh.ListCheckRuns(ctx, sha)
+	if err != nil {
+		return false, err
+	}
+	statuses, err := gh.ListStatuses(ctx, sha)
+	if err != nil {
+		return false, err
+	}
+	seen := 0
+	for _, r := range runs {
+		seen++
+		if r.GetStatus() != "completed" {
+			return false, nil
+		}
+		switch r.GetConclusion() {
+		case "success", "neutral", "skipped":
+		default:
+			return false, nil
+		}
+	}
+	// The latest status per context: a commit's statuses list newest first.
+	latest := map[string]bool{}
+	for _, s := range statuses {
+		if latest[s.GetContext()] {
+			continue
+		}
+		latest[s.GetContext()] = true
+		seen++
+		if s.GetState() != "success" {
+			return false, nil
+		}
+	}
+	return seen > 0, nil
 }
 
 // apply carries out the result's actions, in order. A child created is

@@ -92,13 +92,48 @@ type ChildInfo struct {
 	Step   string
 	Depth  int
 	Params string
+	// Group is the child's place in a grouped graph's PR (Spec.GroupPrev):
+	// GroupFirst opens it, as a draft the steps after it continue;
+	// GroupNext continues PR (its number), marking it ready when Last.
+	// "" for a step whose PR is its own.
+	Group string
+	PR    int
+	Last  bool
+	// As is the bot a GroupNext child runs as: the PR's author, the only
+	// one who can push to its branch.
+	As string
+	// In is the issue of the group's first step, whose sandbox a GroupNext
+	// child runs in: the PR's branch checked out there, its builds warm.
+	In int
 }
+
+// A child's place in its group's PR (ChildInfo.Group).
+const (
+	GroupFirst = "first"
+	GroupNext  = "next"
+)
 
 var childMarkerRE = regexp.MustCompile(`<!--\s*factory:graph-child\s+([^>]*?)\s*-->`)
 
 // Marker is the child's hidden marker, for the end of its body.
 func (c ChildInfo) Marker() string {
-	return fmt.Sprintf("<!-- factory:graph-child parent=%d source=%s step=%s depth=%d params=%s -->", c.Parent, c.Source, c.Step, c.Depth, c.Params)
+	group := ""
+	if c.Group != "" {
+		group = " group=" + c.Group
+		if c.PR > 0 {
+			group += fmt.Sprintf(" pr=%d", c.PR)
+		}
+		if c.Last {
+			group += " last=true"
+		}
+		if c.As != "" {
+			group += " as=" + c.As
+		}
+		if c.In > 0 {
+			group += fmt.Sprintf(" in=%d", c.In)
+		}
+	}
+	return fmt.Sprintf("<!-- factory:graph-child parent=%d source=%s step=%s depth=%d params=%s%s -->", c.Parent, c.Source, c.Step, c.Depth, c.Params, group)
 }
 
 // ParseChildMarker reads a child's marker from its body.
@@ -124,6 +159,16 @@ func ParseChildMarker(body string) (ChildInfo, bool) {
 			c.Depth, _ = strconv.Atoi(v)
 		case "params":
 			c.Params = v
+		case "group":
+			c.Group = v
+		case "pr":
+			c.PR, _ = strconv.Atoi(v)
+		case "last":
+			c.Last = v == "true"
+		case "as":
+			c.As = v
+		case "in":
+			c.In, _ = strconv.Atoi(v)
 		}
 	}
 	if c.Parent <= 0 || c.Step == "" {

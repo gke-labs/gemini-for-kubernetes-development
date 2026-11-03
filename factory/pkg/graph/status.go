@@ -75,6 +75,8 @@ func stateIcon(state string) string {
 		return "⏭️ Skipped"
 	case StepActive:
 		return "🔄 Active"
+	case StepInGroup:
+		return "📦 In the group's PR"
 	case StepReady:
 		return "▶️ Ready"
 	}

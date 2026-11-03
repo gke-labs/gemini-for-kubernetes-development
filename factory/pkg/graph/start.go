@@ -24,6 +24,11 @@ type Start struct {
 	Graph  string            `yaml:"graph,omitempty"`
 	Source string            `yaml:"source,omitempty"`
 	Params map[string]string `yaml:"params,omitempty"`
+	// Grouped runs consecutive steps in one PR (Spec.GroupPrev), each
+	// starting once the one before has pushed to it and its checks are
+	// green, until a step with group-gate. False, the default, is one PR
+	// per step, each merged before the next starts.
+	Grouped bool `yaml:"grouped,omitempty"`
 }
 
 // SourceName is what a child's marker records: the template's name, or
@@ -90,6 +95,9 @@ func (s Start) StartBlock() string {
 		fmt.Fprintf(&b, "graph: %s\n", s.Graph)
 	} else {
 		fmt.Fprintf(&b, "source: %s\n", s.Source)
+	}
+	if s.Grouped {
+		b.WriteString("grouped: true\n")
 	}
 	if len(s.Params) > 0 {
 		b.WriteString("params:\n")
