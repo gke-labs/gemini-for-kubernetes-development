@@ -1,6 +1,8 @@
 package graph
 
 import (
+	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -81,7 +83,7 @@ func groupedObserved(s *Spec, children map[string][]Child) Observed {
 }
 
 func inPR(c Child, pr int, green bool) Child {
-	c.GroupPR = &GroupPR{Number: pr, Author: "lovelace-coder-bot", Green: green}
+	c.GroupPR = &GroupPR{Number: pr, Author: "lovelace-coder-bot", Ready: green}
 	return c
 }
 
@@ -258,5 +260,46 @@ func TestSyncGroupedReadsThePRAndItsChecks(t *testing.T) {
 		if st := statusComments(f, 100); len(st) == 0 || !strings.Contains(st[len(st)-1], "In the group's PR") {
 			t.Errorf("%s: status:\n%s", tc.name, strings.Join(st, "\n---\n"))
 		}
+	}
+}
+
+// With the watch's judge (Options.StepReady), the next step waits for it -
+// the reviewer and the care rules - whatever the checks say; when it
+// cannot judge (ErrNoStepReady), the checks decide; any other error fails
+// the pass.
+func TestSyncGroupedAsksStepReady(t *testing.T) {
+	setup := func(checks []string) (*graphtest.Fake, Options, int) {
+		f := graphtest.New()
+		f.Files[".agents/graphs/gf.yaml"] = groupedGraph
+		f.Issues[100] = &graphtest.Issue{Title: "Onboard X", Body: "```factory-graph\ngraph: gf\ngrouped: true\n```\n", Author: "alice", Assoc: "MEMBER", Open: true}
+		opts := Options{Issue: 100, Trigger: "overseer", BotLogin: "watcher", Pool: []string{"lovelace-coder-bot", "watcher"}}
+		sync(t, f, opts)
+		pre := childOf(f, 100, "prepopulate")
+		f.Issues[500] = &graphtest.Issue{Title: "P", Body: "Fixes #201", Author: "lovelace-coder-bot", Open: true, IsPR: true, Head: "abc", Checks: checks}
+		f.Issues[pre].Refs = []int{500}
+		return f, opts, pre
+	}
+	for _, tc := range []struct {
+		name    string
+		checks  []string
+		judge   func(context.Context, int) (bool, error)
+		started bool
+	}{
+		{"green, the review not caught up: wait", []string{"success"}, func(context.Context, int) (bool, error) { return false, nil }, false},
+		{"ready by the rules: go", []string{"success"}, func(_ context.Context, pr int) (bool, error) { return pr == 500, nil }, true},
+		{"no judge here: green checks decide", []string{"success"}, func(context.Context, int) (bool, error) { return false, ErrNoStepReady }, true},
+		{"no judge here, checks running: wait", []string{""}, func(context.Context, int) (bool, error) { return false, ErrNoStepReady }, false},
+	} {
+		f, opts, _ := setup(tc.checks)
+		opts.StepReady = tc.judge
+		sync(t, f, opts)
+		if started := childOf(f, 100, "types") != 0; started != tc.started {
+			t.Errorf("%s: types started %v, want %v", tc.name, started, tc.started)
+		}
+	}
+	f, opts, _ := setup([]string{"success"})
+	opts.StepReady = func(context.Context, int) (bool, error) { return false, errors.New("boom") }
+	if _, err := Sync(context.Background(), f, opts); err == nil || !strings.Contains(err.Error(), "boom") {
+		t.Errorf("a failed judgement: %v", err)
 	}
 }

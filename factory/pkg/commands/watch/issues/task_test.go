@@ -8,6 +8,7 @@ import (
 	githubv39 "github.com/google/go-github/v39/github"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/api"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
 )
 
 func stringPtr(s string) *string { return &s }
@@ -85,4 +86,21 @@ func TestTriggerInfo(t *testing.T) {
 			t.Errorf("unexpected notes: %s", notes)
 		}
 	})
+}
+
+// A grouped graph's step continuing its group's PR runs as the PR's
+// author, whom its marker names, whoever was selected; any other issue's
+// task keeps the selected bot.
+func TestNewIssueTaskRunsAGroupsStepAsThePRsAuthor(t *testing.T) {
+	gh := github.ForRepo(githubv39.NewClient(nil), "o", "r")
+	for _, tc := range []struct{ body, want string }{
+		{"Mock it.\n\n<!-- factory:graph-child parent=9 source=gf step=mockgcp depth=1 params=x group=next pr=12 as=lovelace-coder-bot in=7 -->", "lovelace-coder-bot"},
+		{"Start it.\n\n<!-- factory:graph-child parent=9 source=gf step=controller depth=1 params=x group=first -->", "hopper-coder-bot"},
+		{"An ordinary issue.", "hopper-coder-bot"},
+	} {
+		task := newIssueTask(gh, taskOptions{Type: api.TypeIssueRule, Issue: &githubv39.Issue{Number: githubv39.Int(8), Body: githubv39.String(tc.body)}, Assignee: "hopper-coder-bot"})
+		if task.Assignee != tc.want {
+			t.Errorf("%q: runs as %s, want %s", tc.body, task.Assignee, tc.want)
+		}
+	}
 }

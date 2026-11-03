@@ -1097,6 +1097,14 @@ func TestBuiltinFixRenders(t *testing.T) {
 	if in, err := r.ResolveInputs(std, nil); err != nil || in["draft"] != "true" {
 		t.Errorf("draft defaults to %q (%v), want true", in["draft"], err)
 	}
+	// A grouped graph's step continuing its group's PR builds on the
+	// commits there; any other fix is not told about a group.
+	if strings.Contains(plain, "shares one pull request") {
+		t.Errorf("a fix outside a group is told about one:\n%s", plain)
+	}
+	if grouped := askAll(map[string]string{"group_pr": "12"}); !strings.Contains(grouped, "shares one pull request,\n#12") || !strings.Contains(grouped, "Do not rewrite or squash the earlier commits") {
+		t.Errorf("a grouped step continuing #12:\n%s", grouped)
+	}
 	withPlan := askAll(map[string]string{"plan": "## Steps\n1. do it\n", "instructions": "keep it small"})
 	if !strings.Contains(withPlan, "<approved_plan>\n## Steps\n1. do it") || !strings.Contains(withPlan, "keep it small") {
 		t.Errorf("a fix with a plan lacks it or the instructions:\n%s", withPlan)

@@ -19,6 +19,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/common"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/act"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/api"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/conventions"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/dispatcher"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/graphs"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/config"
@@ -548,5 +549,53 @@ func TestNewGraphControllerBeforeConfigLoaded(t *testing.T) {
 	t.Setenv("FACTORY_CONFIG", t.TempDir()) // no config file
 	if c := w.newGraphController(); c == nil || c.Interval() != graphs.DefaultInterval {
 		t.Errorf("with no config: interval %v, want %v", c.Interval(), graphs.DefaultInterval)
+	}
+}
+
+// A grouped graph's draft PR is ready for its next step as the ready rule
+// would hand it to people, were it not a draft: green, merging, no trusted
+// feedback waiting, nothing of it running, and - when a review is wanted
+// (its step's issue carries */review) - reviewed at its head without
+// changes asked. The reviewer and the care rules catch up first.
+func TestReadyForNextStep(t *testing.T) {
+	set, err := rules.Builtin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	control, err := rules.NewControl(nil, set)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	env := rules.Env{Trigger: "overseer", Prefixes: conventions.Prefixes("overseer"), Pool: []string{"ada-coder-bot"}, Now: now}
+	yes := true
+	draft := func(mod func(*rules.Item)) rules.Item {
+		it := rules.Item{Kind: rules.OnPR, Number: 7, Author: "ada-coder-bot", Labels: []string{"overseer"}, Head: "aaaaaaaa", Draft: true,
+			Mergeable: &yes, Checks: "green", UpdatedAt: now.Add(-time.Hour), LastTrustedActivity: now.Add(-time.Hour),
+			Closes: []rules.Closing{{Number: 101, Labels: []string{"overseer"}}}}
+		if mod != nil {
+			mod(&it)
+		}
+		return it
+	}
+	reviewWanted := func(it *rules.Item) { it.Closes[0].Labels = append(it.Closes[0].Labels, "overseer/review") }
+	for _, tc := range []struct {
+		name  string
+		it    rules.Item
+		ready bool
+	}{
+		{"green, no review wanted: ready (a draft all the same)", draft(nil), true},
+		{"checks running", draft(func(it *rules.Item) { it.Checks = "pending" }), false},
+		{"checks failing: care-ci first", draft(func(it *rules.Item) { it.Checks = "failing" }), false},
+		{"trusted feedback waiting: care-comments first", draft(func(it *rules.Item) { it.NewTrustedFeedback = true }), false},
+		{"a task of the PR running (a review, a care)", draft(func(it *rules.Item) { it.TaskActive = true }), false},
+		{"review wanted, not reviewed at the head: the reviewer first", draft(reviewWanted), false},
+		{"review wanted, reviewed at the head, changes asked", draft(func(it *rules.Item) { reviewWanted(it); it.ReviewedAtHead, it.ChangesRequested = true, true }), false},
+		{"review wanted, reviewed at the head, no changes asked: ready", draft(func(it *rules.Item) { reviewWanted(it); it.ReviewedAtHead = true }), true},
+		{"does not merge", draft(func(it *rules.Item) { no := false; it.Mergeable = &no }), false},
+	} {
+		if got := readyForNextStep(control, tc.it, env); got != tc.ready {
+			t.Errorf("%s: ready %v, want %v", tc.name, got, tc.ready)
+		}
 	}
 }

@@ -13,6 +13,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/api"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/conventions"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/graph"
 )
 
 // taskOptions specifies the parts of an issue task that vary between a standard
@@ -35,9 +36,14 @@ func (s *Scanner) newTask(opts taskOptions) *api.QueueTask {
 }
 
 // newIssueTask constructs the queue task for an issue of the repository gh is
-// bound to, with consistent defaults.
+// bound to, with consistent defaults. A grouped issue graph's step that
+// continues its group's PR runs as that PR's author, whom its marker names:
+// only they can push to the PR's branch.
 func newIssueTask(gh *github.Client, opts taskOptions) *api.QueueTask {
 	num := opts.Issue.GetNumber()
+	if m, ok := graph.ParseChildMarker(opts.Issue.GetBody()); ok && m.Group == graph.GroupNext && m.As != "" {
+		opts.Assignee = m.As
+	}
 	return &api.QueueTask{
 		Type:             opts.Type,
 		URL:              fmt.Sprintf("https://github.com/%s/%s/issues/%d", gh.Owner(), gh.Repo(), num),

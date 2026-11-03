@@ -22,7 +22,7 @@ const (
 	StepReady   = "Ready"
 	StepActive  = "Active"
 	// StepInGroup is a step of a grouped graph whose work is in its
-	// group's PR (pushed, its checks green), the step after it continuing
+	// group's PR (pushed, and ready: GroupPR.Ready), the step after it continuing
 	// that PR: done but for the PR's merge. It counts toward neither
 	// maxActive nor completion.
 	StepInGroup   = "InGroup"
@@ -107,9 +107,12 @@ type Child struct {
 type GroupPR struct {
 	Number int
 	Author string
-	// Green is that its head's checks all passed: at least one, none
-	// pending or failed.
-	Green bool
+	// Ready is that the step after may start on it: the PR is as the
+	// watch's ready rule would hand it to people, were it not a draft -
+	// green, mergeable, no trusted feedback waiting, and reviewed at its
+	// head without changes asked when a review is wanted (Options.StepReady);
+	// without the watch, that its head's checks all passed.
+	Ready bool
 }
 
 // Result is what Reconcile decides: the phase, every step's state, the
@@ -441,8 +444,8 @@ func groupChild(s *Spec, id string, canonical map[string]Child, info ChildInfo, 
 
 // statuses is every step's state, from its canonical child and its
 // dependencies. In a grouped graph a step whose work is in its group's PR
-// - pushed, its checks green, or the step after it already started on it
-// - is StepInGroup, and the step after it may start.
+// - pushed and ready (GroupPR.Ready), or the step after it already started
+// on it - is StepInGroup, and the step after it may start.
 func statuses(s *Spec, ids []string, canonical map[string]Child, grouped bool) []StepStatus {
 	out := make([]StepStatus, 0, len(ids))
 	state := map[string]string{}
@@ -489,15 +492,15 @@ func done(state string) bool { return state == StepSucceeded || state == StepSki
 
 // inGroup is whether the open child c of step id has its work in its
 // group's PR, for the step after it to continue: its PR is known, and
-// green, or the step after it has a child already (a later push to the PR
-// that is not green yet does not take the step back).
+// ready (GroupPR.Ready), or the step after it has a child already (a later
+// push to the PR that is not ready yet does not take the step back).
 func inGroup(s *Spec, id string, c Child, canonical map[string]Child) bool {
 	next := s.GroupNext(id)
 	if next == "" || c.GroupPR == nil {
 		return false
 	}
 	_, started := canonical[next]
-	return c.GroupPR.Green || started
+	return c.GroupPR.Ready || started
 }
 
 // NeedsHumanLabel, under the trigger, marks the child of a then: ask step:

@@ -18,6 +18,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/constants"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/graph"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/recipe"
 	factorysandbox "github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/sandbox"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/spool"
@@ -430,6 +431,55 @@ func TestPRPushInputs(t *testing.T) {
 	}
 	if fmt.Sprint(inputs) != fmt.Sprint(want) {
 		t.Errorf("inputs = %v, want %v", inputs, want)
+	}
+}
+
+// A grouped graph's step: the group's first opens its PR as a draft; one
+// continuing the PR pushes from its head as its author (and no one else),
+// its result staying the issue's, a draft unless the group's last.
+func TestGroupInputs(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/o/r/pulls/12", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"number":12,"state":"open","html_url":"https://github.com/o/r/pull/12","title":"t","body":"b",
+			"head":{"ref":"issue-7-1","sha":"h1","label":"bot:issue-7-1","repo":{"full_name":"bot/r"}},"base":{"ref":"main"}}`)
+	})
+	mux.HandleFunc("/repos/o/r/pulls/13", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"number":13,"state":"closed"}`)
+	})
+	mux.HandleFunc("/repos/o/r/compare/main...bot:issue-7-1", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"merge_base_commit":{"sha":"b0"}}`)
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	gh := githubv39.NewClient(nil)
+	gh.BaseURL, _ = url.Parse(srv.URL + "/")
+	ctx := context.Background()
+	it := githubItem{Owner: "o", Repo: "r", Number: 8}
+
+	inputs := map[string]string{"draft": "false"}
+	if err := groupInputs(ctx, gh, it, graph.ChildInfo{Group: graph.GroupFirst}, "bot", inputs); err != nil || inputs["draft"] != "true" {
+		t.Errorf("first: %v %v", inputs, err)
+	}
+
+	for _, last := range []bool{false, true} {
+		inputs = map[string]string{"draft": "false"}
+		if err := groupInputs(ctx, gh, it, graph.ChildInfo{Group: graph.GroupNext, PR: 12, As: "bot", Last: last}, "BOT", inputs); err != nil {
+			t.Fatal(err)
+		}
+		want := map[string]string{
+			"pushed_fork": "bot/r", "pushed_branch": "issue-7-1", "pushed_head": "h1", "pushed_base": "b0",
+			"group_pr": "12", "draft": fmt.Sprint(!last),
+		}
+		if fmt.Sprint(inputs) != fmt.Sprint(want) {
+			t.Errorf("next (last %v): inputs = %v, want %v", last, inputs, want)
+		}
+	}
+
+	if err := groupInputs(ctx, gh, it, graph.ChildInfo{Group: graph.GroupNext, PR: 12, As: "bot"}, "someone-else", map[string]string{}); err == nil || !strings.Contains(err.Error(), "--user bot") {
+		t.Errorf("another bot: %v", err)
+	}
+	if err := groupInputs(ctx, gh, it, graph.ChildInfo{Group: graph.GroupNext, PR: 13, As: "bot"}, "bot", map[string]string{}); err == nil || !strings.Contains(err.Error(), "closed") {
+		t.Errorf("a closed PR: %v", err)
 	}
 }
 

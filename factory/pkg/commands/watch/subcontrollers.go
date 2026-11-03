@@ -30,6 +30,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/whyclosed"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/config"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/graph"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/recipe"
 	factorysandbox "github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/sandbox"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/watch/rules"
@@ -193,7 +194,38 @@ func (w *Watcher) newGraphController() *graphs.Controller {
 		Members:      w.cfg.TrustedLogins(),
 		MinNumber:    w.minIssueNumber(),
 		DryRun:       w.loopDryRun(w.IssueMode),
-	}, graphs.Deps{GitHub: w.repoClient, Paused: w.draining})
+	}, graphs.Deps{GitHub: w.repoClient, Paused: w.draining, StepReady: w.groupStepReady})
+}
+
+// groupStepReady is whether a grouped graph's PR is ready for the step
+// after the one that pushed to it: the ready rule would hand it to people
+// were it not a draft. The PR's facts are the PR scanner's (Facts), and the
+// rules decide on them as a scan would, so the reviewer and the care rules
+// come first: a review not yet at the head, trusted feedback not yet
+// answered, checks not green, or a task of the PR still running holds the
+// next step back. Without a PR scanner, or with the ready rule off, it
+// cannot judge (graph.ErrNoStepReady): the checks decide.
+func (w *Watcher) groupStepReady(ctx context.Context, pr int) (bool, error) {
+	if w.prScanner == nil || w.rulesControl == nil || w.rulesControl.Off("ready") {
+		return false, graph.ErrNoStepReady
+	}
+	it, env, err := w.prScanner.Facts(ctx, pr)
+	if err != nil {
+		return false, fmt.Errorf("reading PR #%d's facts: %w", pr, err)
+	}
+	return readyForNextStep(w.rulesControl, it, env), nil
+}
+
+// readyForNextStep is whether the rules would hand a PR to people - the
+// ready rule runs on it - were it not a draft.
+func readyForNextStep(control *rules.Control, it rules.Item, env rules.Env) bool {
+	it.Draft = false
+	for _, d := range control.Decide(it, env) {
+		if d.Rule == "ready" && d.Outcome == rules.OutcomeRun {
+			return true
+		}
+	}
+	return false
 }
 
 // graphsInterval is the factory config's graphsInterval, or
