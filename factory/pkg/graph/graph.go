@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"io"
 	"regexp"
+	"slices"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -112,6 +113,11 @@ type Step struct {
 	// Review is review instructions for the child's PR (a template).
 	Review    string   `yaml:"review,omitempty"`
 	Assignees []string `yaml:"assignees,omitempty"`
+	// GroupGate ends a group (a graph started grouped: true): the group's
+	// PR ends with this step, and must merge before any step after it
+	// starts. Without grouped it changes nothing: every step's PR merges
+	// before the next starts.
+	GroupGate bool `yaml:"group-gate,omitempty"`
 }
 
 // ThenOrDefault is the step's then, fix when unset.
@@ -175,6 +181,44 @@ func (s Spec) Step(id string) *Step {
 		}
 	}
 	return nil
+}
+
+// GroupPrev is, in a grouped graph (a start block's grouped: true), the
+// step whose PR the step of id continues: "" when it opens a PR of its
+// own. A step continues its one after's PR when both are fix steps and
+// that step neither ends a group (group-gate), nor has a checkpoint (which
+// acts when it is done, its PR merged), nor is any other step's after: a
+// PR goes on in one line. The finally step always opens its own.
+func (s Spec) GroupPrev(id string) string {
+	st := s.Step(id)
+	if id == FinallyID || st == nil || len(st.After) != 1 || st.ThenOrDefault() != ThenFix {
+		return ""
+	}
+	p := s.Step(st.After[0])
+	if p == nil || p.GroupGate || len(p.Checkpoint) > 0 || p.ThenOrDefault() != ThenFix {
+		return ""
+	}
+	dependents := 0
+	for _, t := range s.Steps {
+		if slices.Contains(t.After, p.ID) {
+			dependents++
+		}
+	}
+	if dependents != 1 {
+		return ""
+	}
+	return p.ID
+}
+
+// GroupNext is, in a grouped graph, the step that continues the PR of the
+// step of id: "" when its PR ends with it.
+func (s Spec) GroupNext(id string) string {
+	for _, t := range s.Steps {
+		if s.GroupPrev(t.ID) == id {
+			return t.ID
+		}
+	}
+	return ""
 }
 
 // ParseTemplate reads a template file strictly: an unknown field is an

@@ -157,6 +157,7 @@ spec:
 | `maxActive` | How many steps may be active at once. Default 1. |
 | `then` | What the child does first: `fix` (default), `plan` or `ask` (§4.6). |
 | `checkpoint` | `stop`, `replan` or both: when the step is done, the reconciler stops the graph, has the plan revised, or both (§4.8). |
+| `group-gate` | With the parent's `grouped: true`, the group's PR ends with this step and must merge before any step after it starts (§4.9). Without `grouped` it changes nothing. |
 
 A child closed as not planned or as a duplicate is treated as done: its step is `Skipped` and the graph moves on (§5.5). To stop a graph instead, add the stop label to the parent or close it.
 
@@ -239,6 +240,30 @@ A step can be a **checkpoint**: when it is done, the reconciler pauses the graph
 | `[replan, stop]` | Both: the plan is revised and the graph holds until a maintainer has read the new version and removes the stop label - the approval of a replan. |
 
 Each checkpoint fires once: it is recorded in the status comment's state, so removing the stop label, or a later pass, does not trip it again. The reconciler only adds labels. Children already open when a checkpoint stops the graph go on (stop each to pause it). A person can replan at any time the same way, by applying `<trigger>/plan` to the parent.
+
+### 4.9 Grouped steps (`grouped: true`)
+
+By default every step is its own PR, merged before the next step starts. A parent can instead run consecutive steps as **one PR**:
+
+```factory-graph
+graph: kcc-greenfield
+grouped: true
+params:
+  kind: SpannerInstanceConfig
+```
+
+A step continues its one `after`'s PR when both are fix steps (`then: fix`) and that step is not a `group-gate`, has no `checkpoint` (which acts once its PR merges) and is no other step's `after` (a PR goes on in one line). The `finally` step always opens its own. Mark a step `group-gate: true` where people must review and merge before anything continues:
+
+```yaml
+- id: types-judgement
+  after: [prepopulate]
+  group-gate: true   # grouped: prepopulate + types-judgement are one PR, merged before controller starts
+```
+
+- **The group's first step** opens its PR as a draft. Its child says so (a `## Pull request` section), and its marker carries `group=first`.
+- **The next step starts** once the step before has pushed to the PR (the PR's body fixes that step's child) and the PR head's checks are green: at least one, none pending or failed. That step is then `InGroup`: done but for the merge. It counts toward neither `maxActive` nor completion. A later push that is not green yet does not take it back.
+- **A step continuing the PR** has `group=next pr=<PR> as=<the PR's author> in=<the group's first issue>` in its marker: it commits on the PR's branch as the PR's author (only they can push to it), in the group's first step's sandbox (the branch checked out, its builds warm), and the PR then fixes its child too. The group's last step has `last=true`: once it is pushed, the PR is marked ready for review, and from there it is reviewed and merged like any PR.
+- **When the PR merges**, every step child it fixes closes, and the graph goes on as usual.
 
 ---
 

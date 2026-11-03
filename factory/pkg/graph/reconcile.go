@@ -18,9 +18,14 @@ const (
 
 // States of a step (StepStatus.State).
 const (
-	StepPending   = "Pending"
-	StepReady     = "Ready"
-	StepActive    = "Active"
+	StepPending = "Pending"
+	StepReady   = "Ready"
+	StepActive  = "Active"
+	// StepInGroup is a step of a grouped graph whose work is in its
+	// group's PR (pushed, its checks green), the step after it continuing
+	// that PR: done but for the PR's merge. It counts toward neither
+	// maxActive nor completion.
+	StepInGroup   = "InGroup"
 	StepSucceeded = "Succeeded"
 	StepSkipped   = "Skipped"
 )
@@ -56,6 +61,9 @@ type Observed struct {
 	// MaxDepth is how deep graphs may nest: a parent at this depth or more
 	// starts none. 0 is the default, 3.
 	MaxDepth int
+	// Grouped is the start block's grouped: consecutive steps share one
+	// PR (Spec.GroupPrev).
+	Grouped bool
 }
 
 // Parent is the graph's parent issue, as observed.
@@ -89,6 +97,19 @@ type Child struct {
 	// MergedBotPR is a bot-authored PR referencing the open child that has
 	// merged, 0 for none: the child is done all the same.
 	MergedBotPR int
+	// GroupPR is, in a grouped graph, the open bot PR that fixes the open
+	// child of a step another continues (Spec.GroupNext); nil for none, or
+	// when not read.
+	GroupPR *GroupPR
+}
+
+// GroupPR is an open bot PR a step's work was pushed to, as observed.
+type GroupPR struct {
+	Number int
+	Author string
+	// Green is that its head's checks all passed: at least one, none
+	// pending or failed.
+	Green bool
 }
 
 // Result is what Reconcile decides: the phase, every step's state, the
@@ -214,7 +235,7 @@ func Reconcile(o Observed) Result {
 	slices.Sort(r.Orphans)
 	slices.SortFunc(duplicates, func(a, b Action) int { return a.Issue - b.Issue })
 
-	r.Steps = statuses(s, ids, canonical)
+	r.Steps = statuses(s, ids, canonical, o.Grouped)
 
 	// 2. The stop label: only the status.
 	if containsFold(o.Parent.Labels, stop) {
@@ -268,7 +289,7 @@ func Reconcile(o Observed) Result {
 	// Who is handed down from now on: the parent's humans as they are, so
 	// one taken off the parent and put back is handed down again.
 	r.State.Inherited = slices.Clone(o.Parent.Humans)
-	r.Steps = statuses(s, ids, canonical)
+	r.Steps = statuses(s, ids, canonical, o.Grouped)
 	state := map[string]string{}
 	for _, ss := range r.Steps {
 		state[ss.ID] = ss.State
@@ -328,6 +349,10 @@ func Reconcile(o Observed) Result {
 		if st.ThenOrDefault() == ThenAsk {
 			body = strings.TrimRight(body, "\n") + "\n\n" + needsHumanSection(o.Parent.Number, o.Trigger)
 		}
+		info := ChildInfo{Parent: o.Parent.Number, Source: o.Source, Step: ss.ID, Depth: o.Parent.Depth + 1, Params: hash}
+		if o.Grouped {
+			info, body = groupChild(s, ss.ID, canonical, info, body)
+		}
 		r.Actions = append(r.Actions, Action{
 			Kind: ActCreateChild, Step: ss.ID, Title: strings.TrimSpace(title), Body: body,
 			Labels:    childLabels(s, *st, o.Trigger),
@@ -335,7 +360,7 @@ func Reconcile(o Observed) Result {
 			// A child whose description asks (its own ## Questions) waits
 			// for an answer too: it goes to a person all the same.
 			AskPerson: st.ThenOrDefault() == ThenAsk || len(OpenQuestions(body)) > 0,
-			Child:     ChildInfo{Parent: o.Parent.Number, Source: o.Source, Step: ss.ID, Depth: o.Parent.Depth + 1, Params: hash},
+			Child:     info,
 		})
 		r.Steps[i].State = StepActive
 		active++
@@ -385,14 +410,47 @@ func pickCanonical(children []Child) (Child, []Child) {
 	return sorted[len(sorted)-1], nil
 }
 
+// groupChild is a grouped graph's child's place in its group's PR, and
+// its body saying so: the first of a group opens the PR, as a draft; a
+// step continuing one commits on its PR's branch, as its author, and the
+// last marks it ready.
+func groupChild(s *Spec, id string, canonical map[string]Child, info ChildInfo, body string) (ChildInfo, string) {
+	prev, next := s.GroupPrev(id), s.GroupNext(id)
+	var note string
+	switch {
+	case prev != "" && canonical[prev].GroupPR != nil:
+		pr := canonical[prev].GroupPR
+		info.Group, info.PR, info.As, info.Last = GroupNext, pr.Number, pr.Author, next == ""
+		first := prev
+		for p := s.GroupPrev(first); p != ""; p = s.GroupPrev(first) {
+			first = p
+		}
+		info.In = canonical[first].Number
+		note = fmt.Sprintf("This step continues #%d, step `%s`'s pull request (the graph is grouped): commit on its branch, and #%d fixes this issue too.", pr.Number, prev, pr.Number)
+		if info.Last {
+			note += " It is the group's last step: the pull request is marked ready for review once it is pushed."
+		}
+	case next != "":
+		info.Group = GroupFirst
+		note = fmt.Sprintf("This step opens a draft pull request that the steps after it (from `%s`) continue (the graph is grouped); it is marked ready for review after the group's last step.", next)
+	default:
+		return info, body
+	}
+	return info, strings.TrimRight(body, "\n") + "\n\n## Pull request\n\n" + note
+}
+
 // statuses is every step's state, from its canonical child and its
-// dependencies.
-func statuses(s *Spec, ids []string, canonical map[string]Child) []StepStatus {
+// dependencies. In a grouped graph a step whose work is in its group's PR
+// - pushed, its checks green, or the step after it already started on it
+// - is StepInGroup, and the step after it may start.
+func statuses(s *Spec, ids []string, canonical map[string]Child, grouped bool) []StepStatus {
 	out := make([]StepStatus, 0, len(ids))
 	state := map[string]string{}
 	stateOf := func(id string) string {
 		c, ok := canonical[id]
 		switch {
+		case ok && c.Open && grouped && inGroup(s, id, c, canonical):
+			return StepInGroup
 		case ok && c.Open:
 			return StepActive
 		case ok && c.NotPlanned:
@@ -416,7 +474,7 @@ func statuses(s *Spec, ids []string, canonical map[string]Child) []StepStatus {
 				deps = ids[:len(ids)-1]
 			}
 			for _, d := range deps {
-				if !done(state[d]) {
+				if !done(state[d]) && (state[d] != StepInGroup || s.GroupPrev(id) != d) {
 					v = StepPending
 					break
 				}
@@ -428,6 +486,19 @@ func statuses(s *Spec, ids []string, canonical map[string]Child) []StepStatus {
 }
 
 func done(state string) bool { return state == StepSucceeded || state == StepSkipped }
+
+// inGroup is whether the open child c of step id has its work in its
+// group's PR, for the step after it to continue: its PR is known, and
+// green, or the step after it has a child already (a later push to the PR
+// that is not green yet does not take the step back).
+func inGroup(s *Spec, id string, c Child, canonical map[string]Child) bool {
+	next := s.GroupNext(id)
+	if next == "" || c.GroupPR == nil {
+		return false
+	}
+	_, started := canonical[next]
+	return c.GroupPR.Green || started
+}
 
 // NeedsHumanLabel, under the trigger, marks the child of a then: ask step:
 // it waits for a person, and no bot works on it until one decides - the
