@@ -60,7 +60,17 @@ type Options struct {
 	// Logf, when set, reports each write (or, in a dry run, each write it
 	// would make).
 	Logf func(format string, args ...any)
+	// StepReady, when set, says whether a grouped graph's PR is ready for
+	// the step after the one that pushed to it (GroupPR.Ready): the watch's,
+	// its ready rule's conditions on the PR as though it were not a draft,
+	// so the reviewer and the care rules catch up first. ErrNoStepReady, or
+	// unset, falls back to the PR head's checks being green.
+	StepReady func(ctx context.Context, pr int) (bool, error)
 }
+
+// ErrNoStepReady is StepReady's answer when it cannot judge (the watch
+// does not scan PRs, or its ready rule is off): the checks decide alone.
+var ErrNoStepReady = errors.New("no ready rule to judge the step's PR by")
 
 func (o Options) env() rules.Env { return rules.Env{Pool: o.Pool, Members: o.Members} }
 
@@ -345,8 +355,9 @@ func observeChildren(ctx context.Context, gh GitHub, opts Options, o *Observed) 
 }
 
 // groupPR is the open bot PR that fixes child n (its body says so, as
-// the fix's does: "Fixes #n"), the newest of them, and whether its head's
-// checks are green; nil for none. Only a step another continues reads it.
+// the fix's does: "Fixes #n"), the newest of them, and whether it is ready
+// for the next step (opts.StepReady, else its head's checks green); nil for
+// none. Only a step another continues reads it.
 func groupPR(ctx context.Context, gh GitHub, opts Options, n int, refs []github.IssueRef) (*GroupPR, error) {
 	fixes := regexp.MustCompile(fmt.Sprintf(`(?i)\b(fix(es|ed)?|close[sd]?|resolve[sd]?)\s+#%d\b`, n))
 	var found *github.IssueRef
@@ -359,6 +370,15 @@ func groupPR(ctx context.Context, gh GitHub, opts Options, n int, refs []github.
 	if found == nil {
 		return nil, nil
 	}
+	if opts.StepReady != nil {
+		ready, err := opts.StepReady(ctx, found.Number)
+		switch {
+		case err == nil:
+			return &GroupPR{Number: found.Number, Author: found.Author, Ready: ready}, nil
+		case !errors.Is(err, ErrNoStepReady):
+			return nil, err
+		}
+	}
 	pr, err := gh.GetPullRequest(ctx, found.Number)
 	if err != nil {
 		return nil, err
@@ -367,7 +387,7 @@ func groupPR(ctx context.Context, gh GitHub, opts Options, n int, refs []github.
 	if err != nil {
 		return nil, err
 	}
-	return &GroupPR{Number: found.Number, Author: found.Author, Green: green}, nil
+	return &GroupPR{Number: found.Number, Author: found.Author, Ready: green}, nil
 }
 
 // checksGreen is whether a commit's checks all passed: at least one check
