@@ -125,7 +125,10 @@ type QueueTask struct {
 	Assignee    string     `yaml:"assignee,omitempty"`
 	Status      TaskStatus `yaml:"status"` // "Pending", "Running", "Completed", "Failed"
 	Error       string     `yaml:"error,omitempty"`
-	AgentFile   string     `yaml:"agentFile,omitempty"` // For chore tasks
+	// EngineUnavailable is that the task failed because its engine could
+	// not serve it (its model at capacity), not on its own account.
+	EngineUnavailable bool   `yaml:"engineUnavailable,omitempty"`
+	AgentFile         string `yaml:"agentFile,omitempty"` // For chore tasks
 	// AgentName is a scheduled chore's name, from its definition, which
 	// names its sandbox (ChoreSandboxName).
 	AgentName    string   `yaml:"agentName,omitempty"`
@@ -209,6 +212,9 @@ type JournalEvent struct {
 	CompletedAt      time.Time     `json:"completedAt,omitempty"`
 	Error            string        `json:"error,omitempty"`
 	DurationSecond   float64       `json:"durationSeconds,omitempty"`
+	// EngineUnavailable is a failed run the engine could not serve (its
+	// model at capacity: 503, 429): no attempt of the task's own.
+	EngineUnavailable bool `json:"engineUnavailable,omitempty"`
 }
 
 // EndedRun is a run of a task that ended, as the queue's journal keeps it:
@@ -216,6 +222,9 @@ type JournalEvent struct {
 type EndedRun struct {
 	StartedAt time.Time
 	Failed    bool
+	// EngineUnavailable is a failed run the engine could not serve
+	// (JournalEvent.EngineUnavailable): it counts toward no give-up.
+	EngineUnavailable bool
 }
 
 // IsPRTask reports whether a given task type corresponds to an automated PR task.

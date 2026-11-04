@@ -76,6 +76,26 @@ func TestDecideIssues(t *testing.T) {
 		{"fixed 15m ago, not updated", issue(func(it *Item) { it.Runs = []PastRun{fixed(15*time.Minute, false)} }), ""},
 		{"failed 25m ago, not updated: retried", issue(func(it *Item) { it.Runs = []PastRun{fixed(25*time.Minute, true)}; it.UpdatedAt = ago(2 * time.Hour) }), "fix run"},
 		{"failed 15m ago: failure cooldown", issue(func(it *Item) { it.Runs = []PastRun{fixed(15*time.Minute, true)} }), ""},
+		{"failed 3 times: give up", issue(func(it *Item) {
+			it.Runs = []PastRun{fixed(3*time.Hour, true), fixed(2*time.Hour, true), fixed(25*time.Minute, true)}
+			it.UpdatedAt = ago(4 * time.Hour)
+		}), "fix give-up"},
+		{"failed 3 times, the engine unable to serve each (503): retried, no give-up", issue(func(it *Item) {
+			it.Runs = []PastRun{fixed(3*time.Hour, true), fixed(2*time.Hour, true), fixed(25*time.Minute, true)}
+			for i := range it.Runs {
+				it.Runs[i].EngineUnavailable = true
+			}
+			it.UpdatedAt = ago(4 * time.Hour)
+		}), "fix run"},
+		{"the engine unable to serve it 15m ago: still the failure cooldown", issue(func(it *Item) {
+			it.Runs = []PastRun{fixed(15*time.Minute, true)}
+			it.Runs[0].EngineUnavailable = true
+		}), ""},
+		{"2 real failures and 2 the engine could not serve: no give-up yet", issue(func(it *Item) {
+			it.Runs = []PastRun{fixed(4*time.Hour, true), fixed(3*time.Hour, true), fixed(2*time.Hour, true), fixed(25*time.Minute, true)}
+			it.Runs[1].EngineUnavailable, it.Runs[3].EngineUnavailable = true, true
+			it.UpdatedAt = ago(5 * time.Hour)
+		}), "fix run"},
 		{"fan-out parent", issue(func(it *Item) { it.FanoutParent = true }), ""},
 		{"a fan-out child, created when it is to be worked on, unlabelled (no triage)", issue(func(it *Item) { it.Labels, it.Author = nil, "argus-watcher-bot" }), "fix run"},
 		{"names a workflow", issue(func(it *Item) { it.Workflow = "kcc-greenfield" }), "workflow run"},

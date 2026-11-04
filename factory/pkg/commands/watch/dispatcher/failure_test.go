@@ -64,3 +64,36 @@ func TestCLIRunner_Run_ReturnsTheLoggedError(t *testing.T) {
 		t.Errorf("RunError = %q", runErr.Error())
 	}
 }
+
+// A run its engine could not serve - gemini's "RPC error [503]: This model
+// is currently experiencing high demand", a 429, RESOURCE_EXHAUSTED - is
+// told apart from the task's own failure, and its reason is the engine's
+// line, not the "task failed" factory prints after it.
+func TestFailureOfLogEngineUnavailable(t *testing.T) {
+	for name, tc := range map[string]struct {
+		log         string
+		reason      string
+		unavailable bool
+	}{
+		"gemini at capacity (#14839)": {
+			"::failed 8:ask: agent: prompt failed: RPC error [503]: This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.\n" +
+				"Error: step 8:ask: agent: prompt failed: RPC error [503]: This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.\n" +
+				"Error: running recipe: task failed with exit code 1\nError: running recipe: task failed with exit code 1\n",
+			"step 8:ask: agent: prompt failed: RPC error [503]: This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.", true},
+		"rate limited": {"Error: step 3:ask: agent: prompt failed: RPC error [429]: RESOURCE_EXHAUSTED\nError: running recipe: task failed with exit code 1\n",
+			"step 3:ask: agent: prompt failed: RPC error [429]: RESOURCE_EXHAUSTED", true},
+		"the task's own failure": {"Error: step 9:push: no commit on top of abc\nError: running recipe: task failed with exit code 1\n",
+			"running recipe: task failed with exit code 1", false},
+		"503 only in the agent's output, not an error line": {"the agent fetched a page: 503 Service Unavailable\nError: running recipe: task failed with exit code 1\n",
+			"running recipe: task failed with exit code 1", false},
+	} {
+		path := filepath.Join(t.TempDir(), "task.log")
+		if err := os.WriteFile(path, []byte(tc.log), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		reason, unavailable := failureOfLog(path)
+		if reason != tc.reason || unavailable != tc.unavailable {
+			t.Errorf("%s: failureOfLog = %q, %v; want %q, %v", name, reason, unavailable, tc.reason, tc.unavailable)
+		}
+	}
+}

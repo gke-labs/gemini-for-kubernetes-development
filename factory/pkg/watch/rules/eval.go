@@ -113,6 +113,11 @@ type PastRun struct {
 	StartedAt time.Time
 	EndedAt   time.Time
 	Failed    bool
+	// EngineUnavailable is a failed run its engine could not serve (the
+	// model at capacity: 503, 429): it still holds the rule in its failure
+	// cooldown - a retry later - but is no attempt of the rule's, so it
+	// counts toward no give-up. An outage does not stop the work.
+	EngineUnavailable bool
 	// Head is the PR's head the run worked on.
 	Head string
 }
@@ -440,16 +445,15 @@ func since(events Since, it Item) time.Time {
 	return t
 }
 
-// giveUpRuns are the runs a give-up counts: every one, or the failed ones.
+// giveUpRuns are the runs a give-up counts: every one, or the failed
+// ones; never one its engine could not serve (EngineUnavailable).
 func giveUpRuns(g *GiveUp, runs []PastRun) []PastRun {
-	if !g.Failed {
-		return runs
-	}
 	var out []PastRun
 	for _, r := range runs {
-		if r.Failed {
-			out = append(out, r)
+		if r.EngineUnavailable || (g.Failed && !r.Failed) {
+			continue
 		}
+		out = append(out, r)
 	}
 	return out
 }

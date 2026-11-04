@@ -214,7 +214,7 @@ func (rc *Recording) Fill(f func(*Item)) {
 func PastRuns(rule string, ended []PastRun, lastStart, lastEnd time.Time, lastFailed bool, lastHead string) []PastRun {
 	out := make([]PastRun, 0, len(ended)+1)
 	for _, r := range ended {
-		out = append(out, PastRun{Rule: rule, StartedAt: r.StartedAt, EndedAt: r.StartedAt, Failed: r.Failed})
+		out = append(out, PastRun{Rule: rule, StartedAt: r.StartedAt, EndedAt: r.StartedAt, Failed: r.Failed, EngineUnavailable: r.EngineUnavailable})
 	}
 	if lastEnd.IsZero() {
 		return out
