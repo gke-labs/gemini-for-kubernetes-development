@@ -48,7 +48,7 @@ type Fake struct {
 	// MissingLabels are labels the repository lacks: a write naming one is
 	// refused, as GitHub refuses an account that may not create labels.
 	MissingLabels []string
-	nextCID   int64
+	nextCID       int64
 }
 
 func New() *Fake {
