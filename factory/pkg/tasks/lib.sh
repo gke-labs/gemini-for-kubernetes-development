@@ -664,11 +664,13 @@ function pushToFork {
 # nothing commits them, and the engine's file tools do not skip them as
 # ignored (*.log often is).
 #
-# ciFailedJobsOfCommit REPO SHA prints "<job id> <job name>" for each
-# failed job. A check run of GitHub Actions is a job: its id is the job's.
+# ciFailedJobsOfCommit REPO SHA prints "<job id> <run id> <job name>" for
+# each failed job. A check run of GitHub Actions is a job: its id is the
+# job's; its run, the workflow run a rerun is asked of, is in its link
+# (…/actions/runs/<run id>/job/<job id>), "-" if it has none.
 function ciFailedJobsOfCommit {
     gh api "repos/$1/commits/$2/check-runs?filter=latest&per_page=100" --paginate \
-        --jq '.check_runs[] | select(.app.slug == "github-actions") | select(.conclusion == "failure" or .conclusion == "timed_out") | "\(.id) \(.name)"'
+        --jq '.check_runs[] | select(.app.slug == "github-actions") | select(.conclusion == "failure" or .conclusion == "timed_out") | "\(.id) \((try (.details_url | capture("/actions/runs/(?<r>[0-9]+)").r) catch "-") // "-") \(.name)"'
 }
 
 # ciLogExcerpt LOG prints the part of a job's log that says why it failed:
@@ -707,14 +709,16 @@ function ciLogExcerpt {
     rm -f "${section}"
 }
 
-# fetchCIJobLogs REPO DIR reads "<job id> <job name>" lines, saves each
-# job's log as DIR/<job id>.log, without colours and timestamps, and
-# appends its excerpt to DIR/excerpts.md.
+# fetchCIJobLogs REPO DIR reads "<job id> <run id> <job name>" lines,
+# saves each job's log as DIR/<job id>.log, without colours and
+# timestamps, and appends its excerpt to DIR/excerpts.md, saying which run
+# it is of: a rerun is asked of the run (`run: <run id>`), not the job,
+# whose id an agent took for the run's (#14849, 2026-11-04).
 function fetchCIJobLogs {
-    local repo="$1" dir="$2" id name log token trace=0
+    local repo="$1" dir="$2" id run name log token trace=0 of
     mkdir -p "${dir}"
     : > "${dir}/excerpts.md"
-    while read -r id name; do
+    while read -r id run name; do
         [ -n "${id}" ] || continue
         log="${dir}/${id}.log"
         echo "Downloading the log of job ${id} (${name})"
@@ -729,8 +733,12 @@ function fetchCIJobLogs {
             [ "${trace}" = 1 ] && set -x
             sed -E $'s/\x1b\\[[0-9;]*[A-Za-z]//g; s/^[0-9T:.-]+Z //' "${log}.raw" > "${log}"
             rm -f "${log}.raw"
+            of=""
+            if [ -n "${run}" ] && [ "${run}" != "-" ]; then
+                of=" of workflow run ${run} (to run it again: \`run: ${run}\`, the run's id, never the job's)"
+            fi
             {
-                printf '### %s\n\nJob %s; its whole log: %s\n\n```\n' "${name}" "${id}" "${log}"
+                printf '### %s\n\nJob %s%s; its whole log: %s\n\n```\n' "${name}" "${id}" "${of}" "${log}"
                 ciLogExcerpt "${log}"
                 printf '```\n\n'
             } >> "${dir}/excerpts.md"
