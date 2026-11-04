@@ -3,6 +3,7 @@ package graph
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 
@@ -451,5 +452,46 @@ func TestRenderStatusDiagram(t *testing.T) {
 	// refuses them), nodes declared once.
 	if strings.Contains(grouped, `[""]`) || strings.Contains(grouped, `((""))`) || strings.Count(grouped, "n2[") != 1 {
 		t.Errorf("grouped: malformed nodes:\n%s", grouped)
+	}
+}
+
+// A label the graph names that the repository lacks - and the watcher may
+// not create (#14659's mockgcp-alignment, step/mockgcp-alignment) - does
+// not stop the graph: the step's child is made without it, an open child
+// is labelled with the rest, and the status says which labels to create.
+func TestSyncWithoutALabelTheRepositoryLacks(t *testing.T) {
+	f := graphtest.New()
+	f.Files[".agents/graphs/gf.yaml"] = strings.Replace(groupedGraph, "{id: prepopulate, title: P, body: p}", "{id: prepopulate, title: P, body: p, labels: [step/prepopulate]}", 1)
+	f.MissingLabels = []string{"step/prepopulate"}
+	f.Issues[100] = &graphtest.Issue{Title: "Onboard X", Body: "```factory-graph\ngraph: gf\n```\n", Author: "alice", Assoc: "MEMBER", Open: true}
+	opts := Options{Issue: 100, Trigger: "overseer", BotLogin: "watcher", Pool: []string{"watcher"}}
+	p := sync(t, f, opts)
+	pre := childOf(f, 100, "prepopulate")
+	if pre == 0 {
+		t.Fatalf("no prepopulate child: %+v", p.Result)
+	}
+	if got := f.Issues[pre].Labels; slices.Contains(got, "step/prepopulate") || !slices.Contains(got, "overseer") {
+		t.Errorf("child labels %v: want the trigger, without the missing label", got)
+	}
+	st := statusComments(f, 100)
+	if len(st) == 0 || !strings.Contains(st[len(st)-1], "do not exist in the repository") || !strings.Contains(st[len(st)-1], "`step/prepopulate`") {
+		t.Errorf("status does not name the missing label:\n%s", strings.Join(st, "\n---\n"))
+	}
+
+	// Each pass would label the open child again: it goes without the
+	// missing label, without failing, the status still naming it.
+	p = sync(t, f, opts)
+	if !slices.Contains(p.Result.MissingLabels, "step/prepopulate") {
+		t.Errorf("a later pass forgot the missing label: %v", p.Result.MissingLabels)
+	}
+
+	// Created: the next pass labels the child, and the warning goes.
+	f.MissingLabels = nil
+	p = sync(t, f, opts)
+	if !slices.Contains(f.Issues[pre].Labels, "step/prepopulate") || len(p.Result.MissingLabels) != 0 {
+		t.Errorf("after creating the label: child labels %v, missing %v", f.Issues[pre].Labels, p.Result.MissingLabels)
+	}
+	if st := statusComments(f, 100); strings.Contains(st[len(st)-1], "do not exist in the repository") {
+		t.Errorf("the warning stayed:\n%s", st[len(st)-1])
 	}
 }

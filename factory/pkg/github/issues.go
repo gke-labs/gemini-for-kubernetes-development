@@ -3,6 +3,7 @@ package github
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	githubv39 "github.com/google/go-github/v39/github"
 )
@@ -49,6 +50,29 @@ func (c *Client) AddLabels(ctx context.Context, number int, labels []string) err
 		return fmt.Errorf("adding labels %v to #%d: %w", labels, number, err)
 	}
 	return nil
+}
+
+// LabelExists reports whether the repository has a label of that name.
+func (c *Client) LabelExists(ctx context.Context, name string) (bool, error) {
+	if !c.Ready() {
+		return false, errNoClient
+	}
+	_, _, err := c.gh.Issues.GetLabel(ctx, c.owner, c.repo, name)
+	switch {
+	case err == nil:
+		return true, nil
+	case IsNotFound(err):
+		return false, nil
+	}
+	return false, fmt.Errorf("looking up label %q: %w", name, err)
+}
+
+// IsLabelCreateRefused reports whether GitHub refused a write because one
+// of its labels does not exist and the caller may not create labels: a
+// label named on an issue that the repository lacks is created on the fly,
+// which takes more than triage access.
+func IsLabelCreateRefused(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "permission to create labels")
 }
 
 // RemoveLabel removes a single label from an issue or pull request. Removing a

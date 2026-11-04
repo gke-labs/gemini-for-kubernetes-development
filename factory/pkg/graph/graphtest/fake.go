@@ -45,6 +45,9 @@ type Fake struct {
 	Writes int
 	// AssignErr, when set, fails every AddAssignees.
 	AssignErr error
+	// MissingLabels are labels the repository lacks: a write naming one is
+	// refused, as GitHub refuses an account that may not create labels.
+	MissingLabels []string
 	nextCID   int64
 }
 
@@ -186,7 +189,25 @@ func (f *Fake) ReadFile(_ context.Context, path string) ([]byte, string, error) 
 	return []byte(data), "sha1", nil
 }
 
+// refuseMissing is GitHub's answer to a write naming a label the
+// repository lacks, from an account that may not create labels.
+func (f *Fake) refuseMissing(labels []string) error {
+	for _, l := range labels {
+		if slices.Contains(f.MissingLabels, l) {
+			return fmt.Errorf("POST …/issues: 403 You do not have permission to create labels on this repository")
+		}
+	}
+	return nil
+}
+
+func (f *Fake) LabelExists(_ context.Context, name string) (bool, error) {
+	return !slices.Contains(f.MissingLabels, name), nil
+}
+
 func (f *Fake) CreateIssue(_ context.Context, title, body string, labels []string) (int, error) {
+	if err := f.refuseMissing(labels); err != nil {
+		return 0, err
+	}
 	f.Writes++
 	f.Next++
 	f.Issues[f.Next] = &Issue{Title: title, Body: body, Author: f.Login, Open: true, Labels: slices.Clone(labels)}
@@ -209,6 +230,9 @@ func (f *Fake) EditIssue(_ context.Context, n int, title, body string) error {
 }
 
 func (f *Fake) AddLabels(_ context.Context, n int, labels []string) error {
+	if err := f.refuseMissing(labels); err != nil {
+		return err
+	}
 	f.Writes++
 	for _, l := range labels {
 		if !slices.Contains(f.Issues[n].Labels, l) {
