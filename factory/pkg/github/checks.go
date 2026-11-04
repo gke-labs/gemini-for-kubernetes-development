@@ -2,6 +2,7 @@ package github
 
 import (
 	"context"
+	"fmt"
 
 	githubv39 "github.com/google/go-github/v39/github"
 )
@@ -85,4 +86,27 @@ func (c *Client) ListStatuses(ctx context.Context, ref string) ([]*githubv39.Rep
 		deduplicated = append(deduplicated, status)
 	}
 	return deduplicated, nil
+}
+
+// GetWorkflowRun reads a GitHub Actions run of the bound repository.
+func (c *Client) GetWorkflowRun(ctx context.Context, id int64) (*githubv39.WorkflowRun, error) {
+	if !c.Ready() {
+		return nil, errNoClient
+	}
+	run, _, err := c.gh.Actions.GetWorkflowRunByID(ctx, c.owner, c.repo, id)
+	return run, err
+}
+
+// RerunFailedJobs reruns the failed jobs of a completed GitHub Actions run
+// of the bound repository (go-github v39 has no call for it).
+func (c *Client) RerunFailedJobs(ctx context.Context, id int64) error {
+	if !c.Ready() {
+		return errNoClient
+	}
+	req, err := c.gh.NewRequest("POST", fmt.Sprintf("repos/%s/%s/actions/runs/%d/rerun-failed-jobs", c.owner, c.repo, id), nil)
+	if err != nil {
+		return err
+	}
+	_, err = c.gh.Do(ctx, req, nil)
+	return err
 }

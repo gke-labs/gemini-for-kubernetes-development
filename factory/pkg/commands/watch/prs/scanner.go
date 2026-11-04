@@ -587,6 +587,10 @@ func (s *Scanner) evaluate(ctx context.Context, prIssue *githubv39.Issue) {
 		return
 	}
 
+	// Reruns a care-ci apply deferred while their run still ran: made once
+	// the run has finished, without another care-ci run.
+	carryOutDeferredReruns(ctx, s.gh, pr, history.comments, append([]string{s.cfg.GitHubLogin}, s.cfg.BotUsers...), time.Now(), s.cfg.DryRun)
+
 	state := s.state.get(num)
 	s.recordHistory(pr, history, headSHA)
 	s.read(rules.FactHistory)

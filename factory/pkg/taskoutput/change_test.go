@@ -661,7 +661,9 @@ func TestPostRepliesReruns(t *testing.T) {
 			body, _, _ := strings.Cut(c["body"].(string), "\n")
 			bodies = append(bodies, body)
 		}
-		if strings.Join(bodies, "|") != "A flake.|/test pull-unit|/retest" {
+		// Run 2 is still running: its rerun is deferred to the watch, in a
+		// comment of its own.
+		if strings.Join(bodies, "|") != "A flake.|🤖 These checks failed through no fault of this change, so their failed jobs are to be re-run. Run 2 (ci) is still running, and GitHub reruns a run only once it has finished: its failed jobs will be re-run when it does.|/test pull-unit|/retest" {
 			t.Errorf("commented %q:\n%s", bodies, out.String())
 		}
 		if !strings.Contains(out.String(), `"/lgtm" is neither`) {
@@ -673,7 +675,7 @@ func TestPostRepliesReruns(t *testing.T) {
 		if err := ApplyAction(ctx, f.client(t), doc, "post-replies", false, &out); err != nil {
 			t.Fatal(err)
 		}
-		if len(f.issue) != 3 {
+		if len(f.issue) != 4 {
 			t.Errorf("commented again: %d comments", len(f.issue))
 		}
 	})
@@ -694,6 +696,32 @@ func TestPostRepliesReruns(t *testing.T) {
 		err := ApplyAction(ctx, f.client(t), prChange(t, "change:\n  rerun:\n    - run: 999\n"), "post-replies", false, &out)
 		if err == nil || !strings.Contains(err.Error(), "999 is neither a workflow run nor a job of one") || len(f.reran) != 0 {
 			t.Errorf("an unknown id: err %v, reran %v", err, f.reran)
+		}
+	})
+
+	// A run still running (GitHub reruns a run only once it has finished)
+	// is not dropped: one comment defers its rerun to the watch, and
+	// applying again adds none.
+	t.Run("a run still running is deferred, once", func(t *testing.T) {
+		f := &fakeChecks{}
+		var out bytes.Buffer
+		doc := prChange(t, "change:\n  rerun:\n    - run: 2\n")
+		if err := ApplyAction(ctx, f.client(t), doc, "post-replies", false, &out); err != nil {
+			t.Fatalf("%v\n%s", err, out.String())
+		}
+		if len(f.reran) != 0 || len(f.issue) != 1 {
+			t.Fatalf("reran %v, commented %d:\n%s", f.reran, len(f.issue), out.String())
+		}
+		body := f.issue[0]["body"].(string)
+		d, ok := ParseDeferredRerun(body)
+		if !ok || d.Run != 2 || d.Head != "h2" || d.State != DeferredPending || !strings.Contains(body, "Run 2 (ci) is still running") {
+			t.Errorf("deferral comment %q (%+v)", body, d)
+		}
+		if err := ApplyAction(ctx, f.client(t), doc, "post-replies", false, &out); err != nil {
+			t.Fatal(err)
+		}
+		if len(f.issue) != 1 || !strings.Contains(out.String(), "Its rerun is deferred already") {
+			t.Errorf("deferred twice: %d comments\n%s", len(f.issue), out.String())
 		}
 	})
 
