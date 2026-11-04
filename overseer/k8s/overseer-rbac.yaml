@@ -24,8 +24,16 @@ rules:
   resources: ["services"]
   verbs: ["get", "list", "create", "update", "patch", "delete"]
 - apiGroups: [""]
-  resources: ["secrets", "pods", "events"]
+  resources: ["secrets", "events"]
   verbs: ["get", "list"]
+# Delete a pod: a sandbox moved to the overseer's factory image (on reuse,
+# no task in flight) has its awake pod replaced, which its controller makes
+# again from the updated spec. Without it the spec moved and the old pod
+# ran on (factory's sandbox.go repinImage). No more than deleting the
+# sandbox itself, which this role already may.
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list", "delete"]
 - apiGroups: [""]
   resources: ["pods/portforward"]
   verbs: ["create"]
