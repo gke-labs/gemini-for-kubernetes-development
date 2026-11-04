@@ -33,8 +33,10 @@ var ErrNoFallback = errors.New("no model left to fall back to")
 
 // engineUnavailableRE is an engine's answer that it cannot serve now: its
 // model at capacity (gemini's "RPC error [503]: This model is currently
-// experiencing high demand"), or the key rate limited or out of quota.
-var engineUnavailableRE = regexp.MustCompile(`(?i)RPC error \[(429|503)\]|experiencing high demand|RESOURCE_EXHAUSTED|model is (currently )?overloaded|\b(429 Too Many Requests|503 Service Unavailable)\b`)
+// experiencing high demand"), the key rate limited or out of quota, or the
+// model's API out of reach (gemini's "RPC error [500]: exception
+// TypeError: fetch failed sending request": its request never got there).
+var engineUnavailableRE = regexp.MustCompile(`(?i)RPC error \[(429|503)\]|experiencing high demand|RESOURCE_EXHAUSTED|model is (currently )?overloaded|\b(429 Too Many Requests|503 Service Unavailable)\b|fetch failed sending request`)
 
 // EngineUnavailable reports whether a turn failed because the engine could
 // not serve it - a state of the service at the moment, which another

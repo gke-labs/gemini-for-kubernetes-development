@@ -622,7 +622,22 @@ func (f *fakeChecks) client(t *testing.T) *githubv39.Client {
 			w.WriteHeader(http.StatusCreated)
 			return
 		}
-		fmt.Fprint(w, runs[rest])
+		body, ok := runs[rest]
+		if !ok {
+			w.WriteHeader(http.StatusNotFound)
+			fmt.Fprint(w, `{"message":"Not Found"}`)
+			return
+		}
+		fmt.Fprint(w, body)
+	})
+	// Job 126 is of run 1: an id an agent reading the job's log has.
+	mux.HandleFunc("/repos/o/r/actions/jobs/", func(w http.ResponseWriter, r *http.Request) {
+		if strings.TrimPrefix(r.URL.Path, "/repos/o/r/actions/jobs/") != "126" {
+			w.WriteHeader(http.StatusNotFound)
+			fmt.Fprint(w, `{"message":"Not Found"}`)
+			return
+		}
+		fmt.Fprint(w, `{"id":126,"run_id":1,"name":"presubmit-gatekeeper"}`)
 	})
 	return serve(t, mux)
 }
@@ -660,6 +675,25 @@ func TestPostRepliesReruns(t *testing.T) {
 		}
 		if len(f.issue) != 3 {
 			t.Errorf("commented again: %d comments", len(f.issue))
+		}
+	})
+
+	// The id of one of a run's jobs (#14849: the gatekeeper job's, taken
+	// from its log) reruns the job's run, rather than a 404 and nothing; an
+	// id that is neither fails the apply, saying so.
+	t.Run("a job's id reruns its run", func(t *testing.T) {
+		f := &fakeChecks{}
+		var out bytes.Buffer
+		if err := ApplyAction(ctx, f.client(t), prChange(t, "change:\n  rerun:\n    - run: 126\n"), "post-replies", false, &out); err != nil {
+			t.Fatalf("%v\n%s", err, out.String())
+		}
+		if strings.Join(f.reran, ",") != "1" || !strings.Contains(out.String(), `126 is job "presubmit-gatekeeper" of run 1`) {
+			t.Errorf("reran %v:\n%s", f.reran, out.String())
+		}
+		f = &fakeChecks{}
+		err := ApplyAction(ctx, f.client(t), prChange(t, "change:\n  rerun:\n    - run: 999\n"), "post-replies", false, &out)
+		if err == nil || !strings.Contains(err.Error(), "999 is neither a workflow run nor a job of one") || len(f.reran) != 0 {
+			t.Errorf("an unknown id: err %v, reran %v", err, f.reran)
 		}
 	})
 

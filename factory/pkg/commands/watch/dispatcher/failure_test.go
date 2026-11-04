@@ -82,6 +82,8 @@ func TestFailureOfLogEngineUnavailable(t *testing.T) {
 			"step 8:ask: agent: prompt failed: RPC error [503]: This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.", true},
 		"rate limited": {"Error: step 3:ask: agent: prompt failed: RPC error [429]: RESOURCE_EXHAUSTED\nError: running recipe: task failed with exit code 1\n",
 			"step 3:ask: agent: prompt failed: RPC error [429]: RESOURCE_EXHAUSTED", true},
+		"the model's API out of reach (#14849)": {"Error: step 8:ask: agent: prompt failed: RPC error [500]: exception TypeError: fetch failed sending request\nError: running recipe: task failed with exit code 1\n",
+			"step 8:ask: agent: prompt failed: RPC error [500]: exception TypeError: fetch failed sending request", true},
 		"the task's own failure": {"Error: step 9:push: no commit on top of abc\nError: running recipe: task failed with exit code 1\n",
 			"running recipe: task failed with exit code 1", false},
 		"503 only in the agent's output, not an error line": {"the agent fetched a page: 503 Service Unavailable\nError: running recipe: task failed with exit code 1\n",

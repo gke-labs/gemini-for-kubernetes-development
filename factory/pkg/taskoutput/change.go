@@ -763,9 +763,21 @@ func applyReruns(ctx context.Context, gh *githubv39.Client, doc *Document, owner
 }
 
 // rerunFailedJobs reruns the failed jobs of GitHub Actions run id, if it
-// is of head and failed.
+// is of head and failed. An id that is no run but one of its jobs' - what
+// an agent reading a job's log has to hand (#14849: a gatekeeper job's id,
+// a 404, and nothing rerun) - is taken for that job's run.
 func rerunFailedJobs(ctx context.Context, gh *githubv39.Client, owner, repo string, id int64, head string, dryRun bool, out io.Writer) error {
 	run, _, err := gh.Actions.GetWorkflowRunByID(ctx, owner, repo, id)
+	var notFound *githubv39.ErrorResponse
+	if errors.As(err, &notFound) && notFound.Response != nil && notFound.Response.StatusCode == http.StatusNotFound {
+		job, _, jerr := gh.Actions.GetWorkflowJobByID(ctx, owner, repo, id)
+		if jerr != nil {
+			return fmt.Errorf("%d is neither a workflow run nor a job of one: %w", id, err)
+		}
+		fmt.Fprintf(out, "%d is job %q of run %d; rerunning that run's failed jobs\n", id, job.GetName(), job.GetRunID())
+		id = job.GetRunID()
+		run, _, err = gh.Actions.GetWorkflowRunByID(ctx, owner, repo, id)
+	}
 	if err != nil {
 		return err
 	}

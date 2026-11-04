@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -669,7 +670,7 @@ func TestFetchPRCILogs(t *testing.T) {
 #!/bin/bash
 case "$1 $2" in
   "auth token") echo SECRET_TOK ;;
-  "api repos/upstream-org/repo/commits/h1/check-runs"*) echo "11 unit tests"; echo "12 docs" ;;
+  "api repos/upstream-org/repo/commits/h1/check-runs"*) echo "11 41 unit tests"; echo "12 - docs" ;;
   *) echo "unexpected gh $*" >&2; exit 1 ;;
 esac
 STUB
@@ -710,7 +711,10 @@ echo "MD=$(cat "$TASK_DIR/ci-logs.md")"`
 	if !strings.Contains(out, "LOG=##[group]Run make test\n--- FAIL: TestX (0.1s)\n") {
 		t.Errorf("log not cleaned of timestamps and colours:\n%s", out)
 	}
-	for _, w := range []string{"failed on h1", "### unit tests", "its whole log: ", "/task/ci-logs/11.log", "--- FAIL: TestX", "### docs", "Job 12: its log could not be downloaded"} {
+	for _, w := range []string{"failed on h1", "### unit tests", "its whole log: ", "/task/ci-logs/11.log", "--- FAIL: TestX", "### docs", "Job 12: its log could not be downloaded",
+		// The run a rerun is asked of, beside the job (#14849: an agent took
+		// the job's id for the run's).
+		"Job 11 of workflow run 41 (to run it again: `run: 41`, the run's id, never the job's); its whole log: "} {
 		if !strings.Contains(out, w) {
 			t.Errorf("ci-logs.md lacks %q:\n%s", w, out)
 		}
@@ -970,5 +974,38 @@ echo "UNCHANGED=$([ "$(git rev-parse HEAD)" = "$before" ] && echo yes || echo no
 		if strings.Contains(got[strings.Index(got, "---LOG"):], unwanted) {
 			t.Errorf("the pushed commits still carry %q:\n%s", unwanted, got)
 		}
+	}
+}
+
+// ciFailedJobsOfCommit's jq takes each failed GitHub Actions job's run from
+// its check's link, "-" when it has none, and skips other apps' checks and
+// jobs that did not fail.
+func TestCIFailedJobsJQ(t *testing.T) {
+	jq, err := exec.LookPath("jq")
+	if err != nil {
+		t.Skip("jq required")
+	}
+	lib, err := scriptsFS.ReadFile("lib.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := regexp.MustCompile(`(?s)function ciFailedJobsOfCommit \{.*?--jq '([^']*)'`).FindSubmatch(lib)
+	if m == nil {
+		t.Fatal("no jq in ciFailedJobsOfCommit")
+	}
+	checks := `{"check_runs":[
+	  {"id":126,"name":"presubmit-gatekeeper","conclusion":"failure","app":{"slug":"github-actions"},"details_url":"https://github.com/o/r/actions/runs/41814009999/job/126"},
+	  {"id":127,"name":"tests e2e","conclusion":"timed_out","app":{"slug":"github-actions"},"details_url":"https://github.com/o/r/runs/127"},
+	  {"id":128,"name":"passed","conclusion":"success","app":{"slug":"github-actions"},"details_url":"https://github.com/o/r/actions/runs/1/job/128"},
+	  {"id":129,"name":"prow","conclusion":"failure","app":{"slug":"prow"},"details_url":"https://prow/x"}
+	]}`
+	cmd := exec.Command(jq, "-r", string(m[1]))
+	cmd.Stdin = strings.NewReader(checks)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("jq: %v\n%s", err, out)
+	}
+	if got, want := strings.TrimSpace(string(out)), "126 41814009999 presubmit-gatekeeper\n127 - tests e2e"; got != want {
+		t.Errorf("jobs:\n%s\nwant:\n%s", got, want)
 	}
 }

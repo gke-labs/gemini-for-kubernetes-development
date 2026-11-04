@@ -120,8 +120,11 @@ func TestEngineUnavailable(t *testing.T) {
 	for msg, want := range map[string]bool{
 		busy: true,
 		"prompt failed: RPC error [429]: RESOURCE_EXHAUSTED": true,
-		"prompt failed: the agent stopped":                   false,
-		"exited 1":                                           false,
+		// The model's API out of reach (#14849's care-ci, twice).
+		"prompt failed: RPC error [500]: exception TypeError: fetch failed sending request": true,
+		"prompt failed: RPC error [500]: internal error in the tool":                        false,
+		"prompt failed: the agent stopped":                                                  false,
+		"exited 1":                                                                          false,
 	} {
 		if got := EngineUnavailable(errors.New(msg)); got != want {
 			t.Errorf("EngineUnavailable(%q) = %v", msg, got)
