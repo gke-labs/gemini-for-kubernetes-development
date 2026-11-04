@@ -731,7 +731,7 @@ func applyReruns(ctx context.Context, gh *githubv39.Client, doc *Document, owner
 	for i, r := range reruns {
 		switch {
 		case r.Run > 0:
-			if err := rerunFailedJobs(ctx, gh, owner, repo, r.Run, head, dryRun, out); err != nil {
+			if err := rerunFailedJobs(ctx, gh, owner, repo, num, r.Run, head, dryRun, out); err != nil {
 				return fmt.Errorf("rerunning run %d: %w", r.Run, err)
 			}
 		case retestRE.MatchString(r.Retest):
@@ -766,7 +766,7 @@ func applyReruns(ctx context.Context, gh *githubv39.Client, doc *Document, owner
 // is of head and failed. An id that is no run but one of its jobs' - what
 // an agent reading a job's log has to hand (#14849: a gatekeeper job's id,
 // a 404, and nothing rerun) - is taken for that job's run.
-func rerunFailedJobs(ctx context.Context, gh *githubv39.Client, owner, repo string, id int64, head string, dryRun bool, out io.Writer) error {
+func rerunFailedJobs(ctx context.Context, gh *githubv39.Client, owner, repo string, num int, id int64, head string, dryRun bool, out io.Writer) error {
 	run, _, err := gh.Actions.GetWorkflowRunByID(ctx, owner, repo, id)
 	var notFound *githubv39.ErrorResponse
 	if errors.As(err, &notFound) && notFound.Response != nil && notFound.Response.StatusCode == http.StatusNotFound {
@@ -786,8 +786,9 @@ func rerunFailedJobs(ctx context.Context, gh *githubv39.Client, owner, repo stri
 		fmt.Fprintf(out, "Run %d (%s) is of %.7s, not of the PR's head %.7s; not rerunning it\n", id, run.GetName(), run.GetHeadSHA(), head)
 		return nil
 	case run.GetStatus() != "completed":
-		fmt.Fprintf(out, "Run %d (%s) is %s already; not rerunning it\n", id, run.GetName(), run.GetStatus())
-		return nil
+		// Not yet: GitHub reruns a run only once it has finished. The
+		// assessment is kept on the PR, for the watch to act on then.
+		return deferRerun(ctx, gh, owner, repo, num, run, head, dryRun, out)
 	case run.GetConclusion() == "success":
 		fmt.Fprintf(out, "Run %d (%s) passed; not rerunning it\n", id, run.GetName())
 		return nil
@@ -803,6 +804,32 @@ func rerunFailedJobs(ctx context.Context, gh *githubv39.Client, owner, repo stri
 	}
 	_, err = gh.Do(ctx, req, nil)
 	return err
+}
+
+// deferRerun posts the comment that defers a rerun of run (still running)
+// to the watch (DeferredRerun), unless one is pending for it already.
+func deferRerun(ctx context.Context, gh *githubv39.Client, owner, repo string, num int, run *githubv39.WorkflowRun, head string, dryRun bool, out io.Writer) error {
+	d := DeferredRerun{Run: run.GetID(), Head: head, Until: time.Now().Add(DeferredRerunFor), State: DeferredPending}
+	fmt.Fprintf(out, "Run %d (%s) is %s: %s its rerun until it finishes\n", d.Run, run.GetName(), run.GetStatus(), doing(dryRun, "deferring", "defer"))
+	if dryRun {
+		return nil
+	}
+	comments, _, err := gh.Issues.ListComments(ctx, owner, repo, num, &githubv39.IssueListCommentsOptions{ListOptions: githubv39.ListOptions{PerPage: 100}})
+	if err != nil {
+		return fmt.Errorf("reading #%d's comments: %w", num, err)
+	}
+	for _, c := range comments {
+		if p, ok := ParseDeferredRerun(c.GetBody()); ok && p.Run == d.Run && p.State == DeferredPending {
+			fmt.Fprintf(out, "Its rerun is deferred already: %s\n", c.GetHTMLURL())
+			return nil
+		}
+	}
+	c, _, err := gh.Issues.CreateComment(ctx, owner, repo, num, &githubv39.IssueComment{Body: githubv39.String(DeferredRerunComment(d, run.GetName()))})
+	if err != nil {
+		return fmt.Errorf("deferring the rerun of run %d: %w", d.Run, err)
+	}
+	fmt.Fprintf(out, "Deferred: %s\n", c.GetHTMLURL())
+	return nil
 }
 
 // replyMarker marks a reply by its task and the comment it answers.
