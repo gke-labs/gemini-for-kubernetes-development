@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import './App.css';
 import OverseerWork from './OverseerWork';
 import BoardPicker from './BoardPicker';
+import { taskLabel, taskLabelTitle } from './WorkBits';
 
 export const getTimestampDetails = (ts) => {
     if (!ts) return null;
@@ -62,6 +63,21 @@ export const formatTriggerReason = (reason) => {
         case 'ChoreScheduled': return 'Scheduled Chore';
         default: return reason || '';
     }
+};
+
+// TaskTypeCell is a queue row's Type: the task's type (pr-rule,
+// issue-rule) and, under it, what the task does ("Fix CI"), when its
+// rule or recipe says more than its type.
+export const TaskTypeCell = ({ task }) => {
+    const label = taskLabel(task);
+    return (
+        <div title={taskLabelTitle(task)}>
+            <span style={{ backgroundColor: 'var(--bg-secondary)', padding: '3px 8px', borderRadius: '4px', fontSize: '0.8rem', fontWeight: '600' }}>{task.type}</span>
+            {label && label !== task.type && (
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '4px' }}>{label}</div>
+            )}
+        </div>
+    );
 };
 
 // overseerRoute reads #/overseers/<name>: the overseer the page is on.
@@ -613,7 +629,7 @@ const Overseer = ({ namespace: userNamespace }) => {
                                                 )}
                                             </td>
                                             <td style={{ padding: '12px 16px' }}>
-                                                <span style={{ backgroundColor: 'var(--bg-secondary)', padding: '3px 8px', borderRadius: '4px', fontSize: '0.8rem', fontWeight: '600' }}>{t.type}</span>
+                                                <TaskTypeCell task={t} />
                                             </td>
                                             <td style={{ padding: '12px 16px' }}>
                                                 {t.url ? (
@@ -698,6 +714,9 @@ const Overseer = ({ namespace: userNamespace }) => {
                                             const q = queueFilter.toLowerCase();
                                             return (t.fileName || '').toLowerCase().includes(q) ||
                                                    (t.type || '').toLowerCase().includes(q) ||
+                                                   (t.rule || '').toLowerCase().includes(q) ||
+                                                   (t.recipe || '').toLowerCase().includes(q) ||
+                                                   taskLabel(t).toLowerCase().includes(q) ||
                                                    (t.priority || '').toLowerCase().includes(q) ||
                                                    (t.assignee || '').toLowerCase().includes(q) ||
                                                    (t.enqueuedAt || '').toLowerCase().includes(q) ||
@@ -726,7 +745,7 @@ const Overseer = ({ namespace: userNamespace }) => {
                                                     #{t.rank}
                                                 </td>
                                                 <td style={{ padding: '12px 16px' }}>
-                                                    <span style={{ backgroundColor: 'var(--bg-secondary)', padding: '3px 8px', borderRadius: '4px', fontSize: '0.8rem', fontWeight: '600' }}>{t.type}</span>
+                                                    <TaskTypeCell task={t} />
                                                 </td>
                                                 <td style={{ padding: '12px 16px' }}>
                                                     {t.url ? (

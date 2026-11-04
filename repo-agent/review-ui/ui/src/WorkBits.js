@@ -58,6 +58,45 @@ export function recipeSource(run) {
   return `recipe: ${path}${commit ? ` @ ${commit.slice(0, 7)}` : ''}`;
 }
 
+// TASK_RULE_LABELS and TASK_RECIPE_LABELS name what a queued task does,
+// by the rule that decided it (factory's watch rules) or, for a rule of a
+// name not known here (a repository's), by the recipe it runs.
+const TASK_RULE_LABELS = {
+  ci: 'Fix CI', comments: 'Address comments', conflict: 'Resolve conflicts',
+  fix: 'Fix issue', implement: 'Implement plan', plan: 'Plan', review: 'Review PR',
+  workflow: 'Workflow step',
+};
+const TASK_RECIPE_LABELS = {
+  'care-ci': 'Fix CI', 'care-comments': 'Address comments', 'care-rebase': 'Resolve conflicts',
+  'care-iterate': 'Iterate', care: 'Care', fix: 'Fix issue', 'fix-with-plan': 'Implement plan',
+  plan: 'Plan', review: 'Review PR', triage: 'Triage', fanout: 'Fan out', workflow: 'Workflow step',
+};
+const TASK_TYPE_LABELS = { 'agent-chore': 'Chore' };
+
+const humanize = s => {
+  const words = s.replace(/[-_]+/g, ' ').trim();
+  return words.charAt(0).toUpperCase() + words.slice(1);
+};
+
+const lookup = (labels, key) => (key && Object.prototype.hasOwnProperty.call(labels, key) ? labels[key] : '');
+
+// taskLabel is what a queued task does, in words: "Fix CI", "Address
+// comments"; its type (pr-rule, issue-rule) for a task from an older
+// watch, which names neither its rule nor its recipe.
+export function taskLabel(t) {
+  if (!t) return '';
+  return lookup(TASK_RULE_LABELS, t.rule) || lookup(TASK_RECIPE_LABELS, t.recipe)
+    || (t.rule && humanize(t.rule)) || (t.recipe && humanize(t.recipe))
+    || lookup(TASK_TYPE_LABELS, t.type) || t.type || '';
+}
+
+// taskLabelTitle is a task label's hover: its type, rule and recipe.
+export function taskLabelTitle(t) {
+  if (!t) return '';
+  return [t.type && `type: ${t.type}`, t.rule && `rule: ${t.rule}`, t.recipe && `recipe: ${t.recipe}`]
+    .filter(Boolean).join('\n');
+}
+
 // ageOf is how long ago ts was: 5m, 3h, 2d.
 export function ageOf(ts) {
   if (!ts) return '';
