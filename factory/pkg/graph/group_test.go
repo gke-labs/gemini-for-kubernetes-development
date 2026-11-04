@@ -2,8 +2,8 @@ package graph
 
 import (
 	"context"
-	"fmt"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
