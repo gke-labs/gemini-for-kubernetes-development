@@ -4,16 +4,10 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"regexp"
 	"strings"
-)
 
-// engineUnavailableRE is an engine's answer that it cannot serve now -
-// its model at capacity or the caller rate limited - as gemini prints it
-// ("prompt failed: RPC error [503]: This model is currently experiencing
-// high demand…") and as the APIs name it: a moment's state of the
-// service, which a later run gets past.
-var engineUnavailableRE = regexp.MustCompile(`(?i)RPC error \[(429|503)\]|experiencing high demand|RESOURCE_EXHAUSTED|model is (currently )?overloaded|\b(429 Too Many Requests|503 Service Unavailable)\b`)
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/recipe"
+)
 
 // RunError is a child factory process that exited non-zero, with what its
 // log says went wrong: the last error it printed. Where a recipe's apply
@@ -23,7 +17,7 @@ type RunError struct {
 	Err    error
 	Reason string
 	// EngineUnavailable is that the log shows the engine could not serve
-	// the run (engineUnavailableRE): its model at capacity, not the task.
+	// the run (recipe.EngineUnavailableMessage): its model at capacity, not the task.
 	EngineUnavailable bool
 }
 
@@ -53,7 +47,7 @@ func failureFromLog(path string) string {
 }
 
 // failureOfLog is failureFromLog, and whether the run failed because its
-// engine could not serve it (engineUnavailableRE on an error line): the
+// engine could not serve it (recipe.EngineUnavailableMessage on an error line): the
 // reason is then that line, which says so, rather than the "task failed"
 // factory prints last.
 func failureOfLog(path string) (string, bool) {
@@ -80,7 +74,7 @@ func failureOfLog(path string) (string, bool) {
 		if reason == "" {
 			reason = line
 		}
-		if engineUnavailableRE.MatchString(line) {
+		if recipe.EngineUnavailableMessage(line) {
 			reason, unavailable = line, true
 			break
 		}

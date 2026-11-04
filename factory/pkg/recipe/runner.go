@@ -40,7 +40,13 @@ var engineUnavailableRE = regexp.MustCompile(`(?i)RPC error \[(429|503)\]|experi
 // not serve it - a state of the service at the moment, which another
 // model, or later, gets past - rather than on the turn's own account.
 func EngineUnavailable(err error) bool {
-	return err != nil && engineUnavailableRE.MatchString(err.Error())
+	return err != nil && EngineUnavailableMessage(err.Error())
+}
+
+// EngineUnavailableMessage reports whether a message - an error line of a
+// task's log - says the engine could not serve (EngineUnavailable).
+func EngineUnavailableMessage(msg string) bool {
+	return engineUnavailableRE.MatchString(msg)
 }
 
 type Session interface {
