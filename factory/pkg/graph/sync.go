@@ -28,6 +28,7 @@ type GitHub interface {
 	EditIssue(ctx context.Context, number int, title, body string) error
 	AddLabels(ctx context.Context, number int, labels []string) error
 	LabelExists(ctx context.Context, name string) (bool, error)
+	RemoveLabel(ctx context.Context, number int, label string) error
 	AddAssignees(ctx context.Context, number int, assignees []string) error
 	AddSubIssue(ctx context.Context, parent, child int) error
 	AddComment(ctx context.Context, number int, body string) error
@@ -537,6 +538,13 @@ func applyOne(ctx context.Context, gh GitHub, opts Options, p *Pass, a Action) e
 			return err
 		}
 		return gh.SetIssueState(ctx, a.Issue, "closed", "not_planned")
+	case ActRemoveChildLabels:
+		for _, l := range a.Labels {
+			if err := gh.RemoveLabel(ctx, a.Issue, l); err != nil && !github.IsNotFound(err) {
+				return err
+			}
+		}
+		return nil
 	case ActAddChildLabels, ActAddParentLabels:
 		return addLabels(ctx, gh, p, a.Issue, a.Labels)
 	case ActAddChildAssignees:
@@ -586,6 +594,8 @@ func describe(a Action, dryRun bool) string {
 		return fmt.Sprintf("%sclose #%d as a duplicate of #%d (step %s)", would, a.Issue, a.Of, a.Step)
 	case ActAddChildLabels:
 		return fmt.Sprintf("%slabel #%d (step %s) %s", would, a.Issue, a.Step, strings.Join(a.Labels, ", "))
+	case ActRemoveChildLabels:
+		return fmt.Sprintf("%sunlabel #%d (step %s, in its group's PR) %s", would, a.Issue, a.Step, strings.Join(a.Labels, ", "))
 	case ActAddChildAssignees:
 		return fmt.Sprintf("%sassign #%d (step %s) to %s, from the parent", would, a.Issue, a.Step, strings.Join(a.Assignees, ", "))
 	case ActAddParentLabels:
