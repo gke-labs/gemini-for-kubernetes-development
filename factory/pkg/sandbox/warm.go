@@ -21,8 +21,9 @@ const (
 	// repository (as labelValue makes it) they warm.
 	LabelWarmWorkspace = "factory.gemini.google.com/warm-workspace"
 	// AnnotationWarmImage is the image the warm sandbox ran. A snapshot
-	// restores only into a sandbox of the same image: another image's
-	// toolchain would miss the snapshot's caches.
+	// of the sandbox's own image is preferred; another image's is used when
+	// there is none (warmSnapshot), and the warm cycle makes one of the new
+	// image as soon as it can (WarmDue).
 	AnnotationWarmImage = "factory.gemini.google.com/warm-image"
 	// AnnotationWarmExpires is when a snapshot is too old to restore
 	// (RFC 3339), however many newer ones failed to appear.
@@ -40,37 +41,56 @@ var VolumeSnapshotGVR = schema.GroupVersionResource{
 }
 
 // warmSnapshot is the snapshot a new sandbox of repo running image
-// restores from: the newest ready, unexpired one labelled for repo and
-// made with image. ok is false when there is none.
-func warmSnapshot(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, repo, image string, now time.Time) (name string, restoreSize resource.Quantity, ok bool, err error) {
+// restores from: the newest ready, unexpired one labelled for repo, made
+// with image if there is such a one, else of any image (sameImage false).
+// A snapshot of another image - an overseer upgraded since it was made -
+// still holds the checkout, the module cache and, while the Go toolchain is
+// the same, a build cache that hits: at worst its caches miss, which is
+// where a disk with no snapshot starts anyway. ok is false when there is
+// none at all.
+func warmSnapshot(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, repo, image string, now time.Time) (name string, restoreSize resource.Quantity, sameImage, ok bool, err error) {
 	sel := labels.Set{LabelWarmWorkspace: labelValue(repo)}.String()
 	list, err := kubeClient.DynamicClient.Resource(VolumeSnapshotGVR).Namespace(namespace).List(ctx, metav1.ListOptions{LabelSelector: sel})
 	if err != nil {
-		return "", restoreSize, false, err
+		return "", restoreSize, false, false, err
 	}
-	var newest *unstructured.Unstructured
+	var newest, newestSame *unstructured.Unstructured
 	for i := range list.Items {
 		s := &list.Items[i]
-		if s.GetDeletionTimestamp() != nil || s.GetAnnotations()[AnnotationWarmImage] != image {
-			continue
-		}
-		if ready, _, _ := unstructured.NestedBool(s.Object, "status", "readyToUse"); !ready {
-			continue
-		}
-		if exp, err := time.Parse(time.RFC3339, s.GetAnnotations()[AnnotationWarmExpires]); err != nil || !now.Before(exp) {
+		if !usableSnapshot(s, now) {
 			continue
 		}
 		if newest == nil || newest.GetCreationTimestamp().Time.Before(s.GetCreationTimestamp().Time) {
 			newest = s
 		}
+		if s.GetAnnotations()[AnnotationWarmImage] == image && (newestSame == nil || newestSame.GetCreationTimestamp().Time.Before(s.GetCreationTimestamp().Time)) {
+			newestSame = s
+		}
 	}
-	if newest == nil {
-		return "", restoreSize, false, nil
+	chosen := newestSame
+	if chosen == nil {
+		chosen = newest
 	}
-	if size, found, _ := unstructured.NestedString(newest.Object, "status", "restoreSize"); found {
+	if chosen == nil {
+		return "", restoreSize, false, false, nil
+	}
+	if size, found, _ := unstructured.NestedString(chosen.Object, "status", "restoreSize"); found {
 		restoreSize, _ = resource.ParseQuantity(size)
 	}
-	return newest.GetName(), restoreSize, true, nil
+	return chosen.GetName(), restoreSize, chosen == newestSame, true, nil
+}
+
+// usableSnapshot is whether a warm snapshot can be restored from now:
+// not being deleted, ready, and not expired.
+func usableSnapshot(s *unstructured.Unstructured, now time.Time) bool {
+	if s.GetDeletionTimestamp() != nil {
+		return false
+	}
+	if ready, _, _ := unstructured.NestedBool(s.Object, "status", "readyToUse"); !ready {
+		return false
+	}
+	exp, err := time.Parse(time.RFC3339, s.GetAnnotations()[AnnotationWarmExpires])
+	return err == nil && now.Before(exp)
 }
 
 // restoreWorkspace points sb's workspace claim at the snapshot, growing
@@ -117,7 +137,7 @@ func restoreFromWarmSnapshot(ctx context.Context, kubeClient *clients.Kubernetes
 		return
 	}
 	image, _, _ := unstructured.NestedString(containers[0].(map[string]interface{}), "image")
-	name, size, ok, err := warmSnapshot(ctx, kubeClient, namespace, repo, image, time.Now())
+	name, size, sameImage, ok, err := warmSnapshot(ctx, kubeClient, namespace, repo, image, time.Now())
 	if err != nil {
 		klog.V(1).Infof("sandbox %s: no warm workspace (%v); starting on an empty disk", sb.GetName(), err)
 		return
@@ -125,6 +145,10 @@ func restoreFromWarmSnapshot(ctx context.Context, kubeClient *clients.Kubernetes
 	if !ok {
 		return
 	}
-	klog.Infof("sandbox %s: restoring its workspace from snapshot %s", sb.GetName(), name)
+	if sameImage {
+		klog.Infof("sandbox %s: restoring its workspace from snapshot %s", sb.GetName(), name)
+	} else {
+		klog.Infof("sandbox %s: restoring its workspace from snapshot %s, made with another image (none of %s yet)", sb.GetName(), name, image)
+	}
 	restoreWorkspace(sb, name, size)
 }

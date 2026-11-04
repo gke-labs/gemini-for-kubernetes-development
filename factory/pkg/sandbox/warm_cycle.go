@@ -125,9 +125,11 @@ func AnnotateSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, 
 }
 
 // WarmDue reports whether repo's warm cycle has anything to do: a warm
-// sandbox exists (a warm running, waiting on its snapshot, or failed), or
-// no ready snapshot is younger than interval.
-func WarmDue(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, repo string, interval time.Duration, now time.Time) (bool, error) {
+// sandbox exists (a warm running, waiting on its snapshot, or failed), no
+// ready snapshot is younger than interval, or - image given, the one new
+// sandboxes run - none is of image: an upgraded overseer's sandboxes get a
+// snapshot of their own image now, not when the last one ages out.
+func WarmDue(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, repo, image string, interval time.Duration, now time.Time) (bool, error) {
 	sb, err := GetWarmSandbox(ctx, kubeClient, namespace, repo)
 	if err != nil || sb != nil {
 		return sb != nil, err
@@ -136,12 +138,20 @@ func WarmDue(ctx context.Context, kubeClient *clients.KubernetesClient, namespac
 	if err != nil {
 		return false, err
 	}
+	fresh, ofImage := false, image == ""
 	for _, s := range snaps {
-		if ready, _, _ := unstructured.NestedBool(s.Object, "status", "readyToUse"); ready && now.Sub(s.GetCreationTimestamp().Time) < interval {
-			return false, nil
+		ready, _, _ := unstructured.NestedBool(s.Object, "status", "readyToUse")
+		if !ready {
+			continue
+		}
+		if now.Sub(s.GetCreationTimestamp().Time) < interval {
+			fresh = true
+		}
+		if s.GetAnnotations()[AnnotationWarmImage] == image {
+			ofImage = true
 		}
 	}
-	return true, nil
+	return !fresh || !ofImage, nil
 }
 
 // warmSnapshots are repo's warm snapshots, newest first.
