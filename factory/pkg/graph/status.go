@@ -73,8 +73,8 @@ func RenderStatus(source string, version int, s *Spec, r Result) string {
 // a comment: a node per step - green when done, blue when active, yellow
 // when its work is in its group's PR, dashed grey when not started - with
 // its issue, the after edges between them, and, for a grouped graph, a box
-// around each group's steps: one PR. Nodes link to their issues relative to
-// the parent's page, where the renderer allows links.
+// around each group's steps: one PR. Nodes link to their issues
+// (Result.IssuesURL), opening a new tab.
 func renderDiagram(s *Spec, r Result) string {
 	node := map[string]string{}
 	state := map[string]StepStatus{}
@@ -173,9 +173,12 @@ func renderDiagram(s *Spec, r Result) string {
 			}
 		}
 	}
+	// Absolute, in a new tab: GitHub draws the diagram in a frame of its
+	// own (viewscreen.githubusercontent.com), where a relative link
+	// resolves against the frame, not the issue.
 	for _, st := range r.Steps {
-		if st.Child > 0 {
-			fmt.Fprintf(&b, "  click %s \"%d\"\n", node[st.ID], st.Child)
+		if st.Child > 0 && r.IssuesURL != "" {
+			fmt.Fprintf(&b, "  click %s \"%s%d\" _blank\n", node[st.ID], r.IssuesURL, st.Child)
 		}
 	}
 	b.WriteString(`  classDef done fill:#dafbe1,stroke:#1a7f37,color:#116329,stroke-width:2px
