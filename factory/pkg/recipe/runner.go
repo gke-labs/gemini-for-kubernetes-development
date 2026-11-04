@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"text/template"
 
@@ -26,6 +27,22 @@ type Executor interface {
 }
 
 // Session is the agent conversation every ask goes to.
+// ErrNoFallback is Runner.Fallback's answer when no model is left to fall
+// back to.
+var ErrNoFallback = errors.New("no model left to fall back to")
+
+// engineUnavailableRE is an engine's answer that it cannot serve now: its
+// model at capacity (gemini's "RPC error [503]: This model is currently
+// experiencing high demand"), or the key rate limited or out of quota.
+var engineUnavailableRE = regexp.MustCompile(`(?i)RPC error \[(429|503)\]|experiencing high demand|RESOURCE_EXHAUSTED|model is (currently )?overloaded|\b(429 Too Many Requests|503 Service Unavailable)\b`)
+
+// EngineUnavailable reports whether a turn failed because the engine could
+// not serve it - a state of the service at the moment, which another
+// model, or later, gets past - rather than on the turn's own account.
+func EngineUnavailable(err error) bool {
+	return err != nil && engineUnavailableRE.MatchString(err.Error())
+}
+
 type Session interface {
 	// Ask sends one turn and returns the agent's reply once the turn ends.
 	Ask(ctx context.Context, prompt string) (reply string, err error)
@@ -70,6 +87,12 @@ type Runner struct {
 	// run left, a recipe's in a session (session: care), rather than one
 	// of this run's own.
 	Continues bool
+	// Fallback reopens the conversation the run is in on the next model
+	// of its list, when the engine could not serve a turn on this one
+	// (EngineUnavailable): the same conversation - loaded, not begun again -
+	// and the same checkout, so nothing the run did is lost. It says which
+	// model; ErrNoFallback when the list is spent. Nil: no fallback.
+	Fallback func(ctx context.Context) (Session, string, error)
 	// NewSession opens a conversation of this run's own, as a run that
 	// continues none does. With Continues, a conversation too long to take
 	// another turn (full) is left for it at the run's first ask: the
@@ -85,6 +108,15 @@ type Runner struct {
 	Inputs  map[string]string
 	// Log receives a line per step and everything the steps print.
 	Log io.Writer
+}
+
+// fallbackPrompt is a turn sent again to the next model after the one
+// serving the conversation could not finish it: the request as it was,
+// told that another model now continues and that some of it may be done.
+func fallbackPrompt(ask string) string {
+	return "The model serving this conversation became unavailable before it finished your last request. " +
+		"You are a different model continuing the same conversation: what was done so far is in the conversation above and in the checkout. " +
+		"Pick up where it left off and complete the request:\n\n" + ask
 }
 
 // Run runs the recipe's steps in order and stops at the first failure.
@@ -195,6 +227,32 @@ func (r *Runner) Run(ctx context.Context, rec *Recipe) (err error) {
 				}
 				prompt = ask
 				if rec.Context != "" {
+					prompt = rec.Context + "\n\n---\n\n" + ask
+				}
+				res.Reply, err = session.Ask(ctx, prompt)
+				r.addUsage(label, session)
+			}
+			// The engine could not serve the turn (its model at capacity,
+			// the key out of quota): the same conversation goes on with the
+			// next model of the run's list, told where it is, until one
+			// answers or none is left.
+			for EngineUnavailable(err) && r.Fallback != nil {
+				failed := err
+				_ = session.Close()
+				var model string
+				var ferr error
+				if session, model, ferr = r.Fallback(ctx); ferr != nil {
+					session = nil
+					if !errors.Is(ferr, ErrNoFallback) {
+						err = fmt.Errorf("%w; falling back to another model: %w", failed, ferr)
+					}
+					break
+				}
+				fmt.Fprintf(r.Log, "::warning %s: the engine could not serve the turn (%v); continuing the conversation on %s\n", label, failed, model)
+				prompt = fallbackPrompt(ask)
+				if f, ok := session.(FreshSession); ok && f.Fresh() && rec.Context != "" {
+					// The conversation could not be loaded: a new one,
+					// told the recipe's context as a first turn is.
 					prompt = rec.Context + "\n\n---\n\n" + ask
 				}
 				res.Reply, err = session.Ask(ctx, prompt)

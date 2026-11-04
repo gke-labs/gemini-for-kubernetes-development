@@ -1441,17 +1441,26 @@ func runRecipeExec(ctx context.Context, recipePath, inputsPath, taskDir string) 
 	if engine == "" {
 		engine = "gemini"
 	}
-	// The first model only: runEngine's fallback down the list is not
-	// here yet.
+	// The run's models, in order of preference (MODELS: the engine's
+	// list, the gemini one without the models the key is out of quota
+	// for): it starts on the first, and falls back down the list when the
+	// engine cannot serve a turn (Runner.Fallback).
+	var models []string
+	if ms := strings.Fields(os.Getenv("MODELS")); len(ms) > 0 && ms[0] != "default" {
+		models = ms
+	}
 	model := ""
-	if models := strings.Fields(os.Getenv("MODELS")); len(models) > 0 && models[0] != "default" {
+	if len(models) > 0 {
 		model = models[0]
 	}
 
 	task := readSpoolTask(taskDir)
+	// reopen opens the conversation the run is in now - its session's, or
+	// its own after a rotation - on a model: the Fallback's way back in.
+	var reopen func(ctx context.Context, model string) (recipe.Session, error)
 	// fresh opens a conversation of this run's own: on the daemon's task
 	// server when it hosts sessions, else in this process.
-	fresh := func(ctx context.Context, env map[string]string) (recipe.Session, error) {
+	fresh := func(ctx context.Context, env map[string]string, model string) (recipe.Session, error) {
 		apiKey := os.Getenv("GEMINI_API_KEY")
 		if token := os.Getenv(taskapi.EnvTaskToken); token != "" {
 			base := fmt.Sprintf("http://127.0.0.1:%d/v1", taskapi.Port)
@@ -1459,6 +1468,7 @@ func runRecipeExec(ctx context.Context, recipePath, inputsPath, taskDir string) 
 		}
 		return recipe.StartACPSession(ctx, engine, model, apiKey, repoDir, taskDir, env)
 	}
+	openRun, openOwn := openSessionsFor(rec, inputs, task, engine, repoDir, taskDir, fresh)
 	r := &recipe.Runner{
 		Exec: &recipe.SandboxExecutor{
 			StepScript:  stepScript,
@@ -1469,34 +1479,22 @@ func runRecipeExec(ctx context.Context, recipePath, inputsPath, taskDir string) 
 			Secrets:     secrets,
 		},
 		StartSession: func(ctx context.Context) (recipe.Session, error) {
-			apiKey := os.Getenv("GEMINI_API_KEY")
-			env, err := rec.RenderAgentEnv(inputs)
-			if err != nil {
-				return nil, err
-			}
-			// Started by a daemon that hosts sessions: the session is the
-			// daemon's, so it can be watched and continued after the task.
-			if token := os.Getenv(taskapi.EnvTaskToken); token != "" {
-				base := fmt.Sprintf("http://127.0.0.1:%d/v1", taskapi.Port)
-				// A run in a session continues its session's
-				// conversation.
-				if task.Session != "" {
-					return recipe.OpenDaemonSession(ctx, base, token, task.Session, engine, model, apiKey, repoDir, env)
-				}
-				return recipe.StartDaemonSession(ctx, base, token, engine, model, apiKey, repoDir, taskDir, env)
-			}
-			if task.Session != "" {
-				return nil, fmt.Errorf("continuing a conversation needs the sandbox's daemon to host sessions; recreate the sandbox on a newer image")
-			}
-			return recipe.StartACPSession(ctx, engine, model, apiKey, repoDir, taskDir, env)
+			reopen = openRun
+			return openRun(ctx, model)
 		},
 		Continues: task.Session != "",
 		NewSession: func(ctx context.Context) (recipe.Session, error) {
-			env, err := rec.RenderAgentEnv(inputs)
-			if err != nil {
-				return nil, err
+			reopen = openOwn
+			return openOwn(ctx, model)
+		},
+		Fallback: func(ctx context.Context) (recipe.Session, string, error) {
+			next, ok := nextModel(models, model)
+			if reopen == nil || !ok {
+				return nil, "", recipe.ErrNoFallback
 			}
-			return fresh(ctx, env)
+			model = next
+			s, err := reopen(ctx, model)
+			return s, model, err
 		},
 		// The run's conversation is its task's now: task.json says so,
 		// which is what the next run in the session reads
@@ -1510,6 +1508,53 @@ func runRecipeExec(ctx context.Context, recipePath, inputsPath, taskDir string) 
 		return err
 	}
 	return writeTaskOutput(taskDir, repoDir, inputs, engine)
+}
+
+// nextModel is the model after current in a run's list: the one it falls
+// back to. False at the end of the list, or for a model not on it.
+func nextModel(models []string, current string) (string, bool) {
+	i := slices.Index(models, current)
+	if i < 0 || i+1 >= len(models) {
+		return "", false
+	}
+	return models[i+1], true
+}
+
+// openSessionsFor are a recipe run's ways into its conversations, on a
+// given model: openRun the one the run starts in (its session's, when it
+// continues one), openOwn one of the run's own.
+func openSessionsFor(rec *recipe.Recipe, inputs map[string]string, task spool.Task, engine, repoDir, taskDir string,
+	fresh func(context.Context, map[string]string, string) (recipe.Session, error)) (openRun, openOwn func(context.Context, string) (recipe.Session, error)) {
+	openRun = func(ctx context.Context, model string) (recipe.Session, error) {
+		apiKey := os.Getenv("GEMINI_API_KEY")
+		env, err := rec.RenderAgentEnv(inputs)
+		if err != nil {
+			return nil, err
+		}
+		// Started by a daemon that hosts sessions: the session is the
+		// daemon's, so it can be watched and continued after the task.
+		if token := os.Getenv(taskapi.EnvTaskToken); token != "" {
+			base := fmt.Sprintf("http://127.0.0.1:%d/v1", taskapi.Port)
+			// A run in a session continues its session's
+			// conversation.
+			if task.Session != "" {
+				return recipe.OpenDaemonSession(ctx, base, token, task.Session, engine, model, apiKey, repoDir, env)
+			}
+			return recipe.StartDaemonSession(ctx, base, token, engine, model, apiKey, repoDir, taskDir, env)
+		}
+		if task.Session != "" {
+			return nil, fmt.Errorf("continuing a conversation needs the sandbox's daemon to host sessions; recreate the sandbox on a newer image")
+		}
+		return recipe.StartACPSession(ctx, engine, model, apiKey, repoDir, taskDir, env)
+	}
+	openOwn = func(ctx context.Context, model string) (recipe.Session, error) {
+		env, err := rec.RenderAgentEnv(inputs)
+		if err != nil {
+			return nil, err
+		}
+		return fresh(ctx, env, model)
+	}
+	return openRun, openOwn
 }
 
 // takeSecrets reads the task's secrets (spool.SecretsFile) as KEY=VALUE

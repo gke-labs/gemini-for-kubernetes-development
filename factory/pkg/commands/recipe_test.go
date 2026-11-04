@@ -835,3 +835,17 @@ func TestMergeCatalog(t *testing.T) {
 		t.Errorf("a repository group = %v", got)
 	}
 }
+
+// A run falls back down its model list (MODELS) one model at a time, and
+// not past its end.
+func TestNextModel(t *testing.T) {
+	models := []string{"gemini-3.7-flash", "gemini-3.6-flash", "gemini-2.5-pro"}
+	for current, want := range map[string]string{"gemini-3.7-flash": "gemini-3.6-flash", "gemini-3.6-flash": "gemini-2.5-pro", "gemini-2.5-pro": "", "other": "", "": ""} {
+		if got, ok := nextModel(models, current); got != want || ok != (want != "") {
+			t.Errorf("nextModel(%q) = %q, %v; want %q", current, got, ok, want)
+		}
+	}
+	if _, ok := nextModel(nil, ""); ok {
+		t.Error("no list: no fallback")
+	}
+}
