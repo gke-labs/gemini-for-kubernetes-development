@@ -78,17 +78,17 @@ func runIssueScan(t *testing.T, shared bool, seed func(*scantest.Repo), cycles i
 func seedIssues(repo *scantest.Repo) {
 	now := time.Now()
 	ago := func(m int) time.Time { return now.Add(-time.Duration(m) * time.Minute) }
-	repo.Put(scantest.Item{Number: 10, Labels: []string{"overseer"}, Author: "alice", Created: ago(600), Updated: ago(100)})       // labelled: fix
-	repo.Put(scantest.Item{Number: 11, Assignees: []string{"bot1"}, Author: "alice", Created: ago(600), Updated: ago(10)})         // assigned: labelled, fix
-	repo.Put(scantest.Item{Number: 18, Assignees: []string{"bot1"}, Author: "alice", Created: ago(600), Updated: ago(20)})         // assigned: second on bot1's page
-	repo.Put(scantest.Item{Number: 19, Assignees: []string{"bot1"}, Author: "alice", Created: ago(600), Updated: ago(30)})         // assigned: off bot1's first page (ScanLimit 2)
-	repo.Put(scantest.Item{Number: 12, Author: "watcher", Created: ago(600), Updated: ago(40)})                                    // the watcher's own: adopted
-	repo.Put(scantest.Item{Number: 13, PR: true, Assignees: []string{"bot1"}, Author: "bot1", Created: ago(600), Updated: ago(5)}) // a PR: the PR scanner's
-	repo.Put(scantest.Item{Number: 14, Labels: []string{"overseer", "overseer/stop"}, Author: "alice", Created: ago(600), Updated: ago(50)})
-	repo.Put(scantest.Item{Number: 15, Author: "alice", Created: ago(600), Updated: ago(1)}) // not the watcher's
-	repo.Put(scantest.Item{Number: 16, State: "closed", Labels: []string{"overseer"}, Author: "alice", Created: ago(600), Updated: ago(1)})
-	repo.Put(scantest.Item{Number: 17, Labels: []string{"overseer", "overseer/fanout"}, Author: "alice", Created: ago(600), Updated: ago(60)})
-	repo.Put(scantest.Item{Number: 20, Assignees: []string{"bot2"}, Labels: []string{"overseer"}, Author: "alice", Created: ago(600), Updated: ago(70)})
+	repo.Put(scantest.Item{Number: 10, Labels: []string{"overseer"}, Author: "alice", Association: "MEMBER", Created: ago(600), Updated: ago(100)}) // labelled: fix
+	repo.Put(scantest.Item{Number: 11, Assignees: []string{"bot1"}, Author: "alice", Association: "MEMBER", Created: ago(600), Updated: ago(10)})   // assigned: labelled, fix
+	repo.Put(scantest.Item{Number: 18, Assignees: []string{"bot1"}, Author: "alice", Association: "MEMBER", Created: ago(600), Updated: ago(20)})   // assigned: second on bot1's page
+	repo.Put(scantest.Item{Number: 19, Assignees: []string{"bot1"}, Author: "alice", Association: "MEMBER", Created: ago(600), Updated: ago(30)})   // assigned: off bot1's first page (ScanLimit 2)
+	repo.Put(scantest.Item{Number: 12, Author: "watcher", Created: ago(600), Updated: ago(40)})                                                     // the watcher's own: adopted
+	repo.Put(scantest.Item{Number: 13, PR: true, Assignees: []string{"bot1"}, Author: "bot1", Created: ago(600), Updated: ago(5)})                  // a PR: the PR scanner's
+	repo.Put(scantest.Item{Number: 14, Labels: []string{"overseer", "overseer/stop"}, Author: "alice", Association: "MEMBER", Created: ago(600), Updated: ago(50)})
+	repo.Put(scantest.Item{Number: 15, Author: "alice", Association: "MEMBER", Created: ago(600), Updated: ago(1)}) // not the watcher's
+	repo.Put(scantest.Item{Number: 16, State: "closed", Labels: []string{"overseer"}, Author: "alice", Association: "MEMBER", Created: ago(600), Updated: ago(1)})
+	repo.Put(scantest.Item{Number: 17, Labels: []string{"overseer", "overseer/fanout"}, Author: "alice", Association: "MEMBER", Created: ago(600), Updated: ago(60)})
+	repo.Put(scantest.Item{Number: 20, Assignees: []string{"bot2"}, Labels: []string{"overseer"}, Author: "alice", Association: "MEMBER", Created: ago(600), Updated: ago(70)})
 }
 
 // With the shared scan on, the issue scanner queues the same tasks and

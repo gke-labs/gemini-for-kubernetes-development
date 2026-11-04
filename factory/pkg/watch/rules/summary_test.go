@@ -12,7 +12,7 @@ import (
 func TestSummaryTallies(t *testing.T) {
 	set, _ := Builtin()
 	s := NewSummary(set)
-	labelled := Item{Kind: OnIssue, Number: 1, Labels: []string{"overseer"}, UpdatedAt: now}
+	labelled := Item{Kind: OnIssue, Number: 1, Labels: []string{"overseer"}, AuthorAssociation: "MEMBER", UpdatedAt: now}
 	s.Observe(Record{At: now, Env: testEnv, Item: labelled, Decided: []string{"fix run"}}) // consistent
 	s.Observe(Record{At: now, Env: testEnv, Item: labelled})                               // inconsistent: the rules fix
 	s.Observe(Record{At: now, Env: testEnv, Item: labelled, Gate: "its sandbox is busy"})  // gated
@@ -36,7 +36,7 @@ func TestSummaryTallies(t *testing.T) {
 		t.Errorf("recent = %+v", v.Recent)
 	}
 
-	gaveUp := Item{Kind: OnIssue, Number: 2, Labels: []string{"overseer"}, UpdatedAt: now}
+	gaveUp := Item{Kind: OnIssue, Number: 2, Labels: []string{"overseer"}, AuthorAssociation: "MEMBER", UpdatedAt: now}
 	s.Observe(Record{At: now, Env: testEnv, Item: gaveUp, Decided: []string{"fix give-up"}})
 	if r := s.View().ByRule["fix"]; r.GiveUp != 1 {
 		t.Errorf("fix give-ups = %+v", r)
@@ -62,7 +62,7 @@ func TestRecorderFeedsTheSummary(t *testing.T) {
 	s := NewSummary(set)
 	r := NewRecorder("", 0, s)
 	for range 3 {
-		rc := r.Start("issues", testEnv, Item{Kind: OnIssue, Number: 7, Labels: []string{"overseer"}, UpdatedAt: now})
+		rc := r.Start("issues", testEnv, Item{Kind: OnIssue, Number: 7, Labels: []string{"overseer"}, AuthorAssociation: "MEMBER", UpdatedAt: now})
 		rc.Decided("fix", OutcomeRun)
 		rc.Finish()
 	}

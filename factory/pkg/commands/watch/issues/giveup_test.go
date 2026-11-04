@@ -100,8 +100,9 @@ func TestQueueTask_EngineGivesUpOnAFailingFix(t *testing.T) {
 			updated := runAt(-5)
 			s.queueTasks(context.Background(), []*githubv39.Issue{{
 				Number: githubv39.Int(71), UpdatedAt: &updated,
-				Labels: []*githubv39.Label{{Name: githubv39.String("factory")}},
-				User:   &githubv39.User{Login: githubv39.String("someone")},
+				Labels:            []*githubv39.Label{{Name: githubv39.String("factory")}},
+				User:              &githubv39.User{Login: githubv39.String("someone")},
+				AuthorAssociation: githubv39.String("MEMBER"),
 			}}, map[int]bool{})
 
 			_, queued := queue.enqueued["task-issue-71-rule-fix.yaml"]

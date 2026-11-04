@@ -1,7 +1,8 @@
 # Mirrors issues/scanner.go queueTask (with queueTasks) and issues/scan.go
 # scanAssigned / adoptCreatedIssues: an open issue the overseer is pointed
-# at - labelled with the trigger, assigned to the pool, or opened by the
-# watcher's own login - not a fan-out's parent, with no closing or
+# at - labelled with the trigger or assigned to the pool (either one
+# opened by a trusted author), or opened by the watcher's own login - not
+# a fan-out's parent, with no closing or
 # linked PR and no workflow named in its body, updated since its last fix
 # ended, is fixed and the PR opened ready (its run: below: fix --apply
 # --action open-pr --pr-labels --input draft=false). The 10m / 20m cooldowns are the scanner's after a success
@@ -28,9 +29,20 @@ when:
   # pointed at: the trigger label, a pool assignee, or opened by the
   # watcher (the issue listings'; the engine's own, so a decision outside
   # a scan - the dispatcher's at start - holds the same)
+  #
+  # And opened by a trusted author: the issue's title and body go into
+  # the agent's prompt as they are, and the agent runs unattended with
+  # the bot's GitHub credentials, so an outsider's issue is a prompt
+  # injection. Comments are already limited to trusted
+  # authors (the recipe's issue-comments step); the body is the issue
+  # author's alone, as only collaborators can edit someone else's issue.
+  # Labelling or assigning an outsider's issue does not make its body
+  # trusted: restate it in an issue of your own.
   any-of:
     - labels: {any: ["{{trigger}}"]}
+      author: [pool, owner, member, collaborator]
     - assignee: pool
+      author: [pool, owner, member, collaborator]
     - opened-by: watcher
   # Not an issue in the plan flow (the plan rule): planning it,
   # or planned - only implement turns a planned issue into code, so the

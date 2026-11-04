@@ -72,8 +72,9 @@ func TestQueueTasks_RulesControl(t *testing.T) {
 			updated := time.Now().Add(-time.Hour)
 			s.queueTasks(context.Background(), []*githubv39.Issue{{
 				Number: githubv39.Int(7), UpdatedAt: &updated,
-				Labels: []*githubv39.Label{{Name: githubv39.String("factory")}},
-				User:   &githubv39.User{Login: githubv39.String("someone")},
+				Labels:            []*githubv39.Label{{Name: githubv39.String("factory")}},
+				User:              &githubv39.User{Login: githubv39.String("someone")},
+				AuthorAssociation: githubv39.String("MEMBER"),
 			}}, map[int]bool{})
 			if _, got := queue.enqueued["task-issue-7-rule-fix.yaml"]; got != tc.fixed {
 				t.Errorf("fix queued %v, want %v", got, tc.fixed)

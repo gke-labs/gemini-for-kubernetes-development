@@ -79,7 +79,7 @@ func TestRedecide(t *testing.T) {
 	// A fix on an issue the overseer is no longer pointed at (the trigger
 	// label taken off, no pool assignee) is dropped; with a PR linked
 	// since, too.
-	issue := rules.Item{Kind: rules.OnIssue, Number: 12, Labels: []string{"overseer"}, UpdatedAt: now.Add(-time.Hour), TaskActive: true, Queued: []string{"fix"}}
+	issue := rules.Item{Kind: rules.OnIssue, Number: 12, Labels: []string{"overseer"}, AuthorAssociation: "MEMBER", UpdatedAt: now.Add(-time.Hour), TaskActive: true, Queued: []string{"fix"}}
 	unstamped := &api.QueueTask{Number: 12}
 	if drop, why := redecide(set, "fix", unstamped, issue, env); drop {
 		t.Errorf("a labelled issue's fix dropped: %s", why)

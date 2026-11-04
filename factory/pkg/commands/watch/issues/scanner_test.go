@@ -261,7 +261,7 @@ func TestQueueTasks_ReadsFinishedWorkFromQueue(t *testing.T) {
 	// Labelled with the trigger, as every issue the sweep lists is.
 	issue := func(num int, updated time.Time) *githubv39.Issue {
 		return &githubv39.Issue{Number: githubv39.Int(num), UpdatedAt: &updated,
-			Labels: []*githubv39.Label{{Name: githubv39.String("factory")}}}
+			Labels: []*githubv39.Label{{Name: githubv39.String("factory")}}, AuthorAssociation: githubv39.String("MEMBER")}
 	}
 
 	t.Run("queues an issue with no finished work against it", func(t *testing.T) {
@@ -451,10 +451,11 @@ func TestScanOnce_QueuesAssignedIssue(t *testing.T) {
 				return
 			}
 			_ = json.NewEncoder(w).Encode([]*githubv39.Issue{{
-				Number:    githubv39.Int(7),
-				CreatedAt: &created,
-				UpdatedAt: &updated,
-				Body:      githubv39.String("please fix"),
+				Number:            githubv39.Int(7),
+				CreatedAt:         &created,
+				UpdatedAt:         &updated,
+				Body:              githubv39.String("please fix"),
+				AuthorAssociation: githubv39.String("MEMBER"),
 				// Listed by the pool assignee query: assigned to bot1.
 				Assignees: []*githubv39.User{{Login: githubv39.String("bot1")}},
 			}})
