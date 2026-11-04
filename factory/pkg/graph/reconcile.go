@@ -157,6 +157,7 @@ const (
 	ActLinkChild           = "link-child"
 	ActCloseDuplicate      = "close-duplicate"
 	ActAddChildLabels      = "add-child-labels"
+	ActRemoveChildLabels   = "remove-child-labels"
 	ActAddChildAssignees   = "add-child-assignees"
 	ActCloseChildCompleted = "close-child-completed"
 	ActAddParentLabels     = "add-parent-labels"
@@ -287,7 +288,16 @@ func Reconcile(o Observed) Result {
 			continue
 		}
 		st := s.Step(id)
-		if st.ThenOrDefault() == ThenFix {
+		switch {
+		case st.ThenOrDefault() == ThenFix && o.Grouped && inGroup(s, id, c, canonical):
+			// Its work is in its group's PR, which a later step carries on:
+			// its review request is the later step's to make, or the PR
+			// would be reviewed again for steps already reviewed - so it
+			// is taken off, and its labels are no longer kept.
+			if review := o.Trigger + "/review"; containsFold(c.Labels, review) {
+				r.Actions = append(r.Actions, Action{Kind: ActRemoveChildLabels, Step: id, Issue: c.Number, Labels: []string{review}})
+			}
+		case st.ThenOrDefault() == ThenFix:
 			// A plan or needs-human label is taken off when it is acted on: only a
 			// child to be fixed keeps its labels.
 			if missing := missingLabels(c.Labels, childLabels(s, *st, o.Trigger)); len(missing) > 0 {

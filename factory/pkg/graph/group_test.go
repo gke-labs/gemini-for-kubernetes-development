@@ -2,6 +2,7 @@ package graph
 
 import (
 	"context"
+	"fmt"
 	"errors"
 	"slices"
 	"strings"
@@ -493,5 +494,74 @@ func TestSyncWithoutALabelTheRepositoryLacks(t *testing.T) {
 	}
 	if st := statusComments(f, 100); strings.Contains(st[len(st)-1], "do not exist in the repository") {
 		t.Errorf("the warning stayed:\n%s", st[len(st)-1])
+	}
+}
+
+// In a grouped graph, a step whose work is in its group's PR - a later
+// step carrying it on - stops asking for review: its <trigger>/review label
+// is taken off, and its labels are no longer kept, or the shared PR would
+// be reviewed again for steps already reviewed. The active step and the
+// group's last keep theirs; an ungrouped graph's children keep theirs.
+func TestInGroupStepsDropTheirReviewLabel(t *testing.T) {
+	tp, err := ParseTemplate([]byte(strings.NewReplacer(
+		"{id: controller, after: [types], title: C, body: c}", "{id: controller, after: [types], title: C, body: c, review: rc}",
+		"{id: mockgcp, after: [controller], title: M, body: m}", "{id: mockgcp, after: [controller], title: M, body: m, review: rm}",
+		"{id: alignment, after: [mockgcp], title: A, body: a}", "{id: alignment, after: [mockgcp], title: A, body: a, review: ra}",
+	).Replace(groupedGraph)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &tp.Spec
+	labelled := func(c Child, labels ...string) Child { c.Labels = labels; return c }
+	children := map[string][]Child{
+		"prepopulate": {closed(101)}, "types": {closed(102)},
+		// In the PR, carried on by mockgcp: drop review (and do not top up
+		// the missing greenfield-ish labels).
+		"controller": {labelled(inPR(open(103), 600, true), "overseer", "overseer/review")},
+		// The active step: keeps (and gets) its labels.
+		"mockgcp": {labelled(inPR(open(104), 600, false), "overseer")},
+	}
+	r := Reconcile(groupedObserved(s, children))
+	var removed, added []string
+	for _, a := range r.Actions {
+		switch a.Kind {
+		case ActRemoveChildLabels:
+			removed = append(removed, fmt.Sprintf("%s:%v", a.Step, a.Labels))
+		case ActAddChildLabels:
+			added = append(added, fmt.Sprintf("%s:%v", a.Step, a.Labels))
+		}
+	}
+	if strings.Join(removed, " ") != "controller:[overseer/review]" {
+		t.Errorf("removed %v, want controller's review label only", removed)
+	}
+	if strings.Join(added, " ") != "mockgcp:[overseer/review]" {
+		t.Errorf("added %v, want the active step's review label only (none topped up on controller)", added)
+	}
+
+	// Ungrouped: nobody's review label is taken off.
+	o := groupedObserved(s, children)
+	o.Grouped = false
+	for _, a := range Reconcile(o).Actions {
+		if a.Kind == ActRemoveChildLabels {
+			t.Errorf("ungrouped graph removed labels: %+v", a)
+		}
+	}
+
+	// End to end on the fake: the label goes, and stays gone on the next pass.
+	f := graphtest.New()
+	f.Files[".agents/graphs/gf.yaml"] = strings.Replace(groupedGraph, "{id: prepopulate, title: P, body: p}", "{id: prepopulate, title: P, body: p, review: rp}", 1)
+	f.Issues[100] = &graphtest.Issue{Title: "Onboard X", Body: "```factory-graph\ngraph: gf\ngrouped: true\n```\n", Author: "alice", Assoc: "MEMBER", Open: true}
+	opts := Options{Issue: 100, Trigger: "overseer", BotLogin: "watcher", Pool: []string{"lovelace-coder-bot", "watcher"}}
+	sync(t, f, opts)
+	pre := childOf(f, 100, "prepopulate")
+	if !slices.Contains(f.Issues[pre].Labels, "overseer/review") {
+		t.Fatalf("prepopulate lacks its review label at first: %v", f.Issues[pre].Labels)
+	}
+	f.Issues[500] = &graphtest.Issue{Title: "P", Body: "Fixes #201", Author: "lovelace-coder-bot", Open: true, IsPR: true, Head: "abc", Checks: []string{"success"}}
+	f.Issues[pre].Refs = []int{500}
+	sync(t, f, opts) // types starts on the PR: prepopulate is in the group's PR
+	sync(t, f, opts)
+	if slices.Contains(f.Issues[pre].Labels, "overseer/review") {
+		t.Errorf("prepopulate, in the group's PR, still asks for review: %v", f.Issues[pre].Labels)
 	}
 }
