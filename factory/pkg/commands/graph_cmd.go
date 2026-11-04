@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -37,9 +38,9 @@ A graph's steps come from a template in the repository,
 }
 
 func newGraphValidateCommand(ctx context.Context) *cobra.Command {
-	var rawURL string
+	var rawURL, repo string
 	cmd := &cobra.Command{
-		Use:   "validate [<template.yaml>] [--url <issue>]",
+		Use:   "validate [<template.yaml> [--repo <owner/name>]] [--url <issue>]",
 		Short: "Check a graph template, or an issue's plan as a graph",
 		Long: `Check a graph template file, or the steps of an issue's plan, as the
 reconciler will before it creates anything.
@@ -55,8 +56,13 @@ it comes after (` + "`{{ (step \"<id>\").Issue }}`" + `).
 With --url, the issue's plan: the newest comment of key plan by a trusted
 author kind (a pool bot, the owner, a member, a collaborator); its
 ` + "`yaml graph`" + ` block is checked the same way (no params; checkpoint
-replan allowed). A plan without one is a one-PR plan.`,
+replan allowed). A plan without one is a one-PR plan.
+
+With --repo, a template's labels (defaults, each step's, finally's) are
+looked up in that repository: one it lacks is a warning, since the watcher
+may not create labels and its steps go without it until someone does.`,
 		Example: `  factory graph validate .agents/graphs/kcc-greenfield.yaml
+  factory graph validate .agents/graphs/kcc-greenfield.yaml --repo GoogleCloudPlatform/k8s-config-connector
   factory graph validate --url https://github.com/owner/repo/issues/123`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
@@ -65,7 +71,19 @@ replan allowed). A plan without one is a one-PR plan.`,
 			case len(args) == 1 && rawURL != "":
 				return fmt.Errorf("give a template file or --url, not both")
 			case len(args) == 1:
-				return validateGraphTemplate(out, args[0])
+				spec, err := validateGraphTemplate(out, args[0])
+				if err != nil || repo == "" {
+					return err
+				}
+				owner, name, ok := strings.Cut(repo, "/")
+				if !ok || owner == "" || name == "" {
+					return fmt.Errorf("--repo %q is not owner/name", repo)
+				}
+				gh, err := github.NewClient(ctx)
+				if err != nil {
+					return err
+				}
+				return warnMissingLabels(ctx, out, github.ForRepo(gh, owner, name), repo, spec)
 			case rawURL != "":
 				return validateGraphPlan(ctx, out, rawURL)
 			}
@@ -73,24 +91,60 @@ replan allowed). A plan without one is a one-PR plan.`,
 		},
 	}
 	cmd.Flags().StringVar(&rawURL, "url", "", "an issue whose plan comment's graph block to check")
+	cmd.Flags().StringVar(&repo, "repo", "", "owner/name: warn about a template's labels that repository lacks")
 	return cmd
 }
 
-func validateGraphTemplate(out io.Writer, path string) error {
+// labelChecker is what warnMissingLabels needs of GitHub.
+type labelChecker interface {
+	LabelExists(ctx context.Context, name string) (bool, error)
+}
+
+// warnMissingLabels warns, once each, about the labels spec names (its
+// defaults', its steps', its finally's) that repo lacks. Warnings, not
+// errors: the graph runs, its steps without them.
+func warnMissingLabels(ctx context.Context, out io.Writer, gh labelChecker, repo string, spec *graph.Spec) error {
+	labels := slices.Clone(spec.Defaults.Labels)
+	steps := slices.Clone(spec.Steps)
+	if spec.Finally != nil {
+		steps = append(steps, *spec.Finally)
+	}
+	for _, st := range steps {
+		labels = append(labels, st.Labels...)
+	}
+	slices.Sort(labels)
+	missing := 0
+	for _, l := range slices.Compact(labels) {
+		ok, err := gh.LabelExists(ctx, l)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			missing++
+			fmt.Fprintf(out, "warning: %s has no label %q; the watcher may not create it, so its steps go without it until someone with triage access does\n", repo, l)
+		}
+	}
+	if missing == 0 {
+		fmt.Fprintf(out, "%s has every label the graph uses\n", repo)
+	}
+	return nil
+}
+
+func validateGraphTemplate(out io.Writer, path string) (*graph.Spec, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	t, err := graph.ParseTemplate(data)
 	if err != nil {
-		return fmt.Errorf("%s: %w", path, err)
+		return nil, fmt.Errorf("%s: %w", path, err)
 	}
 	if err := t.Validate(); err != nil {
-		return fmt.Errorf("%s: %w", path, err)
+		return nil, fmt.Errorf("%s: %w", path, err)
 	}
 	fmt.Fprintf(out, "%s: graph %s is valid\n", path, t.Metadata.Name)
 	describeGraph(out, &t.Spec)
-	return nil
+	return &t.Spec, nil
 }
 
 func validateGraphPlan(ctx context.Context, out io.Writer, rawURL string) error {

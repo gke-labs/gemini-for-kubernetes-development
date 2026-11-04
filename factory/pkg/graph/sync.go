@@ -27,6 +27,7 @@ type GitHub interface {
 	CreateIssue(ctx context.Context, title, body string, labels []string) (int, error)
 	EditIssue(ctx context.Context, number int, title, body string) error
 	AddLabels(ctx context.Context, number int, labels []string) error
+	LabelExists(ctx context.Context, name string) (bool, error)
 	AddAssignees(ctx context.Context, number int, assignees []string) error
 	AddSubIssue(ctx context.Context, parent, child int) error
 	AddComment(ctx context.Context, number int, body string) error
@@ -357,6 +358,38 @@ func observeChildren(ctx context.Context, gh GitHub, opts Options, o *Observed) 
 	return nil
 }
 
+// addLabels labels issue n, leaving out - and recording on the pass
+// (keepExistingLabels) - any label the repository lacks and the watcher may
+// not create, rather than failing the pass on it.
+func addLabels(ctx context.Context, gh GitHub, p *Pass, n int, labels []string) error {
+	err := gh.AddLabels(ctx, n, labels)
+	if !github.IsLabelCreateRefused(err) {
+		return err
+	}
+	if labels, err = keepExistingLabels(ctx, gh, p, labels); err != nil || len(labels) == 0 {
+		return err
+	}
+	return gh.AddLabels(ctx, n, labels)
+}
+
+// keepExistingLabels is labels without those the repository lacks, which
+// go on the pass's result (MissingLabels) for the status to name.
+func keepExistingLabels(ctx context.Context, gh GitHub, p *Pass, labels []string) ([]string, error) {
+	var keep []string
+	for _, l := range labels {
+		ok, err := gh.LabelExists(ctx, l)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			keep = append(keep, l)
+		} else if !slices.Contains(p.Result.MissingLabels, l) {
+			p.Result.MissingLabels = append(p.Result.MissingLabels, l)
+		}
+	}
+	return keep, nil
+}
+
 // groupPR is the open bot PR that fixes child n (its body says so, as
 // the fix's does: "Fixes #n"), the newest of them, and whether it is ready
 // for the next step (opts.StepReady, else its head's checks green); nil for
@@ -454,7 +487,18 @@ func apply(ctx context.Context, gh GitHub, opts Options, p *Pass) error {
 func applyOne(ctx context.Context, gh GitHub, opts Options, p *Pass, a Action) error {
 	switch a.Kind {
 	case ActCreateChild:
-		n, err := gh.CreateIssue(ctx, a.Title, strings.TrimRight(a.Body, "\n")+"\n\n"+a.Child.Marker(), a.Labels)
+		body := strings.TrimRight(a.Body, "\n") + "\n\n" + a.Child.Marker()
+		labels := a.Labels
+		n, err := gh.CreateIssue(ctx, a.Title, body, labels)
+		if github.IsLabelCreateRefused(err) {
+			// A label the graph names the repository lacks, which the
+			// watcher may not create: the child is made without it, and
+			// the status says which, rather than the graph stopping there.
+			if labels, err = keepExistingLabels(ctx, gh, p, labels); err != nil {
+				return err
+			}
+			n, err = gh.CreateIssue(ctx, a.Title, body, labels)
+		}
 		if err != nil {
 			return err
 		}
@@ -467,10 +511,10 @@ func applyOne(ctx context.Context, gh GitHub, opts Options, p *Pass, a Action) e
 				p.Result.Steps[i].Child = n
 			}
 		}
-		if len(a.Labels) > 0 {
+		if len(labels) > 0 {
 			// Labels set at creation are dropped silently without push
 			// access; adding them is the write that takes.
-			if err := gh.AddLabels(ctx, n, a.Labels); err != nil {
+			if err := addLabels(ctx, gh, p, n, labels); err != nil {
 				return err
 			}
 		}
@@ -494,7 +538,7 @@ func applyOne(ctx context.Context, gh GitHub, opts Options, p *Pass, a Action) e
 		}
 		return gh.SetIssueState(ctx, a.Issue, "closed", "not_planned")
 	case ActAddChildLabels, ActAddParentLabels:
-		return gh.AddLabels(ctx, a.Issue, a.Labels)
+		return addLabels(ctx, gh, p, a.Issue, a.Labels)
 	case ActAddChildAssignees:
 		// Not the pass's failure - the rest of the graph goes on - but not
 		// forgotten either: the logins are left out of the state this pass

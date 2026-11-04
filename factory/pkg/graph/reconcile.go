@@ -131,6 +131,10 @@ type Result struct {
 	Orphans []int
 	// Grouped is the graph's grouped: the status draws each group's PR.
 	Grouped bool
+	// MissingLabels are labels the graph names that the repository lacks
+	// (and the watcher may not create): the pass's writes went without
+	// them, and the status names them, for someone to create.
+	MissingLabels []string
 	// IssuesURL is where the repository's issues are
 	// (https://github.com/<owner>/<repo>/issues/), from the parent's page:
 	// the diagram links each step's issue there. Empty: no links.

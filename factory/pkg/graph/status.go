@@ -51,6 +51,13 @@ func RenderStatus(source string, version int, s *Spec, r Result) string {
 		}
 		b.WriteString("\n</details>\n\n")
 	}
+	if len(r.MissingLabels) > 0 {
+		var names []string
+		for _, l := range r.MissingLabels {
+			names = append(names, "`"+l+"`")
+		}
+		fmt.Fprintf(&b, "> ⚠️ Labels this graph uses do not exist in the repository, and the watcher may not create them: %s. Steps go without them until someone with triage access creates them.\n\n", strings.Join(names, ", "))
+	}
 	if len(r.Orphans) > 0 {
 		var refs []string
 		for _, n := range r.Orphans {
