@@ -136,6 +136,52 @@ type Dispatcher struct {
 	// cancelTasks aborts the workers running under taskCtx. It is only invoked once
 	// the shutdown grace period is exhausted.
 	cancelTasks context.CancelFunc
+
+	// backoffMu guards the engine backoff: after a run its engine could not
+	// serve (its model at capacity), no task starts until backoffUntil, so
+	// one outage does not fail every queued task in turn. The wait doubles
+	// with each such failure, from engineBackoffFirst to engineBackoffLongest, and
+	// a run that succeeds ends it.
+	backoffMu    sync.Mutex
+	backoffUntil time.Time
+	backoffStep  time.Duration
+}
+
+// The engine backoff's first and longest waits.
+const (
+	engineBackoffFirst   = 5 * time.Minute
+	engineBackoffLongest = 30 * time.Minute
+)
+
+// engineFailed starts, or lengthens, the engine backoff after a run its
+// engine could not serve.
+func (d *Dispatcher) engineFailed(now time.Time) time.Time {
+	d.backoffMu.Lock()
+	defer d.backoffMu.Unlock()
+	switch {
+	case d.backoffStep == 0:
+		d.backoffStep = engineBackoffFirst
+	case d.backoffStep < engineBackoffLongest:
+		d.backoffStep = min(2*d.backoffStep, engineBackoffLongest)
+	}
+	if until := now.Add(d.backoffStep); until.After(d.backoffUntil) {
+		d.backoffUntil = until
+	}
+	return d.backoffUntil
+}
+
+// engineServed ends the engine backoff: a run succeeded.
+func (d *Dispatcher) engineServed() {
+	d.backoffMu.Lock()
+	defer d.backoffMu.Unlock()
+	d.backoffStep, d.backoffUntil = 0, time.Time{}
+}
+
+// engineBackedOff is until when no task starts, if it is later than now.
+func (d *Dispatcher) engineBackedOff(now time.Time) (time.Time, bool) {
+	d.backoffMu.Lock()
+	defer d.backoffMu.Unlock()
+	return d.backoffUntil, now.Before(d.backoffUntil)
 }
 
 // New constructs a Dispatcher from its configuration and dependencies.
@@ -281,6 +327,10 @@ func (d *Dispatcher) DispatchOnce(ctx context.Context) {
 
 		if d.queue.IsDrainMode() {
 			klog.Infof("[DO NOT PROCESS] Drain mode detected during cycle execution. Stopping scheduling of remaining queued tasks.")
+			return
+		}
+		if until, waiting := d.engineBackedOff(time.Now()); waiting {
+			klog.Infof("Not starting tasks until %s: the engine could not serve a run (its model at capacity)", until.UTC().Format(time.TimeOnly))
 			return
 		}
 		if actionsTaken >= d.cfg.MaxActions {
@@ -466,6 +516,15 @@ func (d *Dispatcher) executeTask(ctx context.Context, taskFilename string, task 
 		}
 
 		klog.Errorf("Task %s failed: %v", taskFilename, taskErr)
+		// The engine could not serve it (its model at capacity): no attempt
+		// of the task's own - it counts toward no give-up - and no task
+		// starts for a while, so the outage does not fail the rest in turn.
+		var runErr *RunError
+		if errors.As(taskErr, &runErr) && runErr.EngineUnavailable {
+			task.EngineUnavailable = true
+			until := d.engineFailed(time.Now())
+			klog.Warningf("Task %s failed because its engine could not serve it; no task starts until %s", taskFilename, until.UTC().Format(time.TimeOnly))
+		}
 		_ = d.queue.FailTask(taskFilename, task, taskErr.Error())
 		d.coordinator.NotifyTaskFinished(ctx, task, taskErr)
 
@@ -482,6 +541,7 @@ func (d *Dispatcher) executeTask(ctx context.Context, taskFilename string, task 
 	}
 
 	fmt.Printf("Task %s completed successfully.\n", taskFilename)
+	d.engineServed()
 	_ = d.queue.CompleteTask(taskFilename, task)
 	d.coordinator.NotifyTaskFinished(ctx, task, nil)
 

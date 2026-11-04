@@ -735,7 +735,7 @@ func (m *TaskQueueManager) writeJournalEvent(taskFilename string, task *api.Queu
 		return
 	}
 	if event == string(api.StatusCompleted) || event == string(api.StatusFailed) {
-		m.noteRun(strings.TrimSuffix(taskFilename, ".yaml"), api.EndedRun{StartedAt: runStart(task.StartedAt, time.Now()), Failed: event == string(api.StatusFailed)})
+		m.noteRun(strings.TrimSuffix(taskFilename, ".yaml"), api.EndedRun{StartedAt: runStart(task.StartedAt, time.Now()), Failed: event == string(api.StatusFailed), EngineUnavailable: task.EngineUnavailable})
 	}
 	journalPath := filepath.Join(m.queueDir, "journal.jsonl")
 	f, err := os.OpenFile(journalPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
@@ -763,6 +763,9 @@ func (m *TaskQueueManager) writeJournalEvent(taskFilename string, task *api.Queu
 		StartedAt:        task.StartedAt,
 		CompletedAt:      task.CompletedAt,
 		Error:            task.Error,
+		// A failed run the engine could not serve counts toward no
+		// give-up (rules.PastRun.EngineUnavailable).
+		EngineUnavailable: task.EngineUnavailable,
 	}
 	if dur > 0 {
 		je.DurationSecond = dur.Seconds()
@@ -1013,7 +1016,7 @@ func (m *TaskQueueManager) loadRunsLocked() {
 		// it is now (api.MigratedTaskID), so it counts toward its
 		// cooldown and give-up.
 		id, _ := api.MigratedTaskID(je.TaskID)
-		m.runs[id] = append(m.runs[id], api.EndedRun{StartedAt: started, Failed: je.Event == string(api.StatusFailed)})
+		m.runs[id] = append(m.runs[id], api.EndedRun{StartedAt: started, Failed: je.Event == string(api.StatusFailed), EngineUnavailable: je.EngineUnavailable})
 	}
 }
 

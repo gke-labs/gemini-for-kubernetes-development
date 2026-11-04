@@ -80,3 +80,47 @@ func TestRunsSince(t *testing.T) {
 		t.Errorf("ended runs failed = %v, want [false true true]", outcomes)
 	}
 }
+
+// A run its engine could not serve keeps that through a restart: the
+// journal records it, and the runs read back from it say so (they count
+// toward no give-up).
+func TestEndedRunsKeepEngineUnavailable(t *testing.T) {
+	mgr, queueDir := setupTestQueueManager(t)
+	now := time.Now()
+	const name = "task-issue-9-rule-fix.yaml"
+	id := strings.TrimSuffix(name, ".yaml")
+	var lines []string
+	for _, je := range []api.JournalEvent{
+		{TaskID: id, Event: "Failed", StartedAt: now.Add(-2 * time.Hour), Timestamp: now.Add(-110 * time.Minute)},
+		{TaskID: id, Event: "Failed", StartedAt: now.Add(-1 * time.Hour), Timestamp: now.Add(-50 * time.Minute), EngineUnavailable: true},
+	} {
+		b, _ := json.Marshal(je)
+		lines = append(lines, string(b))
+	}
+	if err := os.WriteFile(filepath.Join(queueDir, "journal.jsonl"), []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	task := &api.QueueTask{Type: api.TypeIssueRule, Number: 9, URL: "https://github.com/o/r/issues/9"}
+	if err := mgr.Enqueue(name, task); err != nil {
+		t.Fatal(err)
+	}
+	fn, started, err := claimAndStartTask(mgr)
+	if err != nil || started == nil {
+		t.Fatalf("start: %v", err)
+	}
+	started.EngineUnavailable = true
+	if err := mgr.FailTask(fn, started, "RPC error [503]"); err != nil {
+		t.Fatal(err)
+	}
+	var got []bool
+	for _, r := range mgr.EndedRuns(name) {
+		got = append(got, r.EngineUnavailable)
+	}
+	if len(got) != 3 || got[0] || !got[1] || !got[2] {
+		t.Errorf("ended runs engine-unavailable = %v, want [false true true]", got)
+	}
+	journal, _ := os.ReadFile(filepath.Join(queueDir, "journal.jsonl"))
+	if strings.Count(string(journal), `"engineUnavailable":true`) != 2 {
+		t.Errorf("the journal does not record the new run as engine-unavailable:\n%s", journal)
+	}
+}

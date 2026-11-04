@@ -537,6 +537,46 @@ func TestDispatchOnce_FailedTaskRecordsTheChildsError(t *testing.T) {
 	}
 }
 
+// A run its engine could not serve (a 503 at capacity) is recorded as
+// such - it counts toward no give-up - and holds the next task back until
+// the backoff runs out, rather than failing it too.
+func TestDispatchOnce_EngineUnavailableBacksOff(t *testing.T) {
+	tempDir := t.TempDir()
+	d, queue, _, _, runner := testDispatcher(t, tempDir, nil)
+	runner.run = func(context.Context, string, *api.QueueTask, string) error {
+		return &RunError{Err: errors.New("exit status 1"), Reason: "step 8:ask: agent: prompt failed: RPC error [503]: high demand", EngineUnavailable: true}
+	}
+
+	enqueueTestTask(t, queue, "task-issue-9-rule-fix.yaml", 9)
+	d.DispatchOnce(context.Background())
+	d.Wait()
+	waitForCounts(t, queue, 0, 0, 1)
+	if failed := queue.GetProcessedTask("task-issue-9-rule-fix.yaml"); failed == nil || !failed.EngineUnavailable {
+		t.Fatalf("processed task = %+v, want it marked engine-unavailable", failed)
+	}
+	if runs := queue.EndedRuns("task-issue-9-rule-fix"); len(runs) != 1 || !runs[0].Failed || !runs[0].EngineUnavailable {
+		t.Errorf("ended runs = %+v, want one failed, engine-unavailable", runs)
+	}
+
+	// The next task waits for the backoff.
+	enqueueTestTask(t, queue, "task-issue-10-rule-fix.yaml", 10)
+	d.DispatchOnce(context.Background())
+	d.Wait()
+	if calls := len(runner.invocations()); calls != 1 {
+		t.Errorf("started %d tasks during the backoff, want only the first", calls)
+	}
+	// Once it has run out, tasks start again.
+	d.backoffMu.Lock()
+	d.backoffUntil = time.Now().Add(-time.Second)
+	d.backoffMu.Unlock()
+	runner.run = nil
+	d.DispatchOnce(context.Background())
+	d.Wait()
+	if calls := len(runner.invocations()); calls != 2 {
+		t.Errorf("started %d tasks after the backoff, want 2", calls)
+	}
+}
+
 func TestDispatchOnce_TimedOutTaskDeletesSandbox(t *testing.T) {
 	tempDir := t.TempDir()
 	d, queue, sandboxes, _, runner := testDispatcher(t, tempDir, func(cfg *Config, _ *Deps) {

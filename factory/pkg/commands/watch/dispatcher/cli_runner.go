@@ -170,7 +170,8 @@ func (r *CLIRunner) Run(ctx context.Context, taskFilename string, task *api.Queu
 	// What the child printed as its error, rather than its exit status
 	// alone: a run that succeeded in its sandbox and failed applying its
 	// result says so only in its log.
-	return &RunError{Err: err, Reason: failureFromLog(logPath)}
+	reason, unavailable := failureOfLog(logPath)
+	return &RunError{Err: err, Reason: reason, EngineUnavailable: unavailable}
 }
 
 // UsageComponent is the component a task's GitHub requests are counted as:
