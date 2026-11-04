@@ -126,6 +126,8 @@ type Result struct {
 	State   State
 	// Orphans are children of steps no longer in the definition.
 	Orphans []int
+	// Grouped is the graph's grouped: the status draws each group's PR.
+	Grouped bool
 }
 
 // StepStatus is one step's state, and its child (0 for none yet).
@@ -133,6 +135,9 @@ type StepStatus struct {
 	ID    string
 	State string
 	Child int
+	// PR is, in a grouped graph, the group's PR the step's work is in, as
+	// observed; 0 when not known.
+	PR int
 }
 
 // Kinds of action (Action.Kind).
@@ -178,7 +183,7 @@ type Action struct {
 // take. It reads no clock and does no I/O: the same input always gives the
 // same result.
 func Reconcile(o Observed) Result {
-	r := Result{State: o.State.clone(), Phase: PhaseRunning}
+	r := Result{State: o.State.clone(), Phase: PhaseRunning, Grouped: o.Grouped}
 	stop := o.Trigger + "/stop"
 	maxDepth := o.MaxDepth
 	if maxDepth <= 0 {
@@ -483,7 +488,11 @@ func statuses(s *Spec, ids []string, canonical map[string]Child, grouped bool) [
 				}
 			}
 		}
-		out = append(out, StepStatus{ID: id, State: v, Child: canonical[id].Number})
+		ss := StepStatus{ID: id, State: v, Child: canonical[id].Number}
+		if pr := canonical[id].GroupPR; pr != nil {
+			ss.PR = pr.Number
+		}
+		out = append(out, ss)
 	}
 	return out
 }

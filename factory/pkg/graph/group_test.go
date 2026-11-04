@@ -373,3 +373,63 @@ func TestSyncUnknownGateIsInvalid(t *testing.T) {
 		t.Errorf("phase %s (%s), prepopulate #%d", p.Result.Phase, p.Result.Reason, childOf(f, 100, "prepopulate"))
 	}
 }
+
+// The status draws the graph: a mermaid node per step, coloured by its
+// state, with its issue (linked relative to the parent's page), the after
+// edges, finally after the steps no other follows; a grouped graph boxes
+// each group's steps - its PR, merged or not. The table stays, folded.
+func TestRenderStatusDiagram(t *testing.T) {
+	s := groupedSpec(t)
+	children := func(grouped bool) map[string][]Child {
+		c := map[string][]Child{"prepopulate": {closed(101)}, "types": {closed(102)}, "controller": {open(103)}, "mockgcp": {open(104)}}
+		if grouped {
+			c["controller"] = []Child{inPR(open(103), 600, true)}
+			c["mockgcp"] = []Child{inPR(open(104), 600, false)}
+		}
+		return c
+	}
+	plainObs := observed(s, children(false), State{})
+	plain := RenderStatus("gf", 0, s, Reconcile(plainObs))
+	for _, want := range []string{
+		"```mermaid\nflowchart LR\n",
+		`n0["✓ prepopulate<br/><small>#101</small>"]:::done`,
+		`n3["● mockgcp<br/><small>#104 · active</small>"]:::active`,
+		`n4["alignment"]:::pending`,
+		`n5(["finally"]):::pending`,
+		"  n0 --> n1\n", "  n3 --> n4\n", "  n4 --> n5\n",
+		`  click n3 "104"`,
+		"<details><summary>Steps</summary>\n\n| Step | After | Then | Issue | State |",
+		"| mockgcp | controller | fix | #104 | 🔄 Active |",
+		"</details>",
+	} {
+		if !strings.Contains(plain, want) {
+			t.Errorf("not grouped: status lacks %q:\n%s", want, plain)
+		}
+	}
+	if strings.Contains(plain, "subgraph") || strings.Contains(plain, "gate") {
+		t.Errorf("not grouped: no PR boxes, no gates:\n%s", plain)
+	}
+
+	grouped := RenderStatus("gf", 0, s, Reconcile(groupedObserved(s, children(true))))
+	for _, want := range []string{
+		"  subgraph g0[\"one PR · merged\"]\n    direction LR\n    n0[",
+		`n1["✓ types<br/><small>#102 · gate</small>"]:::done`,
+		"  class g0 prmerged\n",
+		"  subgraph g1[\"PR #600\"]\n",
+		`n2["📦 controller<br/><small>#103 · in the PR</small>"]:::ingroup`,
+		"  class g1 pr\n",
+		"| controller | types | fix | #103 | 📦 In the group's PR |",
+	} {
+		if !strings.Contains(grouped, want) {
+			t.Errorf("grouped: status lacks %q:\n%s", want, grouped)
+		}
+	}
+	if strings.Count(grouped, "subgraph") != 2 {
+		t.Errorf("grouped: want 2 PR boxes (finally is its own, unboxed):\n%s", grouped)
+	}
+	// Every mermaid line is one the renderer means: no empty labels (mermaid
+	// refuses them), nodes declared once.
+	if strings.Contains(grouped, `[""]`) || strings.Contains(grouped, `((""))`) || strings.Count(grouped, "n2[") != 1 {
+		t.Errorf("grouped: malformed nodes:\n%s", grouped)
+	}
+}
