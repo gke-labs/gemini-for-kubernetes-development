@@ -389,6 +389,7 @@ func TestRenderStatusDiagram(t *testing.T) {
 		return c
 	}
 	plainObs := observed(s, children(false), State{})
+	plainObs.Parent.URL = "https://github.com/o/r/issues/100"
 	plain := RenderStatus("gf", 0, s, Reconcile(plainObs))
 	for _, want := range []string{
 		"```mermaid\nflowchart LR\n",
@@ -397,7 +398,10 @@ func TestRenderStatusDiagram(t *testing.T) {
 		`n4["alignment"]:::pending`,
 		`n5(["finally"]):::pending`,
 		"  n0 --> n1\n", "  n3 --> n4\n", "  n4 --> n5\n",
-		`  click n3 "104"`,
+		// Absolute and in a new tab: GitHub draws the diagram in a frame
+		// of its own, where a relative "104" went to
+		// viewscreen.githubusercontent.com/markdown/104.
+		`  click n3 "https://github.com/o/r/issues/104" _blank`,
 		"<details><summary>Steps</summary>\n\n| Step | After | Then | Issue | State |",
 		"| mockgcp | controller | fix | #104 | 🔄 Active |",
 		"</details>",
@@ -408,6 +412,22 @@ func TestRenderStatusDiagram(t *testing.T) {
 	}
 	if strings.Contains(plain, "subgraph") || strings.Contains(plain, "gate") {
 		t.Errorf("not grouped: no PR boxes, no gates:\n%s", plain)
+	}
+	if strings.Contains(plain, `click n0 "1`) || strings.Contains(plain, `"101"`) {
+		t.Errorf("a relative link is left:\n%s", plain)
+	}
+	// Without the parent's page there is nowhere to link to: no links.
+	if noURL := RenderStatus("gf", 0, s, Reconcile(observed(s, children(false), State{}))); strings.Contains(noURL, "click ") {
+		t.Errorf("no parent URL: links anyway:\n%s", noURL)
+	}
+	for in, want := range map[string]string{
+		"https://github.com/o/r/issues/100": "https://github.com/o/r/issues/",
+		"https://github.com/o/r/pull/100":   "",
+		"":                                  "",
+	} {
+		if got := issuesURL(in); got != want {
+			t.Errorf("issuesURL(%q) = %q, want %q", in, got, want)
+		}
 	}
 
 	grouped := RenderStatus("gf", 0, s, Reconcile(groupedObserved(s, children(true))))

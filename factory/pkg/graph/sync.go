@@ -154,7 +154,7 @@ func Observe(ctx context.Context, gh GitHub, opts Options) (*Pass, *githubv39.Is
 	}
 
 	o := Observed{
-		Parent:   Parent{Number: opts.Issue, Open: parent.GetState() == "open", Labels: labelNames(parent.Labels)},
+		Parent:   Parent{Number: opts.Issue, URL: parent.GetHTMLURL(), Open: parent.GetState() == "open", Labels: labelNames(parent.Labels)},
 		Trigger:  opts.Trigger,
 		MaxDepth: opts.MaxDepth,
 		Children: map[string][]Child{},

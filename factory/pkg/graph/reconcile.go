@@ -69,7 +69,10 @@ type Observed struct {
 // Parent is the graph's parent issue, as observed.
 type Parent struct {
 	Number int
-	Open   bool
+	// URL is the parent's page (its html_url): the status's diagram links
+	// each step's issue beside it.
+	URL  string
+	Open bool
 	// ClosedBy is who closed a closed parent: ClosedByPerson or
 	// ClosedByCommit.
 	ClosedBy string
@@ -128,6 +131,10 @@ type Result struct {
 	Orphans []int
 	// Grouped is the graph's grouped: the status draws each group's PR.
 	Grouped bool
+	// IssuesURL is where the repository's issues are
+	// (https://github.com/<owner>/<repo>/issues/), from the parent's page:
+	// the diagram links each step's issue there. Empty: no links.
+	IssuesURL string
 }
 
 // StepStatus is one step's state, and its child (0 for none yet).
@@ -183,7 +190,7 @@ type Action struct {
 // take. It reads no clock and does no I/O: the same input always gives the
 // same result.
 func Reconcile(o Observed) Result {
-	r := Result{State: o.State.clone(), Phase: PhaseRunning, Grouped: o.Grouped}
+	r := Result{State: o.State.clone(), Phase: PhaseRunning, Grouped: o.Grouped, IssuesURL: issuesURL(o.Parent.URL)}
 	stop := o.Trigger + "/stop"
 	maxDepth := o.MaxDepth
 	if maxDepth <= 0 {
@@ -498,6 +505,17 @@ func statuses(s *Spec, ids []string, canonical map[string]Child, grouped bool) [
 }
 
 func done(state string) bool { return state == StepSucceeded || state == StepSkipped }
+
+// issuesURL is where a parent's repository keeps its issues, from the
+// parent's own page (https://github.com/o/r/issues/123 → …/issues/); ""
+// for anything else.
+func issuesURL(parent string) string {
+	i := strings.LastIndex(parent, "/issues/")
+	if i < 0 || !strings.HasPrefix(parent, "https://") {
+		return ""
+	}
+	return parent[:i+len("/issues/")]
+}
 
 // inGroup is whether the open child c of step id has its work in its
 // group's PR, for the step after it to continue: its PR is known, and
