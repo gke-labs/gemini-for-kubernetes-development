@@ -80,6 +80,10 @@ func TestFailureOfLogEngineUnavailable(t *testing.T) {
 				"Error: step 8:ask: agent: prompt failed: RPC error [503]: This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.\n" +
 				"Error: running recipe: task failed with exit code 1\nError: running recipe: task failed with exit code 1\n",
 			"step 8:ask: agent: prompt failed: RPC error [503]: This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.", true},
+		// factory now adds the failed step to the task's error, so the last
+		// error line says it on its own.
+		"the failed step in factory's own error": {"Error: running recipe: task failed with exit code 1: 3:ask: agent: prompt failed: RPC error [503]: This model is currently experiencing high demand.\n",
+			"running recipe: task failed with exit code 1: 3:ask: agent: prompt failed: RPC error [503]: This model is currently experiencing high demand.", true},
 		"rate limited": {"Error: step 3:ask: agent: prompt failed: RPC error [429]: RESOURCE_EXHAUSTED\nError: running recipe: task failed with exit code 1\n",
 			"step 3:ask: agent: prompt failed: RPC error [429]: RESOURCE_EXHAUSTED", true},
 		"the task's own failure": {"Error: step 9:push: no commit on top of abc\nError: running recipe: task failed with exit code 1\n",
