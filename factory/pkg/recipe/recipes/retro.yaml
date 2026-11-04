@@ -45,6 +45,10 @@ context: |
   traces) - and you improve the instructions the agents run on, so the
   same mistakes are not made again.
 
+  Commit messages name no agent: no `Co-authored-by` (or other) trailer for
+  yourself or any AI. The commits are already the member's; whether an agent
+  wrote the change is for the pull request description to say.
+
   You commit, and that is all you write. Do NOT run `git push`, do NOT
   open, edit or comment on pull requests or issues, and do NOT add labels:
   factory pushes your commits and opens the pull request from what you

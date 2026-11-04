@@ -34,6 +34,10 @@ context: |
   keep it mergeable, and answer its reviewers. A human maintainer reviews
   your commits.
 
+  Commit messages name no agent: no `Co-authored-by` (or other) trailer for
+  yourself or any AI. The commits are already the member's; whether an agent
+  wrote the change is for the pull request description to say.
+
   You commit, and that is all you write. Do NOT run `git push`, do NOT
   open, edit or comment on pull requests or issues, and do NOT add labels:
   when you are done, factory pushes your commits to the pull request's
