@@ -65,12 +65,20 @@ func TestWarmSnapshotPicksTheNewestUsable(t *testing.T) {
 		warmTestSnapshot("expired", "k8s-config-connector", "img:1", warmNow.Add(-time.Hour), true, warmNow.Add(-time.Minute)),
 		warmTestSnapshot("other-repo", "substrate", "img:1", warmNow.Add(-time.Hour), true, later),
 	)
-	name, size, ok, err := warmSnapshot(context.Background(), kc, "ns", "k8s-config-connector", "img:1", warmNow)
-	if err != nil || !ok || name != "good" || size.String() != "40Gi" {
-		t.Fatalf("warmSnapshot = %q %s %v %v, want good 40Gi", name, size.String(), ok, err)
+	// Of the sandbox's own image, the newest - though another image's is
+	// newer.
+	name, size, same, ok, err := warmSnapshot(context.Background(), kc, "ns", "k8s-config-connector", "img:1", warmNow)
+	if err != nil || !ok || !same || name != "good" || size.String() != "40Gi" {
+		t.Fatalf("warmSnapshot = %q %s same=%v %v %v, want good 40Gi, same image", name, size.String(), same, ok, err)
 	}
-	if _, _, ok, _ := warmSnapshot(context.Background(), kc, "ns", "k8s-config-connector", "img:3", warmNow); ok {
-		t.Fatal("a snapshot of another image was chosen")
+	// None of its image (an overseer upgraded since): the newest of any,
+	// rather than an empty disk.
+	if name, _, same, ok, _ := warmSnapshot(context.Background(), kc, "ns", "k8s-config-connector", "img:3", warmNow); !ok || same || name != "other-image" {
+		t.Fatalf("no snapshot of img:3: chose %q same=%v ok=%v, want other-image, another image", name, same, ok)
+	}
+	// Nothing usable for another repository's.
+	if _, _, _, ok, _ := warmSnapshot(context.Background(), kc, "ns", "nothing-here", "img:1", warmNow); ok {
+		t.Fatal("a snapshot of another repository was chosen")
 	}
 }
 
@@ -115,6 +123,18 @@ func TestCreateSandboxKeepsALargerDisk(t *testing.T) {
 	createSandboxForTest(t, kc, sb)
 	if size, _, _ := unstructured.NestedString(workspaceClaim(t, sb), "spec", "resources", "requests", "storage"); size != "100Gi" {
 		t.Fatalf("storage = %s, want 100Gi", size)
+	}
+}
+
+// A sandbox of an image no snapshot was made with - its overseer upgraded
+// since the last warm cycle - restores from the newest snapshot of another
+// image rather than starting on an empty disk.
+func TestCreateSandboxRestoresFromAnotherImagesSnapshot(t *testing.T) {
+	kc := warmTestClients(warmTestSnapshot("warm-kcc-old-image", "k8s-config-connector", "img:old", time.Now().Add(-time.Hour), true, time.Now().Add(time.Hour)))
+	sb, _ := warmTestSandbox("fix-k8s-config-connector-1", "k8s-config-connector", "img:new", "", nil)
+	restoreFromWarmSnapshot(context.Background(), kc, "ns", sb)
+	if ds, _, _ := unstructured.NestedMap(workspaceClaim(t, sb), "spec", "dataSource"); ds["name"] != "warm-kcc-old-image" {
+		t.Fatalf("dataSource = %v, want the other image's snapshot", ds)
 	}
 }
 

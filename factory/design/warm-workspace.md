@@ -40,7 +40,7 @@ Overseer CR spec.warmWorkspace {interval, keep, one of script | scriptURL | scri
                       └─ readyToUse → keep the newest N → delete warm-<repo>
 
 any later sandbox for the repo (pkg/sandbox manifests)
-  └─ newest readyToUse snapshot labelled for the repo, same image → volumeClaimTemplates dataSource
+  └─ newest readyToUse snapshot labelled for the repo (its own image's first, else any) → volumeClaimTemplates dataSource
        └─ fix recipe: setup-git → setup-fork → checkout-default-branch (classic fix_issue.sh until #1884)
 ```
 
@@ -96,7 +96,7 @@ The script comes from exactly one of three fields:
 
 `pkg/commands/watch/warmworkspace` is a controller like `fanouts`. It is built only when `warmWorkspace.interval` is set, and paused while the overseer drains. A watch process lives one `POLL_INTERVAL`, so the pass keeps no state in memory: its state is the cluster's.
 
-- A `readyToUse` snapshot labelled for the repository and younger than `interval` exists: nothing to do.
+- A `readyToUse` snapshot labelled for the repository and younger than `interval` exists, and one of them was made with the overseer's image (the one new sandboxes run): nothing to do. Without one of its image - the overseer upgraded since the last cycle - the cycle runs now, rather than when the last snapshot ages out.
 - Otherwise it calls the hook, which picks up a warm already under way: the sandbox `warm-<repo>` and its run name are its state.
 
 The hook `commands.warmWorkspace`, set on the watcher next to `ProposeFanout`, does four things:
@@ -163,8 +163,8 @@ There is no `ask`, no engine and no task output. The recipe's own task directory
 
 - **Which snapshot.** Where `pkg/sandbox` builds the claim template, both builders look in the namespace for the newest `VolumeSnapshot` that:
   - is labelled for the repository;
-  - is `readyToUse`;
-  - was made with the sandbox's image digest. That avoids a cache full of misses after an image bump.
+  - is `readyToUse` and not expired;
+  - was made with the sandbox's image, if any such snapshot exists; otherwise, the newest of any image. An overseer upgraded several times a day would otherwise start every new sandbox cold until the next cycle (33 in a day on KCC, 2026-11-02/04). Another image's snapshot still has the checkout and the module cache, and while the Go toolchain is the same its build cache hits; at worst its caches miss, which is where an empty disk starts. The restore logs when it uses another image's snapshot.
 - **The claim.** If one matches, the claim gets `dataSource: {apiGroup: snapshot.storage.k8s.io, kind: VolumeSnapshot, name: …}`. Its size is the larger of `workspaceDiskSize` and the snapshot's `restoreSize`.
 - **No snapshot.** The disk is empty, as today.
 - **No changes elsewhere.** No caller of the sandbox builders changes. Neither does repo-agent, nor the overseer's task flow.

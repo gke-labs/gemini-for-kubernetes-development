@@ -273,7 +273,7 @@ func (w *Watcher) newWarmWorkspaceController() *warmworkspace.Controller {
 	return warmworkspace.New(warmworkspace.DefaultInterval, warmworkspace.Deps{
 		Paused: w.draining,
 		Due: func(ctx context.Context) (bool, error) {
-			return factorysandbox.WarmDue(ctx, w.kubeClient, w.Namespace, w.Repo.Repo, interval, time.Now())
+			return factorysandbox.WarmDue(ctx, w.kubeClient, w.Namespace, w.Repo.Repo, w.Image, interval, time.Now())
 		},
 		Warm: func(ctx context.Context) error {
 			// The account a fix would clone as: the repository may be

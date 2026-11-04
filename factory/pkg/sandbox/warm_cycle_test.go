@@ -51,6 +51,14 @@ func TestWarmDue(t *testing.T) {
 		"old":            {snaps: []*unstructured.Unstructured{warmTestSnapshot("a", "substrate", "img:1", now.Add(-2*day), true, now.Add(day))}, due: true},
 		"fresh, unready": {snaps: []*unstructured.Unstructured{warmTestSnapshot("a", "substrate", "img:1", now.Add(-time.Hour), false, now.Add(day))}, due: true},
 		"warm sandbox":   {snaps: []*unstructured.Unstructured{warmTestSnapshot("a", "substrate", "img:1", now.Add(-time.Hour), true, now.Add(day))}, warm: true, due: true},
+		// The overseer upgraded since: new sandboxes run img:1, the fresh
+		// snapshot is img:0's. A snapshot of img:1 is made now, not when
+		// img:0's ages out.
+		"fresh, another image's": {snaps: []*unstructured.Unstructured{warmTestSnapshot("a", "substrate", "img:0", now.Add(-time.Hour), true, now.Add(day))}, due: true},
+		"fresh of the image, an older of another": {snaps: []*unstructured.Unstructured{
+			warmTestSnapshot("a", "substrate", "img:0", now.Add(-3*time.Hour), true, now.Add(day)),
+			warmTestSnapshot("b", "substrate", "img:1", now.Add(-time.Hour), true, now.Add(day)),
+		}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			kc := warmTestClients()
@@ -64,7 +72,7 @@ func TestWarmDue(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			due, err := WarmDue(ctx, kc, "ns", "substrate", day, now)
+			due, err := WarmDue(ctx, kc, "ns", "substrate", "img:1", day, now)
 			if err != nil || due != tc.due {
 				t.Fatalf("WarmDue = %v, %v; want %v", due, err, tc.due)
 			}
@@ -139,4 +147,18 @@ func contains(l []string, s string) bool {
 		}
 	}
 	return false
+}
+
+// Without an image to compare (none configured), freshness alone decides,
+// as before.
+func TestWarmDueWithoutAnImage(t *testing.T) {
+	ctx := context.Background()
+	now := time.Now()
+	kc := warmTestClients()
+	if _, err := kc.DynamicClient.Resource(VolumeSnapshotGVR).Namespace("ns").Create(ctx, warmTestSnapshot("a", "substrate", "img:0", now.Add(-time.Hour), true, now.Add(24*time.Hour)), metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if due, err := WarmDue(ctx, kc, "ns", "substrate", "", 24*time.Hour, now); err != nil || due {
+		t.Fatalf("WarmDue = %v, %v; want not due", due, err)
+	}
 }
