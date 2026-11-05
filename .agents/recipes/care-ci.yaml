@@ -6,8 +6,8 @@
 # (on: [my-pr]); factory pr adopt takes over one that is not. It runs in
 # the PR's fix sandbox (the fix's that opened it, or one made for the PR),
 # in a conversation of its own each run, not in session care
-# (design/recipe-sessions.md) that care, care-comments, care-rebase and
-# care-iterate share: what a CI fix needs is in the checks' logs, and a
+# (design/recipe-sessions.md) that care, care-comments and care-iterate
+# share: what a CI fix needs is in the checks' logs, and a
 # conversation every care run continues grows without end - at ~275k
 # tokens a fallback model ends its turns at once (KCC #15015,
 # 2026-11-05). Each run takes the PR as it is now: factory hands it the PR's push facts (INPUT_PUSHED_*: fork, branch, the

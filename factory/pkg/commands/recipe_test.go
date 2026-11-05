@@ -374,11 +374,11 @@ func TestBuiltinRecipeInfos(t *testing.T) {
 		t.Errorf("plan = %+v, want nothing applied on finish", plan)
 	}
 	// care's jobs are recipes of session care, each a Change: the others
-	// are its follow-ups. care-ci is a Change on my PRs too, but in a
-	// conversation of its own each run.
+	// are its follow-ups. care-ci and care-rebase are Changes on my PRs
+	// too, but each run in a conversation of its own.
 	for name, label := range map[string]string{"care": "Care", "care-comments": "Address comments", "care-ci": "Fix CI", "care-rebase": "Rebase", "care-iterate": "Iterate"} {
 		session := "care"
-		if name == "care-ci" {
+		if name == "care-ci" || name == "care-rebase" {
 			session = ""
 		}
 		if got := byName[name]; got.Label != label || got.Kind != "Change" || got.Session != session || !slices.Equal(got.On, []string{"my-pr"}) {

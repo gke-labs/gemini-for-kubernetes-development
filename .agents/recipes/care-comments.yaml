@@ -8,10 +8,10 @@
 # The PR must be yours: authored by you, its head a branch on your fork
 # (on: [my-pr]); factory pr adopt takes over one that is not. It runs in
 # the PR's fix sandbox (the fix's that opened it, or one made for the PR),
-# in session care (design/recipe-sessions.md): care, care-comments,
-# care-rebase and care-iterate share one conversation there, the first
-# run opening it and every later one continuing it, whichever it is
-# (--new-session opens a new one); care-ci is not in it. Each run takes the PR as it is now:
+# in session care (design/recipe-sessions.md): care, care-comments and
+# care-iterate share one conversation there, the first run opening it
+# and every later one continuing it, whichever it is (--new-session
+# opens a new one); care-ci and care-rebase are not in it. Each run takes the PR as it is now:
 # factory hands it the PR's push facts (INPUT_PUSHED_*: fork, branch, the
 # base it branched from, head) and its title and body. The agent commits
 # and never pushes; the push step pushes to the PR's branch on your fork,

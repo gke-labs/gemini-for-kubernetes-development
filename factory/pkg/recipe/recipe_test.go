@@ -1323,10 +1323,10 @@ func TestBuiltinCareRenders(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		// care-ci runs in a conversation of its own each run, the rest
-		// in session care.
+		// care-ci and care-rebase run in a conversation of their own
+		// each run, the rest in session care.
 		session := "care"
-		if name == "care-ci" {
+		if name == "care-ci" || name == "care-rebase" {
 			session = ""
 		}
 		if !rec.RunsOn(OnMyPR) || rec.RunsOn(OnPR) || rec.RunsOn(OnIssue) || rec.Session != session || rec.TaskOutput == nil || rec.TaskOutput.Kind != "Change" {
