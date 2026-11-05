@@ -29,6 +29,9 @@ type GitHub interface {
 	AddLabels(ctx context.Context, number int, labels []string) error
 	LabelExists(ctx context.Context, name string) (bool, error)
 	RemoveLabel(ctx context.Context, number int, label string) error
+	// MarkPullRequestReady marks a draft PR ready for review; one ready
+	// already is left as it is.
+	MarkPullRequestReady(ctx context.Context, number int) error
 	AddAssignees(ctx context.Context, number int, assignees []string) error
 	AddSubIssue(ctx context.Context, parent, child int) error
 	AddComment(ctx context.Context, number int, body string) error
@@ -538,6 +541,8 @@ func applyOne(ctx context.Context, gh GitHub, opts Options, p *Pass, a Action) e
 			return err
 		}
 		return gh.SetIssueState(ctx, a.Issue, "closed", "not_planned")
+	case ActMarkGroupPRReady:
+		return gh.MarkPullRequestReady(ctx, a.Issue)
 	case ActRemoveChildLabels:
 		for _, l := range a.Labels {
 			if err := gh.RemoveLabel(ctx, a.Issue, l); err != nil && !github.IsNotFound(err) {
@@ -594,6 +599,8 @@ func describe(a Action, dryRun bool) string {
 		return fmt.Sprintf("%sclose #%d as a duplicate of #%d (step %s)", would, a.Issue, a.Of, a.Step)
 	case ActAddChildLabels:
 		return fmt.Sprintf("%slabel #%d (step %s) %s", would, a.Issue, a.Step, strings.Join(a.Labels, ", "))
+	case ActMarkGroupPRReady:
+		return fmt.Sprintf("%smark #%d ready for review (its group's last step, %s, needed no change)", would, a.Issue, a.Step)
 	case ActRemoveChildLabels:
 		return fmt.Sprintf("%sunlabel #%d (step %s, in its group's PR) %s", would, a.Issue, a.Step, strings.Join(a.Labels, ", "))
 	case ActAddChildAssignees:

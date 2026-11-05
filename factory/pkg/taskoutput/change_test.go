@@ -113,6 +113,9 @@ type fakePRs struct {
 	closed   bool
 	// issueComments are o/r#7's, the issue a fix is for.
 	issueComments []string
+	// issueBody is o/r#7's body; closed, whether it was closed.
+	issueBody   string
+	issueClosed bool
 }
 
 func (f *fakePRs) client(t *testing.T) *githubv39.Client {
@@ -169,6 +172,18 @@ func (f *fakePRs) client(t *testing.T) *githubv39.Client {
 			out = append(out, githubv39.IssueComment{Body: githubv39.String(b)})
 		}
 		_ = json.NewEncoder(w).Encode(out)
+	})
+	mux.HandleFunc("/repos/o/r/issues/7", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPatch {
+			var req map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			f.issueClosed = req["state"] == "closed"
+		}
+		state := "open"
+		if f.issueClosed {
+			state = "closed"
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "state": state, "body": f.issueBody})
 	})
 	mux.HandleFunc("/repos/o/r/issues/7/comments", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {
@@ -916,6 +931,36 @@ func TestOpenPRUnchanged(t *testing.T) {
 	}
 	if doc.Target.URL != issueURL {
 		t.Errorf("target = %s, want the issue still", doc.Target.URL)
+	}
+	if f.issueClosed {
+		t.Error("an ordinary issue was closed: a no-op is a person's to judge")
+	}
+
+	// A graph step that may rightly need no PR (nochange=ok in its marker)
+	// is closed as completed, so the graph goes on; applied again (its
+	// comment there already), it is closed all the same.
+	step := &fakePRs{issueBody: "Prepopulate X.\n\n<!-- factory:graph-child parent=9 source=gf step=prepopulate depth=1 params=x nochange=ok group=first -->"}
+	out.Reset()
+	if err := ApplyAction(ctx, step.client(t), doc, "open-pr", false, &out); err != nil {
+		t.Fatal(err)
+	}
+	if !step.issueClosed || len(step.issueComments) != 1 || !strings.Contains(out.String(), "Closing #7 as completed") {
+		t.Errorf("a no-change step: closed %v, comments %d:\n%s", step.issueClosed, len(step.issueComments), out.String())
+	}
+	again := &fakePRs{issueBody: step.issueBody, issueComments: step.issueComments}
+	if err := ApplyAction(ctx, again.client(t), doc, "open-pr", false, &out); err != nil {
+		t.Fatal(err)
+	}
+	if !again.issueClosed {
+		t.Error("re-applied after the comment: not closed")
+	}
+	// A graph step without nochange=ok stays open.
+	other := &fakePRs{issueBody: "Controller.\n\n<!-- factory:graph-child parent=9 source=gf step=controller depth=1 params=x -->"}
+	if err := ApplyAction(ctx, other.client(t), doc, "open-pr", false, &out); err != nil {
+		t.Fatal(err)
+	}
+	if other.issueClosed {
+		t.Error("a step without no-change: ok was closed")
 	}
 
 	// No commit and no why: the push is refused, and the task fails.

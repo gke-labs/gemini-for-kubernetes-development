@@ -565,3 +565,98 @@ func TestInGroupStepsDropTheirReviewLabel(t *testing.T) {
 		t.Errorf("prepopulate, in the group's PR, still asks for review: %v", f.Issues[pre].Labels)
 	}
 }
+
+// A step may be marked as possibly needing no PR (no-change: ok): its
+// issues say so in their marker; only a fix step may be, and only "ok".
+func TestNoChangeStep(t *testing.T) {
+	tp, err := ParseTemplate([]byte(strings.Replace(groupedGraph, "{id: prepopulate, title: P, body: p}", "{id: prepopulate, title: P, body: p, no-change: ok}", 1)))
+	if err != nil || tp.Validate() != nil {
+		t.Fatalf("parse/validate: %v %v", err, tp.Validate())
+	}
+	r := Reconcile(groupedObserved(&tp.Spec, nil))
+	if info, _ := createdInfo(t, r, "prepopulate"); !info.NoChange || !strings.Contains(info.Marker(), " nochange=ok") {
+		t.Errorf("prepopulate's marker %q", info.Marker())
+	}
+	if got, ok := ParseChildMarker("x\n" + (ChildInfo{Parent: 9, Step: "a", NoChange: true, Group: GroupFirst}).Marker()); !ok || !got.NoChange || got.Group != GroupFirst {
+		t.Errorf("round trip: %+v", got)
+	}
+	for bad, want := range map[string]string{
+		"{id: prepopulate, title: P, body: p, no-change: maybe}":          `no-change "maybe" is not ok`,
+		"{id: prepopulate, title: P, body: p, no-change: ok, then: plan}": "no-change is a fix step's",
+	} {
+		tp, err := ParseTemplate([]byte(strings.Replace(groupedGraph, "{id: prepopulate, title: P, body: p}", bad, 1)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := tp.Validate(); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%s: %v, want %q", bad, err, want)
+		}
+	}
+}
+
+// A grouped step that closed needing no change is passed over: the next
+// step continues the nearest earlier step's PR (KCC #14934: prepopulate
+// already done, so types opens the PR); and a group whose last step closed
+// so, an earlier step's work in an open PR, gets that PR marked ready.
+func TestGroupWithANoChangeStep(t *testing.T) {
+	s := groupedSpec(t)
+	// #14934: prepopulate (the group's first) closed with no change: types,
+	// the gate, opens a PR of its own.
+	r := Reconcile(groupedObserved(s, map[string][]Child{"prepopulate": {closed(101)}}))
+	if info, _ := createdInfo(t, r, "types"); info.Group != "" || info.PR != 0 {
+		t.Errorf("types after a no-change prepopulate: %+v, want a PR of its own", info)
+	}
+	// controller's work in PR 600; mockgcp closed with no change:
+	// alignment continues PR 600, in controller's sandbox, and is last.
+	r = Reconcile(groupedObserved(s, map[string][]Child{
+		"prepopulate": {closed(101)}, "types": {closed(102)},
+		"controller": {inPR(open(103), 600, true)}, "mockgcp": {closed(104)},
+	}))
+	if info, _ := createdInfo(t, r, "alignment"); info.Group != GroupNext || info.PR != 600 || info.In != 103 || !info.Last {
+		t.Errorf("alignment past a no-change mockgcp: %+v, want PR 600 in #103, last", info)
+	}
+	// alignment, the group's last, closed with no change: PR 600 is marked
+	// ready, as its push would have.
+	r = Reconcile(groupedObserved(s, map[string][]Child{
+		"prepopulate": {closed(101)}, "types": {closed(102)},
+		"controller": {inPR(open(103), 600, true)}, "mockgcp": {inPR(open(104), 600, true)}, "alignment": {closed(105)},
+	}))
+	var readied []int
+	for _, a := range r.Actions {
+		if a.Kind == ActMarkGroupPRReady {
+			readied = append(readied, a.Issue)
+		}
+	}
+	if len(readied) != 1 || readied[0] != 600 {
+		t.Errorf("marked ready %v, want [600]", readied)
+	}
+	// The group's PR merged (every step closed): nothing to mark.
+	r = Reconcile(groupedObserved(s, map[string][]Child{
+		"prepopulate": {closed(101)}, "types": {closed(102)},
+		"controller": {closed(103)}, "mockgcp": {closed(104)}, "alignment": {closed(105)},
+	}))
+	for _, a := range r.Actions {
+		if a.Kind == ActMarkGroupPRReady {
+			t.Errorf("marked a merged group's PR ready: %+v", a)
+		}
+	}
+
+	// End to end on the fake: the draft is marked ready.
+	f := graphtest.New()
+	f.Files[".agents/graphs/gf.yaml"] = groupedGraph
+	f.Issues[100] = &graphtest.Issue{Title: "Onboard X", Body: "```factory-graph\ngraph: gf\ngrouped: true\n```\n", Author: "alice", Assoc: "MEMBER", Open: true}
+	f.Issues[600] = &graphtest.Issue{Title: "group", Body: "Fixes #103\nFixes #104", Author: "lovelace-coder-bot", Open: true, IsPR: true, Draft: true, Head: "abc", Checks: []string{"success"}}
+	mk := func(n int, step string, open bool, refs ...int) {
+		f.Issues[n] = &graphtest.Issue{Title: step, Body: (ChildInfo{Parent: 100, Source: "gf", Step: step, Depth: 1, Params: HashParams(nil)}).Marker(), Author: "watcher", Open: open, Refs: refs}
+		f.Issues[100].SubIssues = append(f.Issues[100].SubIssues, n)
+	}
+	mk(101, "prepopulate", false)
+	mk(102, "types", false)
+	mk(103, "controller", true, 600)
+	mk(104, "mockgcp", true, 600)
+	mk(105, "alignment", false)
+	sync(t, f, Options{Issue: 100, Trigger: "overseer", BotLogin: "watcher", Pool: []string{"lovelace-coder-bot", "watcher"}})
+	if len(f.Readied) != 1 || f.Readied[0] != 600 || f.Issues[600].Draft {
+		t.Errorf("readied %v, PR 600 draft %v", f.Readied, f.Issues[600].Draft)
+	}
+}

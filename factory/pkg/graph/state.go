@@ -105,6 +105,9 @@ type ChildInfo struct {
 	// In is the issue of the group's first step, whose sandbox a GroupNext
 	// child runs in: the PR's branch checked out there, its builds warm.
 	In int
+	// NoChange is that the step may rightly need no PR (Step.NoChange): a
+	// fix that commits nothing closes the issue as completed.
+	NoChange bool
 }
 
 // A child's place in its group's PR (ChildInfo.Group).
@@ -118,8 +121,11 @@ var childMarkerRE = regexp.MustCompile(`<!--\s*factory:graph-child\s+([^>]*?)\s*
 // Marker is the child's hidden marker, for the end of its body.
 func (c ChildInfo) Marker() string {
 	group := ""
+	if c.NoChange {
+		group += " nochange=ok"
+	}
 	if c.Group != "" {
-		group = " group=" + c.Group
+		group += " group=" + c.Group
 		if c.PR > 0 {
 			group += fmt.Sprintf(" pr=%d", c.PR)
 		}
@@ -169,6 +175,8 @@ func ParseChildMarker(body string) (ChildInfo, bool) {
 			c.As = v
 		case "in":
 			c.In, _ = strconv.Atoi(v)
+		case "nochange":
+			c.NoChange = v == "ok"
 		}
 	}
 	if c.Parent <= 0 || c.Step == "" {

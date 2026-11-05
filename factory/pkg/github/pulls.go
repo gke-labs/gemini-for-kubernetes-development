@@ -151,3 +151,38 @@ func (c *Client) ListAllReviewComments(ctx context.Context, number int) ([]*gith
 func (c *Client) IsInMergeQueue(ctx context.Context, number int) (bool, error) {
 	return IsPRInMergeQueue(ctx, c.owner, c.repo, number)
 }
+
+// MarkPullRequestReady marks draft PR number ready for review (GraphQL's
+// markPullRequestReadyForReview: REST cannot); a PR ready already is left
+// as it is.
+func (c *Client) MarkPullRequestReady(ctx context.Context, number int) error {
+	if !c.Ready() {
+		return errNoClient
+	}
+	pr, err := c.GetPullRequest(ctx, number)
+	if err != nil {
+		return err
+	}
+	if !pr.GetDraft() {
+		return nil
+	}
+	req, err := c.gh.NewRequest("POST", "graphql", map[string]any{
+		"query":     `mutation($id:ID!){markPullRequestReadyForReview(input:{pullRequestId:$id}){pullRequest{isDraft}}}`,
+		"variables": map[string]string{"id": pr.GetNodeID()},
+	})
+	if err != nil {
+		return err
+	}
+	var resp struct {
+		Errors []struct {
+			Message string `json:"message"`
+		} `json:"errors"`
+	}
+	if _, err := c.gh.Do(ctx, req, &resp); err != nil {
+		return fmt.Errorf("marking #%d ready for review: %w", number, err)
+	}
+	if len(resp.Errors) > 0 {
+		return fmt.Errorf("marking #%d ready for review: %s", number, resp.Errors[0].Message)
+	}
+	return nil
+}
