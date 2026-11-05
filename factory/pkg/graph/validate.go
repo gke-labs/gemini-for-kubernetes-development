@@ -110,6 +110,12 @@ func (st Step) validateFields(plan bool) error {
 	default:
 		return fmt.Errorf("then %q is not one of %s, %s, %s", st.Then, ThenFix, ThenPlan, ThenAsk)
 	}
+	switch {
+	case st.NoChange != "" && st.NoChange != NoChangeOK:
+		return fmt.Errorf("no-change %q is not %s", st.NoChange, NoChangeOK)
+	case st.NoChange != "" && st.ThenOrDefault() != ThenFix:
+		return fmt.Errorf("no-change is a fix step's: a %s step makes no PR anyway", st.ThenOrDefault())
+	}
 	for _, a := range st.Assignees {
 		if !loginRE.MatchString(a) {
 			return fmt.Errorf("assignee %q is not a GitHub login", a)

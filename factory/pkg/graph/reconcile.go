@@ -163,6 +163,9 @@ const (
 	ActAddParentLabels     = "add-parent-labels"
 	ActReopenParent        = "reopen-parent"
 	ActCloseParent         = "close-parent"
+	// ActMarkGroupPRReady marks a group's PR ready for review when the
+	// group's last step closed needing no change: no push of its marks it.
+	ActMarkGroupPRReady = "mark-group-pr-ready"
 )
 
 // Action is one write a pass makes. Every action is safe to repeat.
@@ -315,6 +318,21 @@ func Reconcile(o Observed) Result {
 			canonical[id] = c
 		}
 	}
+	// A group whose last step closed needing no change, an earlier step's
+	// work in an open PR: no last push marks that PR ready, so the
+	// reconciler does (a PR ready already is left as it is).
+	if o.Grouped {
+		for _, st := range s.Steps {
+			if s.GroupPrev(st.ID) == "" || s.GroupNext(st.ID) != "" {
+				continue // not a group's last step
+			}
+			if c, ok := canonical[st.ID]; ok && !c.Open && c.GroupPR == nil {
+				if carrier := groupCarrier(s, st.ID, canonical); carrier != "" {
+					r.Actions = append(r.Actions, Action{Kind: ActMarkGroupPRReady, Step: st.ID, Issue: canonical[carrier].GroupPR.Number})
+				}
+			}
+		}
+	}
 	// Who is handed down from now on: the parent's humans as they are, so
 	// one taken off the parent and put back is handed down again.
 	r.State.Inherited = slices.Clone(o.Parent.Humans)
@@ -378,7 +396,7 @@ func Reconcile(o Observed) Result {
 		if st.ThenOrDefault() == ThenAsk {
 			body = strings.TrimRight(body, "\n") + "\n\n" + needsHumanSection(o.Parent.Number, o.Trigger)
 		}
-		info := ChildInfo{Parent: o.Parent.Number, Source: o.Source, Step: ss.ID, Depth: o.Parent.Depth + 1, Params: hash}
+		info := ChildInfo{Parent: o.Parent.Number, Source: o.Source, Step: ss.ID, Depth: o.Parent.Depth + 1, Params: hash, NoChange: st.NoChange == NoChangeOK}
 		if o.Grouped {
 			info, body = groupChild(s, ss.ID, canonical, info, body)
 		}
@@ -444,18 +462,21 @@ func pickCanonical(children []Child) (Child, []Child) {
 // step continuing one commits on its PR's branch, as its author, and the
 // last marks it ready.
 func groupChild(s *Spec, id string, canonical map[string]Child, info ChildInfo, body string) (ChildInfo, string) {
-	prev, next := s.GroupPrev(id), s.GroupNext(id)
+	next := s.GroupNext(id)
+	// The PR to continue: the nearest earlier step's of the group that has
+	// one, past steps that closed needing no change (no-change: ok).
+	carrier := groupCarrier(s, id, canonical)
 	var note string
 	switch {
-	case prev != "" && canonical[prev].GroupPR != nil:
-		pr := canonical[prev].GroupPR
+	case carrier != "":
+		pr := canonical[carrier].GroupPR
 		info.Group, info.PR, info.As, info.Last = GroupNext, pr.Number, pr.Author, next == ""
-		first := prev
+		first := carrier
 		for p := s.GroupPrev(first); p != ""; p = s.GroupPrev(first) {
 			first = p
 		}
 		info.In = canonical[first].Number
-		note = fmt.Sprintf("This step continues #%d, step `%s`'s pull request (the graph is grouped): commit on its branch, and #%d fixes this issue too.", pr.Number, prev, pr.Number)
+		note = fmt.Sprintf("This step continues #%d, step `%s`'s pull request (the graph is grouped): commit on its branch, and #%d fixes this issue too.", pr.Number, carrier, pr.Number)
 		if info.Last {
 			note += " It is the group's last step: the pull request is marked ready for review once it is pushed."
 		}
@@ -466,6 +487,28 @@ func groupChild(s *Spec, id string, canonical map[string]Child, info ChildInfo, 
 		return info, body
 	}
 	return info, strings.TrimRight(body, "\n") + "\n\n## Pull request\n\n" + note
+}
+
+// groupCarrier is, in a grouped graph, the earlier step of id's group whose
+// PR id continues: its group predecessor if that one's work is in an open
+// PR, else - past predecessors whose issues closed needing no change - the
+// nearest earlier one whose is. "" for none (the group's PR is id's to
+// open, or it merged).
+func groupCarrier(s *Spec, id string, canonical map[string]Child) string {
+	for p := s.GroupPrev(id); p != ""; p = s.GroupPrev(p) {
+		c, ok := canonical[p]
+		switch {
+		case !ok:
+			return ""
+		case c.GroupPR != nil:
+			return p
+		case c.Open:
+			return "" // its work not in a PR yet
+		}
+		// Closed without the group's PR merging (that would close the
+		// earlier steps too): it needed no change. Look further back.
+	}
+	return ""
 }
 
 // statuses is every step's state, from its canonical child and its

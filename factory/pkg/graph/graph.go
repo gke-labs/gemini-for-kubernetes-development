@@ -118,7 +118,16 @@ type Step struct {
 	// starts. Without grouped it changes nothing: every step's PR merges
 	// before the next starts.
 	GroupGate bool `yaml:"group-gate,omitempty"`
+	// NoChange "ok" is a step whose fix may rightly need no PR - its work
+	// already done, say: a fix that commits nothing closes its issue as
+	// completed, saying why, and the graph goes on. Unset, such a fix's
+	// issue stays open for a person, since an unexpected no-op may be a
+	// wrong conclusion.
+	NoChange string `yaml:"no-change,omitempty"`
 }
+
+// NoChangeOK is Step.NoChange's one value.
+const NoChangeOK = "ok"
 
 // ThenOrDefault is the step's then, fix when unset.
 func (s Step) ThenOrDefault() string {

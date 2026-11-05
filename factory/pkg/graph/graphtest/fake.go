@@ -32,6 +32,8 @@ type Issue struct {
 	// conclusions ("" for one still running).
 	Head   string
 	Checks []string
+	// Draft is a PR that is a draft.
+	Draft bool
 }
 
 // Fake is an in-memory repository: GitHub as a pass sees it.
@@ -48,7 +50,9 @@ type Fake struct {
 	// MissingLabels are labels the repository lacks: a write naming one is
 	// refused, as GitHub refuses an account that may not create labels.
 	MissingLabels []string
-	nextCID       int64
+	// Readied are the PRs MarkPullRequestReady marked ready.
+	Readied []int
+	nextCID int64
 }
 
 func New() *Fake {
@@ -238,6 +242,19 @@ func (f *Fake) AddLabels(_ context.Context, n int, labels []string) error {
 		if !slices.Contains(f.Issues[n].Labels, l) {
 			f.Issues[n].Labels = append(f.Issues[n].Labels, l)
 		}
+	}
+	return nil
+}
+
+func (f *Fake) MarkPullRequestReady(_ context.Context, n int) error {
+	is, err := f.issue(n)
+	if err != nil {
+		return err
+	}
+	if is.Draft {
+		f.Writes++
+		is.Draft = false
+		f.Readied = append(f.Readied, n)
 	}
 	return nil
 }

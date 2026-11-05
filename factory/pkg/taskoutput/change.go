@@ -461,7 +461,7 @@ func commentUnchanged(ctx context.Context, gh *githubv39.Client, doc *Document, 
 		}
 		if posted {
 			fmt.Fprintf(out, "Why task %s changed nothing is already on %s; not commenting again\n", doc.Source.Task, doc.Target.URL)
-			return nil
+			return closeNoChangeStep(ctx, gh, owner, repo, num, dryRun, out)
 		}
 	}
 	fmt.Fprintf(out, "The fix made no change; no PR. %s why on %s:\n%s\n", doing(dryRun, "Commenting", "comment"), doc.Target.URL, indent(c.Comment))
@@ -471,6 +471,32 @@ func commentUnchanged(ctx context.Context, gh *githubv39.Client, doc *Document, 
 	body := withSessionHint(ctx, c.Comment) + marker(doc)
 	if _, _, err := gh.Issues.CreateComment(ctx, owner, repo, num, &githubv39.IssueComment{Body: &body}); err != nil {
 		return fmt.Errorf("commenting why the fix changed nothing: %w", err)
+	}
+	return closeNoChangeStep(ctx, gh, owner, repo, num, dryRun, out)
+}
+
+// noChangeStepRE is a graph step's marker saying the step may rightly need
+// no PR (graph's Step.NoChange: ok).
+var noChangeStepRE = regexp.MustCompile(`<!--\s*factory:graph-child\s[^>]*\bnochange=ok\b`)
+
+// closeNoChangeStep closes issue num as completed if it is a graph step
+// that may rightly need no PR (its marker says nochange=ok): its fix
+// changed nothing, the comment says why, and the graph goes on. Any other
+// issue is left open, for a person to judge the no-op.
+func closeNoChangeStep(ctx context.Context, gh *githubv39.Client, owner, repo string, num int, dryRun bool, out io.Writer) error {
+	issue, _, err := gh.Issues.Get(ctx, owner, repo, num)
+	if err != nil {
+		return fmt.Errorf("reading #%d: %w", num, err)
+	}
+	if issue.GetState() != "open" || !noChangeStepRE.MatchString(issue.GetBody()) {
+		return nil
+	}
+	fmt.Fprintf(out, "%s #%d as completed: its graph step may need no change (no-change: ok)\n", doing(dryRun, "Closing", "close"), num)
+	if dryRun {
+		return nil
+	}
+	if _, _, err := gh.Issues.Edit(ctx, owner, repo, num, &githubv39.IssueRequest{State: githubv39.String("closed")}); err != nil {
+		return fmt.Errorf("closing #%d: %w", num, err)
 	}
 	return nil
 }
