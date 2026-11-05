@@ -191,6 +191,10 @@ type Action struct {
 	Title string
 	Body  string
 	Child ChildInfo
+	// As is, for a group's PR to mark ready, its author: the watcher may
+	// not change a PR on someone's fork, its author may
+	// (Options.MarkReadyAs).
+	As string
 }
 
 // Reconcile decides one pass over a graph: from the steps, the params and
@@ -318,9 +322,10 @@ func Reconcile(o Observed) Result {
 			canonical[id] = c
 		}
 	}
-	// A group whose last step closed needing no change, an earlier step's
-	// work in an open PR: no last push marks that PR ready, so the
-	// reconciler does (a PR ready already is left as it is).
+	// A group whose last step closed without a push of its own - needing
+	// no change, or closed by a person - an earlier step's work in an open
+	// PR: no last push marks that PR ready, so the reconciler does, as the
+	// PR's author (a PR ready already is left as it is).
 	if o.Grouped {
 		for _, st := range s.Steps {
 			if s.GroupPrev(st.ID) == "" || s.GroupNext(st.ID) != "" {
@@ -328,7 +333,8 @@ func Reconcile(o Observed) Result {
 			}
 			if c, ok := canonical[st.ID]; ok && !c.Open && c.GroupPR == nil {
 				if carrier := groupCarrier(s, st.ID, canonical); carrier != "" {
-					r.Actions = append(r.Actions, Action{Kind: ActMarkGroupPRReady, Step: st.ID, Issue: canonical[carrier].GroupPR.Number})
+					pr := canonical[carrier].GroupPR
+					r.Actions = append(r.Actions, Action{Kind: ActMarkGroupPRReady, Step: st.ID, Issue: pr.Number, As: pr.Author})
 				}
 			}
 		}

@@ -61,6 +61,9 @@ type Deps struct {
 	// StepReady judges a grouped graph's PR ready for its next step
 	// (graph.Options.StepReady); nil leaves it to the PR's checks.
 	StepReady func(ctx context.Context, pr int) (bool, error)
+	// MarkReadyAs marks a group's PR ready as its author
+	// (graph.Options.MarkReadyAs); nil leaves it to GitHub's client.
+	MarkReadyAs func(ctx context.Context, pr int, author string) error
 }
 
 // Controller syncs the open graph parents.
@@ -70,6 +73,8 @@ type Controller struct {
 	paused func() bool
 	// stepReady is Deps.StepReady.
 	stepReady func(ctx context.Context, pr int) (bool, error)
+	// markReadyAs is Deps.MarkReadyAs.
+	markReadyAs func(ctx context.Context, pr int, author string) error
 	// wake carries the parents whose child just closed. It is buffered so
 	// that whoever reports one never waits on a pass.
 	wake chan int
@@ -80,7 +85,7 @@ func New(cfg Config, deps Deps) *Controller {
 	if cfg.Interval <= 0 {
 		cfg.Interval = DefaultInterval
 	}
-	return &Controller{cfg: cfg, gh: deps.GitHub, paused: deps.Paused, stepReady: deps.StepReady, wake: make(chan int, 64)}
+	return &Controller{cfg: cfg, gh: deps.GitHub, paused: deps.Paused, stepReady: deps.StepReady, markReadyAs: deps.MarkReadyAs, wake: make(chan int, 64)}
 }
 
 // Run sweeps every parent each interval, and syncs a single parent as soon
@@ -151,7 +156,7 @@ func (c *Controller) sync(ctx context.Context, n int) {
 	p, err := graph.Sync(ctx, c.gh, graph.Options{
 		Issue: n, Trigger: c.cfg.TriggerLabel, BotLogin: c.cfg.GitHubLogin,
 		Pool: c.cfg.Pool, Members: c.cfg.Members, MaxDepth: c.cfg.MaxDepth, DryRun: c.cfg.DryRun,
-		StepReady: c.stepReady,
+		StepReady: c.stepReady, MarkReadyAs: c.markReadyAs,
 		Logf: func(format string, args ...any) {
 			klog.Infof("issue graph #%d: "+format, append([]any{n}, args...)...)
 		},

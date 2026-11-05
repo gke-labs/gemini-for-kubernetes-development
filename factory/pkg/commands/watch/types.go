@@ -112,6 +112,12 @@ type Watcher struct {
 	// as user, or the watcher's own account if that is empty. Nil, fan-out
 	// parents without a spec wait for a person to write one.
 	ProposeFanout func(ctx context.Context, issueURL, user string) error
+	// MarkReadyAs marks pull request pr of owner/repo ready for review as
+	// login, with login's own GitHub token: a grouped graph's PR, whose
+	// head is on login's fork, when its last step closed without a push of
+	// its own (a person closed it, or it needed no change). Nil: the
+	// watcher's own client tries, which GitHub refuses for a fork's PR.
+	MarkReadyAs func(ctx context.Context, owner, repo string, pr int, login string) error
 	// WarmWorkspace moves the repository's warm workspace cycle on by a
 	// step (pkg/commands' warmWorkspace), cloning as user. Nil, or no
 	// warmWorkspace in the config, the repository is not warmed.

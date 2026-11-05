@@ -637,6 +637,9 @@ func TestGroupWithANoChangeStep(t *testing.T) {
 	for _, a := range r.Actions {
 		if a.Kind == ActMarkGroupPRReady {
 			readied = append(readied, a.Issue)
+			if a.As != "lovelace-coder-bot" {
+				t.Errorf("marked ready as %q, want the PR's author", a.As)
+			}
 		}
 	}
 	if len(readied) != 1 || readied[0] != 600 {
@@ -670,5 +673,20 @@ func TestGroupWithANoChangeStep(t *testing.T) {
 	sync(t, f, Options{Issue: 100, Trigger: "overseer", BotLogin: "watcher", Pool: []string{"lovelace-coder-bot", "watcher"}})
 	if len(f.Readied) != 1 || f.Readied[0] != 600 || f.Issues[600].Draft {
 		t.Errorf("readied %v, PR 600 draft %v", f.Readied, f.Issues[600].Draft)
+	}
+
+	// With MarkReadyAs (the watcher, which may not change a PR on the
+	// author's fork - KCC #15013), the PR is marked ready as its author,
+	// not with the graph's own client.
+	f.Issues[600].Draft = true
+	f.Readied = nil
+	var as []string
+	sync(t, f, Options{Issue: 100, Trigger: "overseer", BotLogin: "watcher", Pool: []string{"lovelace-coder-bot", "watcher"},
+		MarkReadyAs: func(_ context.Context, pr int, author string) error {
+			as = append(as, fmt.Sprintf("%d %s", pr, author))
+			return nil
+		}})
+	if len(as) != 1 || as[0] != "600 lovelace-coder-bot" || len(f.Readied) != 0 {
+		t.Errorf("marked ready as %v, by the graph's client %v", as, f.Readied)
 	}
 }
