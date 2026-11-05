@@ -636,14 +636,14 @@ func TestForSandboxDropsFactoryFields(t *testing.T) {
 	}
 
 	// The session tag is factory's.
-	if data, _, err = Builtin("care-ci"); err != nil {
+	if data, _, err = Builtin("care-comments"); err != nil {
 		t.Fatal(err)
 	}
 	if out, err = ForSandbox(data); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(string(out), "session:") {
-		t.Errorf("sandbox care-ci recipe kept its session:\n%s", out)
+		t.Errorf("sandbox care-comments recipe kept its session:\n%s", out)
 	}
 
 	// So is where a board offers it.
@@ -1323,7 +1323,13 @@ func TestBuiltinCareRenders(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !rec.RunsOn(OnMyPR) || rec.RunsOn(OnPR) || rec.RunsOn(OnIssue) || rec.Session != "care" || rec.TaskOutput == nil || rec.TaskOutput.Kind != "Change" {
+		// care-ci and care-rebase run in a conversation of their own
+		// each run, the rest in session care.
+		session := "care"
+		if name == "care-ci" || name == "care-rebase" {
+			session = ""
+		}
+		if !rec.RunsOn(OnMyPR) || rec.RunsOn(OnPR) || rec.RunsOn(OnIssue) || rec.Session != session || rec.TaskOutput == nil || rec.TaskOutput.Kind != "Change" {
 			t.Fatalf("%s on %v in session %q, task-output %+v", name, rec.On, rec.Session, rec.TaskOutput)
 		}
 		overrides := map[string]string{}

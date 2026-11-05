@@ -266,13 +266,13 @@ func TestRecordedRun(t *testing.T) {
 
 	// A run in a session records the recipe it ran, and the conversation
 	// it continued.
-	_, rec, err = recipe.Builtin("care-ci")
+	_, rec, err = recipe.Builtin("care-comments")
 	if err != nil {
 		t.Fatal(err)
 	}
 	run = recordedRun(spool.Task{ID: "t3", Session: "t1"}, rec, started)
-	if run.Recipe != "care-ci" || run.Session != "t1" {
-		t.Errorf("care-ci run = %+v", run)
+	if run.Recipe != "care-comments" || run.Session != "t1" {
+		t.Errorf("care-comments run = %+v", run)
 	}
 }
 
@@ -374,16 +374,21 @@ func TestBuiltinRecipeInfos(t *testing.T) {
 		t.Errorf("plan = %+v, want nothing applied on finish", plan)
 	}
 	// care's jobs are recipes of session care, each a Change: the others
-	// are its follow-ups.
+	// are its follow-ups. care-ci and care-rebase are Changes on my PRs
+	// too, but each run in a conversation of its own.
 	for name, label := range map[string]string{"care": "Care", "care-comments": "Address comments", "care-ci": "Fix CI", "care-rebase": "Rebase", "care-iterate": "Iterate"} {
-		if got := byName[name]; got.Label != label || got.Kind != "Change" || got.Session != "care" || !slices.Equal(got.On, []string{"my-pr"}) {
-			t.Errorf("%s = %+v, want %q, a Change in session care", name, got, label)
+		session := "care"
+		if name == "care-ci" || name == "care-rebase" {
+			session = ""
+		}
+		if got := byName[name]; got.Label != label || got.Kind != "Change" || got.Session != session || !slices.Equal(got.On, []string{"my-pr"}) {
+			t.Errorf("%s = %+v, want %q, a Change in session %q", name, got, label, session)
 		}
 	}
 	if byName["fix"].Session != "" {
 		t.Errorf("fix is in session %q, want none: care never continues it", byName["fix"].Session)
 	}
-	for name, want := range map[string]string{"fix": "fix", "plan": "plan", "triage": "recipe-triage", "review": "recipe-review", "research": "research", "care": "recipe-care", "care-ci": "recipe-care", "care-iterate": "recipe-care"} {
+	for name, want := range map[string]string{"fix": "fix", "plan": "plan", "triage": "recipe-triage", "review": "recipe-review", "research": "research", "care": "recipe-care", "care-ci": "recipe-care-ci", "care-iterate": "recipe-care"} {
 		if got := byName[name].TaskType; got != want {
 			t.Errorf("%s's task type = %q, want %q", name, got, want)
 		}
@@ -797,7 +802,7 @@ func TestMergeCatalog(t *testing.T) {
 		return m
 	}
 	triage, _, _ := recipe.Builtin("triage")
-	care, _, _ := recipe.Builtin("care-ci")
+	care, _, _ := recipe.Builtin("care-comments")
 	warm, _, _ := recipe.Builtin("warm")
 	own := "name: mine\nas: coder\non: [issue]\nstart: {steps: [{ask: a}]}\n"
 
@@ -812,21 +817,21 @@ func TestMergeCatalog(t *testing.T) {
 	}
 	got = source(mergeCatalog(builtins, []catalogEntry{
 		entry("triage", string(triage), parseReplacingRecipe),
-		entry("care-ci", string(care), parseReplacingRecipe),
+		entry("care-comments", string(care), parseReplacingRecipe),
 		entry("warm", string(warm), parseReplacingRecipe),
 	}, true))
-	if got["triage"] != ".agents/recipes/triage.yaml" || got["care-ci"] != ".agents/recipes/care-ci.yaml" || got["care"] != "builtin" {
+	if got["triage"] != ".agents/recipes/triage.yaml" || got["care-comments"] != ".agents/recipes/care-comments.yaml" || got["care"] != "builtin" {
 		t.Errorf("replace = %v", got)
 	}
 	if _, ok := got["warm"]; ok {
 		t.Errorf("replace lists warm: %v", got)
 	}
 
-	// care-ci on PRs rather than my PRs breaks the care group: the
+	// care-comments on PRs rather than my PRs breaks the care group: the
 	// built-in comes back, the repository's is not a recipe.
 	broken := strings.Replace(string(care), "\non: [my-pr]\n", "\non: [pr]\n", 1)
-	got = source(mergeCatalog(builtins, []catalogEntry{entry("care-ci", broken, parseReplacingRecipe)}, true))
-	if got["care-ci"] != "builtin" || !strings.Contains(got["care-ci!"], "session care") {
+	got = source(mergeCatalog(builtins, []catalogEntry{entry("care-comments", broken, parseReplacingRecipe)}, true))
+	if got["care-comments"] != "builtin" || !strings.Contains(got["care-comments!"], "session care") {
 		t.Errorf("a broken group = %v", got)
 	}
 	// So does a repository's own group without its default.
