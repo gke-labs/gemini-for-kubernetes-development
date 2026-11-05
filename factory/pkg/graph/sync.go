@@ -71,6 +71,11 @@ type Options struct {
 	// so the reviewer and the care rules catch up first. ErrNoStepReady, or
 	// unset, falls back to the PR head's checks being green.
 	StepReady func(ctx context.Context, pr int) (bool, error)
+	// MarkReadyAs marks a group's PR ready for review as its author: the
+	// watcher may not change a PR whose head is on someone's fork, and a
+	// group's PR is its first step's bot's. Nil: the watcher's own client
+	// tries (GitHub.MarkPullRequestReady).
+	MarkReadyAs func(ctx context.Context, pr int, author string) error
 }
 
 // ErrNoStepReady is StepReady's answer when it cannot judge (the watch
@@ -542,6 +547,9 @@ func applyOne(ctx context.Context, gh GitHub, opts Options, p *Pass, a Action) e
 		}
 		return gh.SetIssueState(ctx, a.Issue, "closed", "not_planned")
 	case ActMarkGroupPRReady:
+		if opts.MarkReadyAs != nil && a.As != "" {
+			return opts.MarkReadyAs(ctx, a.Issue, a.As)
+		}
 		return gh.MarkPullRequestReady(ctx, a.Issue)
 	case ActRemoveChildLabels:
 		for _, l := range a.Labels {
@@ -600,7 +608,11 @@ func describe(a Action, dryRun bool) string {
 	case ActAddChildLabels:
 		return fmt.Sprintf("%slabel #%d (step %s) %s", would, a.Issue, a.Step, strings.Join(a.Labels, ", "))
 	case ActMarkGroupPRReady:
-		return fmt.Sprintf("%smark #%d ready for review (its group's last step, %s, needed no change)", would, a.Issue, a.Step)
+		as := ""
+		if a.As != "" {
+			as = ", as " + a.As
+		}
+		return fmt.Sprintf("%smark #%d ready for review (its group's last step, %s, closed without a push of its own%s)", would, a.Issue, a.Step, as)
 	case ActRemoveChildLabels:
 		return fmt.Sprintf("%sunlabel #%d (step %s, in its group's PR) %s", would, a.Issue, a.Step, strings.Join(a.Labels, ", "))
 	case ActAddChildAssignees:

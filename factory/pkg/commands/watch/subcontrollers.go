@@ -194,7 +194,7 @@ func (w *Watcher) newGraphController() *graphs.Controller {
 		Members:      w.cfg.TrustedLogins(),
 		MinNumber:    w.minIssueNumber(),
 		DryRun:       w.loopDryRun(w.IssueMode),
-	}, graphs.Deps{GitHub: w.repoClient, Paused: w.draining, StepReady: w.groupStepReady})
+	}, graphs.Deps{GitHub: w.repoClient, Paused: w.draining, StepReady: w.groupStepReady, MarkReadyAs: w.markGroupPRReadyAs()})
 }
 
 // groupStepReady is whether a grouped graph's PR is ready for the step
@@ -214,6 +214,18 @@ func (w *Watcher) groupStepReady(ctx context.Context, pr int) (bool, error) {
 		return false, fmt.Errorf("reading PR #%d's facts: %w", pr, err)
 	}
 	return readyForNextStep(w.rulesControl, it, env), nil
+}
+
+// markGroupPRReadyAs marks a grouped graph's PR ready for review as its
+// author (MarkReadyAs): the watcher may not change a PR whose head is on
+// a bot's fork. Nil without MarkReadyAs: the graph's own client tries.
+func (w *Watcher) markGroupPRReadyAs() func(ctx context.Context, pr int, author string) error {
+	if w.MarkReadyAs == nil {
+		return nil
+	}
+	return func(ctx context.Context, pr int, author string) error {
+		return w.MarkReadyAs(ctx, w.Repo.Owner, w.Repo.Repo, pr, author)
+	}
 }
 
 // readyForNextStep is whether the rules would hand a PR to people - the
