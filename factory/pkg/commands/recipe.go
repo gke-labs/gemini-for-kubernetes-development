@@ -1496,6 +1496,14 @@ func runRecipeExec(ctx context.Context, recipePath, inputsPath, taskDir string) 
 			s, err := reopen(ctx, model)
 			return s, model, err
 		},
+		// The exchange with the model broke on a turn: the same
+		// conversation reopened on the same model, to ask it again.
+		Reopen: func(ctx context.Context) (recipe.Session, error) {
+			if reopen == nil {
+				return nil, errors.New("no conversation to reopen")
+			}
+			return reopen(ctx, model)
+		},
 		// The run's conversation is its task's now: task.json says so,
 		// which is what the next run in the session reads
 		// (continuedSession).
