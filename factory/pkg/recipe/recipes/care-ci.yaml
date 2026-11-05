@@ -5,11 +5,12 @@
 # The PR must be yours: authored by you, its head a branch on your fork
 # (on: [my-pr]); factory pr adopt takes over one that is not. It runs in
 # the PR's fix sandbox (the fix's that opened it, or one made for the PR),
-# in session care (design/recipe-sessions.md): care, care-comments,
-# care-ci, care-rebase and care-iterate share one conversation there, the
-# first run opening it and every later one continuing it, whichever it is
-# (--new-session opens a new one). Each run takes the PR as it is now:
-# factory hands it the PR's push facts (INPUT_PUSHED_*: fork, branch, the
+# in a conversation of its own each run, not in session care
+# (design/recipe-sessions.md) that care, care-comments, care-rebase and
+# care-iterate share: what a CI fix needs is in the checks' logs, and a
+# conversation every care run continues grows without end - at ~275k
+# tokens a fallback model ends its turns at once (KCC #15015,
+# 2026-11-05). Each run takes the PR as it is now: factory hands it the PR's push facts (INPUT_PUSHED_*: fork, branch, the
 # base it branched from, head) and its title and body. The agent commits
 # and never pushes; the push step pushes to the PR's branch on your fork,
 # leased against the head the PR had, so a commit someone else pushed
@@ -19,8 +20,6 @@ name: care-ci
 label: Fix CI
 on: [my-pr]
 as: author
-session: care
-
 inputs:
   instructions:
     type: instructions
