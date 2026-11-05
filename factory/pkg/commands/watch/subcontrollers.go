@@ -230,8 +230,15 @@ func (w *Watcher) markGroupPRReadyAs() func(ctx context.Context, pr int, author 
 
 // readyForNextStep is whether the rules would hand a PR to people - the
 // ready rule runs on it - were it not a draft.
+//
+// A PR already handed to people - not a draft, labelled ready-for-human -
+// counts as one the ready rule would run on: its graph was grouped once the
+// PR was open, and the ready rule, which runs once and skips a PR it
+// labelled, would otherwise hold the next step back for good. The step
+// that continues the PR makes it a draft again (open-pr, as its author).
 func readyForNextStep(control *rules.Control, it rules.Item, env rules.Env) bool {
 	it.Draft = false
+	it.Labels = slices.DeleteFunc(slices.Clone(it.Labels), func(l string) bool { return strings.HasSuffix(l, "/ready-for-human") })
 	for _, d := range control.Decide(it, env) {
 		if d.Rule == "ready" && d.Outcome == rules.OutcomeRun {
 			return true

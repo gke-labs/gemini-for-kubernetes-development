@@ -399,6 +399,10 @@ func issueNumber(url string) (int, bool) {
 // to its group's open PR: the step's title and body (which fixes its issue)
 // are added to the PR's body as a section of their own, and the group's
 // last step (a Change that is not a draft) marks the PR ready for review.
+// A step before the last turns a PR that is not a draft back into one, and
+// takes off its ready-for-human labels (draftAgain): a graph grouped once
+// its first step's PR was open, and handed to people, has its later steps
+// land on a PR no one should review or merge half done.
 func continueGroupPR(ctx context.Context, gh *githubv39.Client, owner, repo string, pr *githubv39.PullRequest, c *Change, issue int, dryRun bool, out io.Writer) error {
 	fmt.Fprintf(out, "%s #%d's step to %s: %q\n", doing(dryRun, "Adding", "add"), issue, pr.GetHTMLURL(), c.Title)
 	if dryRun {
@@ -411,7 +415,52 @@ func continueGroupPR(ctx context.Context, gh *githubv39.Client, owner, repo stri
 	}
 	fmt.Fprintf(out, "Added #%d's step to %s\n", issue, pr.GetHTMLURL())
 	addPRLabels(ctx, gh, owner, repo, edited, c.Labels, out)
+	if err := draftAgain(ctx, gh, owner, repo, edited, c, out); err != nil {
+		return err
+	}
 	return markReady(ctx, gh, edited, c, out)
+}
+
+// draftAgain makes a group's PR a draft again, and takes off its
+// ready-for-human labels, when a step before the group's last (a draft
+// Change) continues it: the PR is not done until the last step is. A
+// draft PR without those labels, or the last step's Change, is left as it
+// is.
+func draftAgain(ctx context.Context, gh *githubv39.Client, owner, repo string, pr *githubv39.PullRequest, c *Change, out io.Writer) error {
+	if c.Draft == nil || !*c.Draft {
+		return nil
+	}
+	for _, l := range pr.Labels {
+		if name := l.GetName(); strings.HasSuffix(name, "/ready-for-human") {
+			if _, err := gh.Issues.RemoveLabelForIssue(ctx, owner, repo, pr.GetNumber(), name); err != nil {
+				return fmt.Errorf("taking %s off PR #%d: %w", name, pr.GetNumber(), err)
+			}
+			fmt.Fprintf(out, "Took %s off %s: its group is not done\n", name, pr.GetHTMLURL())
+		}
+	}
+	if pr.GetDraft() {
+		return nil
+	}
+	req, err := gh.NewRequest("POST", "graphql", map[string]any{
+		"query":     `mutation($id:ID!){convertPullRequestToDraft(input:{pullRequestId:$id}){pullRequest{isDraft}}}`,
+		"variables": map[string]string{"id": pr.GetNodeID()},
+	})
+	if err != nil {
+		return err
+	}
+	var resp struct {
+		Errors []struct {
+			Message string `json:"message"`
+		} `json:"errors"`
+	}
+	if _, err := gh.Do(ctx, req, &resp); err != nil {
+		return fmt.Errorf("making PR #%d a draft again: %w", pr.GetNumber(), err)
+	}
+	if len(resp.Errors) > 0 {
+		return fmt.Errorf("making PR #%d a draft again: %s", pr.GetNumber(), resp.Errors[0].Message)
+	}
+	fmt.Fprintf(out, "Made %s a draft again: its group is not done\n", pr.GetHTMLURL())
+	return nil
 }
 
 // markReady marks a draft PR ready for review when its Change is not a
