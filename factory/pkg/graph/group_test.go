@@ -606,6 +606,18 @@ func TestGroupWithANoChangeStep(t *testing.T) {
 	if info, _ := createdInfo(t, r, "types"); info.Group != "" || info.PR != 0 {
 		t.Errorf("types after a no-change prepopulate: %+v, want a PR of its own", info)
 	}
+	// A whole group with no PR (prepopulate and types both closed needing
+	// no change): nothing to mark ready, and the next group starts -
+	// controller opens its draft.
+	r = Reconcile(groupedObserved(s, map[string][]Child{"prepopulate": {closed(101)}, "types": {closed(102)}}))
+	if info, _ := createdInfo(t, r, "controller"); info.Group != GroupFirst {
+		t.Errorf("controller after a group with no PR: %+v, want the next group's first", info)
+	}
+	for _, a := range r.Actions {
+		if a.Kind == ActMarkGroupPRReady {
+			t.Errorf("marked a PR ready for a group with none: %+v", a)
+		}
+	}
 	// controller's work in PR 600; mockgcp closed with no change:
 	// alignment continues PR 600, in controller's sandbox, and is last.
 	r = Reconcile(groupedObserved(s, map[string][]Child{
