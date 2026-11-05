@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"strings"
 	"text/template"
+	"time"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/acpd"
 )
@@ -36,11 +37,20 @@ var ErrNoFallback = errors.New("no model left to fall back to")
 // experiencing high demand"), the key rate limited or out of quota, or the
 // model's API out of reach (gemini's "RPC error [500]: exception
 // TypeError: fetch failed sending request": its request never got there).
-var engineUnavailableRE = regexp.MustCompile(`(?i)RPC error \[(429|503)\]|experiencing high demand|RESOURCE_EXHAUSTED|model is (currently )?overloaded|\b(429 Too Many Requests|503 Service Unavailable)\b|fetch failed sending request`)
+var engineUnavailableRE = regexp.MustCompile(`(?i)RPC error \[(429|503)\]|experiencing high demand|RESOURCE_EXHAUSTED|model is (currently )?overloaded|\b(429 Too Many Requests|503 Service Unavailable)\b`)
+
+// engineTransientRE is an engine's answer that the exchange with its model
+// broke - the request never got there (gemini's "RPC error [500]:
+// exception TypeError: fetch failed sending request"), or the streamed
+// answer was cut off ("RPC error [500]: Incomplete JSON segment at the
+// end") - rather than that the model cannot serve: the same model, asked
+// again, usually answers.
+var engineTransientRE = regexp.MustCompile(`(?i)fetch failed sending request|Incomplete JSON segment|\b(ECONNRESET|ETIMEDOUT|EPIPE)\b|socket hang up`)
 
 // EngineUnavailable reports whether a turn failed because the engine could
 // not serve it - a state of the service at the moment, which another
-// model, or later, gets past - rather than on the turn's own account.
+// model, or later, gets past - rather than on the turn's own account. A
+// broken exchange (EngineTransient) is one too.
 func EngineUnavailable(err error) bool {
 	return err != nil && EngineUnavailableMessage(err.Error())
 }
@@ -48,7 +58,26 @@ func EngineUnavailable(err error) bool {
 // EngineUnavailableMessage reports whether a message - an error line of a
 // task's log - says the engine could not serve (EngineUnavailable).
 func EngineUnavailableMessage(msg string) bool {
-	return engineUnavailableRE.MatchString(msg)
+	return engineUnavailableRE.MatchString(msg) || engineTransientRE.MatchString(msg)
+}
+
+// EngineTransient reports whether a turn failed because the exchange with
+// the model broke (engineTransientRE): the turn is asked again of the same
+// model before any other is tried.
+func EngineTransient(err error) bool {
+	return err != nil && engineTransientRE.MatchString(err.Error())
+}
+
+// transientRetries is how many times a turn whose exchange broke is asked
+// again of the same model before the run falls back to the next one;
+// transientBackoff how long it waits before each.
+const transientRetries = 2
+
+func transientBackoff(attempt int) time.Duration {
+	if attempt <= 1 {
+		return 30 * time.Second
+	}
+	return 2 * time.Minute
 }
 
 type Session interface {
@@ -101,6 +130,15 @@ type Runner struct {
 	// and the same checkout, so nothing the run did is lost. It says which
 	// model; ErrNoFallback when the list is spent. Nil: no fallback.
 	Fallback func(ctx context.Context) (Session, string, error)
+	// Reopen reopens the conversation the run is in on the model it is on
+	// now, when the exchange with that model broke on a turn
+	// (EngineTransient): the turn is asked again there, told it was cut
+	// off, before the run falls back to another model. Nil: a broken
+	// exchange falls back at once.
+	Reopen func(ctx context.Context) (Session, error)
+	// Sleep waits d, or until ctx is done: the pause before a turn is
+	// asked again (Reopen). Nil: time's.
+	Sleep func(ctx context.Context, d time.Duration) error
 	// NewSession opens a conversation of this run's own, as a run that
 	// continues none does. With Continues, a conversation too long to take
 	// another turn (full) is left for it at the run's first ask: the
@@ -125,6 +163,29 @@ func fallbackPrompt(ask string) string {
 	return "The model serving this conversation became unavailable before it finished your last request. " +
 		"You are a different model continuing the same conversation: what was done so far is in the conversation above and in the checkout. " +
 		"Pick up where it left off and complete the request:\n\n" + ask
+}
+
+// interruptedPrompt is a turn asked again of the same model after the
+// exchange with it broke partway: told so, and that some of it may be
+// done.
+func interruptedPrompt(ask string) string {
+	return "Your last request was interrupted by a connection error before you finished it. " +
+		"What you did so far is in the conversation above and in the checkout. " +
+		"Continue from where you stopped and complete the request:\n\n" + ask
+}
+
+func (r *Runner) sleep(ctx context.Context, d time.Duration) error {
+	if r.Sleep != nil {
+		return r.Sleep(ctx, d)
+	}
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
+	}
 }
 
 // Run runs the recipe's steps in order and stops at the first failure.
@@ -240,12 +301,44 @@ func (r *Runner) Run(ctx context.Context, rec *Recipe) (err error) {
 				res.Reply, err = session.Ask(ctx, prompt)
 				r.addUsage(label, session)
 			}
-			// The engine could not serve the turn (its model at capacity,
-			// the key out of quota): the same conversation goes on with the
-			// next model of the run's list, told where it is, until one
-			// answers or none is left.
-			for EngineUnavailable(err) && r.Fallback != nil {
+			// The exchange with the model broke (the request never got
+			// there, the answer was cut off): the same model is asked
+			// again, in the same conversation, told it was interrupted - a
+			// few times, a while apart - before another is tried. The
+			// engine could not serve the turn (its model at capacity, the
+			// key out of quota), or the same model still fails: the same
+			// conversation goes on with the next model of the run's list,
+			// told where it is, until one answers or none is left.
+			retries := 0
+			for err != nil {
 				failed := err
+				if EngineTransient(err) && r.Reopen != nil && retries < transientRetries {
+					retries++
+					wait := transientBackoff(retries)
+					fmt.Fprintf(r.Log, "::warning %s: the exchange with the model broke (%v); asking the same model again in %s (%d of %d)\n", label, failed, wait, retries, transientRetries)
+					if serr := r.sleep(ctx, wait); serr != nil {
+						err = fmt.Errorf("%w; waiting to ask again: %w", failed, serr)
+						break
+					}
+					_ = session.Close()
+					var rerr error
+					if session, rerr = r.Reopen(ctx); rerr != nil {
+						session = nil
+						err = fmt.Errorf("%w; reopening the conversation: %w", failed, rerr)
+						break
+					}
+					prompt = interruptedPrompt(ask)
+					if f, ok := session.(FreshSession); ok && f.Fresh() && rec.Context != "" {
+						prompt = rec.Context + "\n\n---\n\n" + ask
+					}
+					res.Reply, err = session.Ask(ctx, prompt)
+					r.addUsage(label, session)
+					continue
+				}
+				if !EngineUnavailable(err) || r.Fallback == nil {
+					break
+				}
+				retries = 0
 				_ = session.Close()
 				var model string
 				var ferr error
