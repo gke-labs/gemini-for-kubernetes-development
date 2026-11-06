@@ -17,7 +17,7 @@ import (
 )
 
 func fanoutIssue(n int, body string, labels ...string) *githubv39.Issue {
-	issue := &githubv39.Issue{Number: githubv39.Int(n), Body: githubv39.String(body)}
+	issue := &githubv39.Issue{Number: githubv39.Int(n), Body: githubv39.String(body), AuthorAssociation: githubv39.String("MEMBER")}
 	for _, l := range labels {
 		issue.Labels = append(issue.Labels, &githubv39.Label{Name: githubv39.String(l)})
 	}

@@ -50,6 +50,12 @@ description: Fix an issue the overseer is pointed at and open the PR
 on: issue                    # the kind of item the rule looks at
 order: 20                    # its place among the issue rules; a recipe rule takes the item
 when:                        # the condition: every predicate set must hold
+  any-of:                    #   pointed at by one of these:
+    - labels: {any: ["{{trigger}}"]}               # the trigger label,
+      author: [pool, owner, member, collaborator]  #   on a trusted author's issue
+    - assignee: pool                               # a pool assignee, likewise
+      author: [pool, owner, member, collaborator]
+    - opened-by: watcher                           # or the watcher's own issue
   fanout: false              #   not a fan-out's parent (the fan-out controller's)
   graph: false               #   not an issue graph's parent (the graph controller's)
   linked-pr: none            #   no open PR says it closes it
@@ -68,7 +74,8 @@ policy:
 ```
 
 Read aloud: *for an issue the overseer tracks (see [Which items a rule
-sees](#which-items-a-rule-sees)); not held back by a fan-out; with no open
+sees](#which-items-a-rule-sees)), labelled or assigned on a trusted author's
+issue, or the watcher's own; not held back by a fan-out; with no open
 PR; naming no workflow; and changed since the last fix that succeeded - once
 the last fix is 10 minutes old (20 after a failure), queue the fix recipe (a coder
 bot runs it) and open the PR with the issue's labels when it ends.*
@@ -690,7 +697,7 @@ the suite CI runs.
 
 | rule | on | does |
 |---|---|---|
-| `fix` | issue | fixes an issue the overseer is pointed at and opens the PR |
+| `fix` | issue | fixes an issue the overseer is pointed at and opens the PR. Only an issue a trusted author opened (`author: [pool, owner, member, collaborator]`) or the watcher opened: its title and body go into the agent's prompt, so an outsider's issue is not fixed however it is labelled or assigned; restate it in an issue of your own |
 | `workflow-missing` | issue | stops an issue whose workflow definition cannot be loaded, with a comment saying so |
 | `workflow` | issue | takes the next step of the workflow an issue names (held while an open PR closes the issue) |
 | `plan` | issue | `<trigger>/plan`: the plan recipe writes or revises the issue's one plan comment (key `plan`), with a Breakdown when the work needs more than one PR; `<trigger>/planned` on success |

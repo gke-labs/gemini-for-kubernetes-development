@@ -36,7 +36,7 @@ Because GitHub requires labels to exist in the repository before bots can attach
 
 | Label | Default Name | Applied By | Description & Behavior |
 |---|---|---|---|
-| **Primary Trigger** | `overseer` | Maintainers / Bot | **Triggers automated issue fixing and PR tracking.** When applied to an issue, Overseer creates an `issue-fix` task and launches a worker sandbox to write and submit a pull request. |
+| **Primary Trigger** | `overseer` | Maintainers / Bot | **Triggers automated issue fixing and PR tracking.** When applied to an issue, Overseer creates an `issue-fix` task and launches a worker sandbox to write and submit a pull request. Only issues opened by a trusted author (the repository owner, an organization member or `allowlistedUsers` login, a collaborator, or one of Overseer's bots) are fixed, since the issue's title and body go into the agent's prompt. |
 | **Review Opt-In** | `overseer/review` | Maintainers / Authors | **Opt-in for automated AI code review.** When added to a PR or its referenced parent issue, the Reviewer Bot (`reviewbot-robot`) automatically performs a structured code review once CI passes. |
 | **Ready for Human** | `overseer/ready-for-human` | Overseer (Automated) | **Signaling for human maintainers.** Applied automatically when all automated gates pass: CI checks are green, no merge conflicts, bot reviews completed and passed, all comments addressed. Automatically removed if new commits, failures, or comments appear. |
 | **Plan** | `overseer/plan` | Maintainers | **Plans an issue.** A coder bot posts an implementation plan as one comment; applying the label again revises it (v2, v3...). Optional: only for the [plan flow](../../factory/docs/plan-and-graph.md). |
@@ -284,7 +284,7 @@ If you need to perform maintenance, test infrastructure upgrades, or halt LLM ta
 
 ### 4.4 Controlling Workflows via GitHub Labels
 Maintainers can interact with and steer Overseer workflows directly in GitHub without needing direct Kubernetes cluster access:
-- **Trigger Issue Remediation**: Apply the `overseer` label (or assign a bot user) to an open issue to trigger Overseer to spawn a worker sandbox and author a PR.
+- **Trigger Issue Remediation**: Apply the `overseer` label (or assign a bot user) to an open issue to trigger Overseer to spawn a worker sandbox and author a PR. The issue must have been opened by a trusted author (see [GitHub Repository Labels](#14-github-repository-labels)): an outside contributor's issue is left alone however it is labelled or assigned. To have one fixed, restate it in an issue of your own.
 - **Request Automated Code Review**: Apply the `overseer/review` label to an open PR (or its parent issue) to trigger automated bot review once CI tests pass.
 - **Provide Custom Review Rules**: Add a `## Review Instructions` section to the PR or issue description to supply domain-specific guidelines or references (e.g. `.gemini/skills/my-check/SKILL.md`) for the reviewer bot.
 - **Plan, then Implement**: Apply `overseer/plan` to get an implementation plan as a comment; comment and apply it again to revise; apply `overseer/implement` to approve it - one PR, or a graph of sub-issues ([plans and issue graphs](../../factory/docs/plan-and-graph.md)).

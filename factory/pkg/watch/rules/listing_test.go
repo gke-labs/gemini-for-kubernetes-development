@@ -178,9 +178,9 @@ func TestLinkedPRHoldsPrebakedIssueRules(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, it := range []Item{
-		{Kind: OnIssue, Number: 7, Labels: []string{"overseer"}},
-		{Kind: OnIssue, Number: 8, Labels: []string{"overseer"}, Workflow: "kcc-x", WorkflowMissing: true},
-		{Kind: OnIssue, Number: 9, Labels: []string{"overseer"}, Workflow: "kcc-x"},
+		{Kind: OnIssue, Number: 7, Labels: []string{"overseer"}, AuthorAssociation: "MEMBER"},
+		{Kind: OnIssue, Number: 8, Labels: []string{"overseer"}, AuthorAssociation: "MEMBER", Workflow: "kcc-x", WorkflowMissing: true},
+		{Kind: OnIssue, Number: 9, Labels: []string{"overseer"}, AuthorAssociation: "MEMBER", Workflow: "kcc-x"},
 	} {
 		if got := names(set.Decide(it, testEnv)); len(got) == 0 {
 			t.Fatalf("#%d: nothing decided without a linked PR", it.Number)

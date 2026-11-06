@@ -18,8 +18,8 @@ func TestGraphParentIsNotFixed(t *testing.T) {
 		it   Item
 		rule string
 	}{
-		{"fix", Item{Kind: OnIssue, Number: 7, Labels: []string{"overseer"}}, "fix"},
-		{"workflow", Item{Kind: OnIssue, Number: 8, Labels: []string{"overseer"}, Workflow: "kcc-x"}, "workflow"},
+		{"fix", Item{Kind: OnIssue, Number: 7, Labels: []string{"overseer"}, AuthorAssociation: "MEMBER"}, "fix"},
+		{"workflow", Item{Kind: OnIssue, Number: 8, Labels: []string{"overseer"}, AuthorAssociation: "MEMBER", Workflow: "kcc-x"}, "workflow"},
 	} {
 		if got := names(set.Decide(tc.it, testEnv)); !slices.Contains(got, tc.rule) {
 			t.Fatalf("%s: decided %v on an issue that is no graph parent", tc.name, got)

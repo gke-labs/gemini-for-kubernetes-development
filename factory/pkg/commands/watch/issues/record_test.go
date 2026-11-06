@@ -46,8 +46,9 @@ func TestQueueTasks_RecordsDecisionsTheRulesReplay(t *testing.T) {
 	labelled := func(num int, updated time.Time) *githubv39.Issue {
 		return &githubv39.Issue{
 			Number: githubv39.Int(num), UpdatedAt: &updated,
-			Labels: []*githubv39.Label{{Name: githubv39.String("factory")}},
-			User:   &githubv39.User{Login: githubv39.String("someone")},
+			Labels:            []*githubv39.Label{{Name: githubv39.String("factory")}},
+			User:              &githubv39.User{Login: githubv39.String("someone")},
+			AuthorAssociation: githubv39.String("MEMBER"),
 		}
 	}
 	// 8 finished a minute ago: in its cooldown.

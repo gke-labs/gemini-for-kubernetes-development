@@ -119,7 +119,7 @@ func TestQueueHTTPServerServesTheRulesSummary(t *testing.T) {
 	summary.Observe(rules.Record{
 		At:      time.Now(),
 		Env:     rules.Env{Trigger: "overseer", Prefixes: []string{"overseer"}, Now: time.Now()},
-		Item:    rules.Item{Kind: rules.OnIssue, Number: 7, Labels: []string{"overseer"}, UpdatedAt: time.Now()},
+		Item:    rules.Item{Kind: rules.OnIssue, Number: 7, Labels: []string{"overseer"}, AuthorAssociation: "MEMBER", UpdatedAt: time.Now()},
 		Decided: []string{"fix run"},
 	})
 	for _, tc := range []struct {

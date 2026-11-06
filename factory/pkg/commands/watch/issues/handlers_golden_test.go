@@ -29,7 +29,7 @@ func TestIssueHandlersQueueTheSameTasks(t *testing.T) {
 	updated := created.Add(time.Hour)
 	issue := func(num int, body string, labelled bool, assignee string) *githubv39.Issue {
 		is := &githubv39.Issue{Number: githubv39.Int(num), Body: githubv39.String(body), CreatedAt: &created, UpdatedAt: &updated,
-			User: &githubv39.User{Login: githubv39.String("someone")}}
+			User: &githubv39.User{Login: githubv39.String("someone")}, AuthorAssociation: githubv39.String("MEMBER")}
 		if labelled {
 			is.Labels = []*githubv39.Label{{Name: githubv39.String("factory")}}
 		}
