@@ -387,6 +387,7 @@ give-up:
   since: [head, human, pause]     # counted since the latest of these
   failed: true                    # optional: count only the runs that failed (comments: new feedback is always answered)
   comment: Pausing after 3 attempts to fix the failing checks.
+  assign: "{{closing-issue-assignees}}"   # optional: assigned with the stop
 ```
 
 `since` is one event or a list, and the count starts at the latest of them:
@@ -402,6 +403,12 @@ it gives up instead of running: the stop label and the comment. The stop
 label then keeps every rule off the item until a person takes it off; no
 run happens while it is on, so a count since `pause` starts again from
 zero.
+
+`assign` is assigned with the give-up's stop, as `run.assign` is (the same
+values). On a PR, `{{closing-issue-assignees}}` hands the paused PR to the
+human assignees of the issues it closes, so it has a person to look at it:
+the built-in `ci` and `comments` give-ups do, as `inactive` does with its
+`run.stop` and `run.assign`. A give-up without `assign` assigns nobody.
 
 ---
 
