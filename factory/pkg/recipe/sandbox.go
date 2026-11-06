@@ -151,8 +151,93 @@ func StartACPSession(ctx context.Context, engine, model, apiKey, repoDir, taskDi
 // for the asks of a step session (Step.Session): in this process, so the
 // daemon - whose task sessions are one per task, named after it - is not
 // asked for a second. Its transcript goes to <taskDir>/session-<name>/.
+//
+// A step session has no way to GitHub (noGitHubEnv): it is a reviewer
+// beside the run's agent, which reads the checkout and writes files, and
+// pushes, comments and reviews are the run's steps', not its agent's.
 func StartNamedACPSession(ctx context.Context, name, engine, model, apiKey, repoDir, taskDir string, env map[string]string) (*ACPSession, error) {
-	return startACPSession(ctx, filepath.Base(taskDir)+"-"+name, filepath.Join(taskDir, "session-"+name), engine, model, apiKey, repoDir, env)
+	dir := filepath.Join(taskDir, "session-"+name)
+	sessionEnv, err := noGitHubEnv(dir, env)
+	if err != nil {
+		return nil, fmt.Errorf("keeping the %s session off GitHub: %w", name, err)
+	}
+	return startACPSession(ctx, filepath.Base(taskDir)+"-"+name, dir, engine, model, apiKey, repoDir, sessionEnv)
+}
+
+// noGitHubEnv is env with what keeps an engine's gh and git off GitHub:
+//   - GH_CONFIG_DIR, an empty directory: gh is logged out, where the run's
+//     setup-git left the task's token in its hosts.yml;
+//   - GIT_CONFIG_GLOBAL, the run's global git config with no credential
+//     helper, no URL rewrite (setGitHubURLRewrite's carries the token) and
+//     no include (its entries flattened in, the same filtered);
+//   - GIT_TERMINAL_PROMPT=0: git without credentials fails at once rather
+//     than waiting for a password.
+//
+// It is not a boundary: the engine runs as the run's user and can read the
+// files the token is in. It keeps a reviewer's tools from using it.
+func noGitHubEnv(dir string, env map[string]string) (map[string]string, error) {
+	ghDir := filepath.Join(dir, "gh-none")
+	if err := os.MkdirAll(ghDir, 0o700); err != nil {
+		return nil, err
+	}
+	gitConfig := filepath.Join(dir, "gitconfig")
+	if err := scrubbedGitConfig(globalGitConfig(), gitConfig); err != nil {
+		return nil, err
+	}
+	out := make(map[string]string, len(env)+3)
+	for k, v := range env {
+		out[k] = v
+	}
+	out["GH_CONFIG_DIR"] = ghDir
+	out["GIT_CONFIG_GLOBAL"] = gitConfig
+	out["GIT_TERMINAL_PROMPT"] = "0"
+	return out, nil
+}
+
+// globalGitConfig is the run's global git config file: GIT_CONFIG_GLOBAL,
+// else ~/.gitconfig.
+func globalGitConfig() string {
+	if f := os.Getenv("GIT_CONFIG_GLOBAL"); f != "" {
+		return f
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".gitconfig")
+}
+
+// scrubbedGitConfig writes to dst the entries of src (its includes
+// followed) but those that carry or reach credentials: credential.*,
+// url.* and include*. A missing src, or no git, leaves dst empty.
+func scrubbedGitConfig(src, dst string) error {
+	if err := os.WriteFile(dst, nil, 0o600); err != nil {
+		return err
+	}
+	if src == "" {
+		return nil
+	}
+	if _, err := os.Stat(src); err != nil {
+		return nil
+	}
+	list, err := exec.Command("git", "config", "--file", src, "--includes", "--list", "--null").Output()
+	if err != nil {
+		return nil
+	}
+	for _, entry := range strings.Split(string(list), "\x00") {
+		key, value, ok := strings.Cut(entry, "\n")
+		if !ok || key == "" {
+			continue
+		}
+		lower := strings.ToLower(key)
+		if strings.HasPrefix(lower, "credential.") || strings.HasPrefix(lower, "url.") || strings.HasPrefix(lower, "include.") || strings.HasPrefix(lower, "includeif.") {
+			continue
+		}
+		if err := exec.Command("git", "config", "--file", dst, "--add", key, value).Run(); err != nil {
+			return fmt.Errorf("writing %s to the session's git config: %w", key, err)
+		}
+	}
+	return nil
 }
 
 func startACPSession(ctx context.Context, id, dir, engine, model, apiKey, repoDir string, env map[string]string) (*ACPSession, error) {
