@@ -61,10 +61,13 @@ func NewRecipeCommand(ctx context.Context) *cobra.Command {
 // recipeRunFlags are the flags every way of running a recipe takes.
 type recipeRunFlags struct {
 	itemURL, runName, sandboxKey string
-	inputArgs                    []string
-	apply, dryRun                bool
-	newSession                   bool
-	prLabels                     bool
+	// sandbox is the sandbox a recipe on sandboxes runs in (--sandbox),
+	// instead of a URL.
+	sandbox       string
+	inputArgs     []string
+	apply, dryRun bool
+	newSession    bool
+	prLabels      bool
 	// action is the one write --apply does, instead of each the result
 	// offers.
 	action string
@@ -74,7 +77,8 @@ type recipeRunFlags struct {
 }
 
 func (f *recipeRunFlags) add(cmd *cobra.Command) {
-	cmd.Flags().StringVar(&f.itemURL, "url", "", "GitHub issue, PR or repository URL")
+	cmd.Flags().StringVar(&f.itemURL, "url", "", "GitHub issue, PR or repository URL (or --sandbox, for a recipe on sandboxes)")
+	cmd.Flags().StringVar(&f.sandbox, "sandbox", "", "For a recipe on sandboxes (on: [sandbox]): the existing sandbox it runs in, instead of --url")
 	cmd.Flags().StringVar(&f.sandboxKey, "sandbox-key", "", "For a recipe on a repository whose sandbox kind is keyed (research, run): names the sandbox it runs in, made if missing; runs given the same key share it. Required for those, refused otherwise")
 	cmd.Flags().StringArrayVar(&f.inputArgs, "input", nil, "An input as name=value; overrides what the URL sets. Repeatable.")
 	cmd.Flags().StringVar(&f.runName, "run-name", "", "Names this run: running again with the same name follows that task, or returns or applies its result, instead of starting another; find it with sandbox task status|output|attach --run-name")
@@ -83,7 +87,6 @@ func (f *recipeRunFlags) add(cmd *cobra.Command) {
 	cmd.Flags().StringVar(&f.action, "action", "", "With --apply: do this one action of the result (as factory apply --action) instead of each write it offers")
 	cmd.Flags().BoolVar(&f.prLabels, "pr-labels", false, "For an issue's Change: label the PR open-pr opens as the overseer does, with the trigger label, the factory config's additional labels and the issue's labels (the overseer's)")
 	cmd.Flags().BoolVar(&f.apply, "apply", false, "Wait for the task's result and apply it to GitHub, as factory apply does. Interrupting stops the waiting, not the task; running the same command again waits for that task, or applies its result if it has finished.")
-	_ = cmd.MarkFlagRequired("url")
 }
 
 // run runs recipeArg with the flags' inputs and extra, which overrides
@@ -91,6 +94,9 @@ func (f *recipeRunFlags) add(cmd *cobra.Command) {
 func (f *recipeRunFlags) run(ctx context.Context, c *cobra.Command, recipeArg string, extra map[string]string) error {
 	if _, err := ResolveRootFlags(c); err != nil {
 		return err
+	}
+	if (f.itemURL == "") == (f.sandbox == "") {
+		return fmt.Errorf("give the recipe's target: --url, or --sandbox for a recipe on sandboxes")
 	}
 	if f.dryRun && !f.apply {
 		return fmt.Errorf("--dry-run goes with --apply")
@@ -119,7 +125,7 @@ func (f *recipeRunFlags) run(ctx context.Context, c *cobra.Command, recipeArg st
 			instructions[in] = *vals
 		}
 	}
-	return runRecipe(ctx, recipeArg, f.itemURL, f.runName, f.sandboxKey, "", f.newSession, applyMode{on: f.apply, dryRun: f.dryRun, verb: f.action, asUser: rootFlags.User != "", prLabels: f.prLabels}, overrides, instructions)
+	return runRecipeIn(ctx, recipeRunOpts{sandbox: f.sandbox}, recipeArg, f.itemURL, f.runName, f.sandboxKey, "", f.newSession, applyMode{on: f.apply, dryRun: f.dryRun, verb: f.action, asUser: rootFlags.User != "", prLabels: f.prLabels}, overrides, instructions)
 }
 
 // newBuiltinRecipeCommand makes a built-in recipe a command of its own,
@@ -133,12 +139,18 @@ func newBuiltinRecipeCommand(ctx context.Context, name string) *cobra.Command {
 	}
 	f := recipeRunFlags{instructions: map[string]*[]string{}}
 	inputs := map[string]*string{}
+	short := fmt.Sprintf("Run the built-in %s recipe against a GitHub issue, PR or repository", name)
+	example := fmt.Sprintf(`  factory recipe %[1]s --url https://github.com/owner/repo/issues/123
+  factory recipe %[1]s --url https://github.com/owner/repo --session my-question`, name)
+	if rec.OnSandboxes() {
+		short = fmt.Sprintf("Run the built-in %s recipe in an existing sandbox", name)
+		example = fmt.Sprintf(`  factory recipe %s --sandbox fix-myrepo-123`, name)
+	}
 	cmd := &cobra.Command{
-		Use:   name,
-		Short: fmt.Sprintf("Run the built-in %s recipe against a GitHub issue, PR or repository", name),
-		Example: fmt.Sprintf(`  factory recipe %[1]s --url https://github.com/owner/repo/issues/123
-  factory recipe %[1]s --url https://github.com/owner/repo --session my-question`, name),
-		Args: cobra.NoArgs,
+		Use:     name,
+		Short:   short,
+		Example: example,
+		Args:    cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
 			extra := map[string]string{}
 			for in, v := range inputs {
@@ -338,6 +350,12 @@ func runRecipe(ctx context.Context, recipeArg, itemURL, runName, sandboxKey, use
 // an issue or PR is not; and an agent's runs in the sandbox factory agent
 // create makes.
 func checkSandboxKey(rec *recipe.Recipe, it githubItem, opts recipeRunOpts, key string) error {
+	if opts.sandbox != "" {
+		if key != "" {
+			return fmt.Errorf("--sandbox-key is for a recipe on a repository; a recipe on a sandbox runs in the one --sandbox names")
+		}
+		return nil
+	}
 	if !it.IsRepo() {
 		if key != "" {
 			return fmt.Errorf("--sandbox-key is for a recipe on a repository; an issue's or PR's recipes run in its own sandbox")
@@ -371,10 +389,33 @@ type recipeRunOpts struct {
 	// files are files the caller gives the run's task, in its directory
 	// before its first step: factory retro's staged week.
 	files *taskapi.Files
+	// sandbox is the existing sandbox a recipe on sandboxes (on:
+	// [sandbox]) runs in: its target, in place of an item URL. The run
+	// makes no sandbox; it wakes this one.
+	sandbox string
 }
 
 // runRecipeIn is runRecipe with opts.
 func runRecipeIn(ctx context.Context, opts recipeRunOpts, recipeArg, itemURL, runName, sandboxKey, user string, newSession bool, apply applyMode, overrides map[string]string, instructions map[string][]string) error {
+	// A recipe on sandboxes: its target is the sandbox, its repository the
+	// one the sandbox holds, its account the sandbox's.
+	if opts.sandbox != "" {
+		if itemURL != "" {
+			return fmt.Errorf("a recipe on a sandbox takes no URL: the sandbox says its repository")
+		}
+		kc, err := clients.NewKubernetesClient()
+		if err != nil {
+			return fmt.Errorf("creating k8s client: %w", err)
+		}
+		es, err := factorysandbox.GetExistingSandbox(ctx, kc, rootFlags.Namespace, opts.sandbox)
+		if err != nil {
+			return err
+		}
+		itemURL = es.RepoURL
+		if user == "" {
+			user = es.User
+		}
+	}
 	it, err := parseRecipeTarget(itemURL)
 	if err != nil {
 		return err
@@ -390,6 +431,12 @@ func runRecipeIn(ctx context.Context, opts recipeRunOpts, recipeArg, itemURL, ru
 	}
 	if apply.on && rec.TaskOutput == nil {
 		return fmt.Errorf("recipe %s declares no task output; there is nothing to --apply", rec.Name)
+	}
+	switch {
+	case rec.OnSandboxes() && opts.sandbox == "":
+		return fmt.Errorf("recipe %s runs on a sandbox (on: [%s]): name it with --sandbox", rec.Name, recipe.OnSandbox)
+	case !rec.OnSandboxes() && opts.sandbox != "":
+		return fmt.Errorf("recipe %s does not run on sandboxes; give it a --url", rec.Name)
 	}
 	if err := checkSandboxKey(rec, it, opts, sandboxKey); err != nil {
 		return err
@@ -451,6 +498,10 @@ func runRecipeIn(ctx context.Context, opts recipeRunOpts, recipeArg, itemURL, ru
 		labels = labelNames(issue.Labels)
 	}
 	target := recipeTarget(it, pr, string(secret.Data[constants.KeyGithubLogin]))
+	if opts.sandbox != "" {
+		target = recipe.OnSandbox
+		standard["sandbox"] = opts.sandbox
+	}
 	if err := checkOn(rec, it, target); err != nil {
 		return err
 	}
@@ -541,6 +592,11 @@ func runRecipeIn(ctx context.Context, opts recipeRunOpts, recipeArg, itemURL, ru
 	// a research session's is, since its transcript is the sandbox's.
 	var sandboxName string
 	switch {
+	case opts.sandbox != "":
+		// A recipe on sandboxes runs in the one it was given: woken, moved
+		// to the overseer's image, never made.
+		fmt.Printf("Waking sandbox %s...\n", opts.sandbox)
+		sandboxName, err = opts.sandbox, factorysandbox.ReuseExistingSandbox(ctx, kubeClient, rootFlags.Namespace, opts.sandbox, user, rootFlags.Image)
 	case opts.ensure != nil:
 		sandboxName, err = opts.ensure(ctx, kubeClient, cloneURL, htmlURL, user)
 	case it.IsRepo() && rec.Sandbox.Kind == recipe.SandboxWarm:
@@ -967,6 +1023,9 @@ func recordedRun(task spool.Task, rec *recipe.Recipe, started time.Time) factory
 // record under it, one run for the group.
 func recipeTaskType(rec *recipe.Recipe, it githubItem) (string, bool) {
 	switch {
+	case rec.OnSandboxes():
+		// A sandbox's own upkeep: last-task-* stay its main task's.
+		return "recipe-" + rec.SessionName(), true
 	case rec.TaskType != "":
 		return rec.TaskType, false
 	case !it.IsPR && !it.IsRepo():

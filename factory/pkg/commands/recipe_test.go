@@ -854,3 +854,31 @@ func TestNextModel(t *testing.T) {
 		t.Error("no list: no fallback")
 	}
 }
+
+// A recipe on sandboxes records its run as the sandbox's side task, so
+// last-task-* stay its main task's (a fix's, a review's).
+func TestRecipeTaskTypeOnSandboxes(t *testing.T) {
+	rec, err := recipe.Parse([]byte("name: workspace-cleanup\non: [sandbox]\nstart:\n  steps:\n    - run: df -h\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if typ, side := recipeTaskType(rec, githubItem{Owner: "o", Repo: "r"}); typ != "recipe-workspace-cleanup" || !side {
+		t.Errorf("recipeTaskType = %q, %v", typ, side)
+	}
+}
+
+// A recipe on sandboxes declares no sandbox: of its own and takes no
+// --sandbox-key: the --sandbox it was given is where it runs.
+func TestCheckSandboxKeyOnSandboxes(t *testing.T) {
+	rec, err := recipe.Parse([]byte("name: workspace-cleanup\non: [sandbox]\nstart:\n  steps:\n    - run: df -h\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	it := githubItem{Owner: "o", Repo: "r"} // the sandbox's repository
+	if err := checkSandboxKey(rec, it, recipeRunOpts{sandbox: "fix-r-1"}, ""); err != nil {
+		t.Errorf("on a sandbox: %v", err)
+	}
+	if err := checkSandboxKey(rec, it, recipeRunOpts{sandbox: "fix-r-1"}, "k"); err == nil {
+		t.Error("a --sandbox-key with --sandbox")
+	}
+}

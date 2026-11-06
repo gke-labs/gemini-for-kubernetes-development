@@ -2129,6 +2129,9 @@ func TestBuiltinRunStepsComeAfterTheCheckout(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: %v", name, err)
 		}
+		if rec.OnSandboxes() {
+			continue // runs in an existing sandbox, on its checkout
+		}
 		for i, step := range rec.Start.Steps {
 			if makesCheckout[step.Uses] {
 				break
@@ -2234,5 +2237,19 @@ func TestCommittingRecipesNameNoAgentInCommits(t *testing.T) {
 	}
 	if n < 9 {
 		t.Errorf("only %d committing recipes found", n)
+	}
+}
+
+// A recipe on sandboxes runs in an existing sandbox and on nothing else.
+func TestRecipeOnSandboxes(t *testing.T) {
+	r, err := Parse([]byte("name: clean\non: [sandbox]\nstart:\n  steps:\n    - run: df -h\n"))
+	if err != nil || !r.OnSandboxes() || !r.RunsOn(OnSandbox) || r.RunsOn(OnRepo) {
+		t.Errorf("on: [sandbox]: %v, %+v", err, r)
+	}
+	if _, err := Parse([]byte("name: clean\non: [sandbox, repo]\nstart:\n  steps:\n    - run: df -h\n")); err == nil || !strings.Contains(err.Error(), "sandboxes only") {
+		t.Errorf("on: [sandbox, repo]: %v", err)
+	}
+	if r, _ := Parse([]byte("name: x\non: [issue]\nstart:\n  steps:\n    - run: true\n")); r.OnSandboxes() {
+		t.Error("a recipe on issues runs on sandboxes")
 	}
 }

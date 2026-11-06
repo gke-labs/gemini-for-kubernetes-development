@@ -230,9 +230,17 @@ const (
 	// its head a branch on their fork, the only place push pushes to.
 	OnMyPR = "my-pr"
 	OnRepo = "repo"
+	// OnSandbox is a sandbox itself: the recipe runs in an existing
+	// sandbox, on its checkout and disk, rather than on an issue, a pull
+	// request or a repository (factory recipe --sandbox; a watch rule on
+	// sandboxes) - a workspace's cleanup, say.
+	OnSandbox = "sandbox"
 )
 
-var onTargets = []string{OnIssue, OnPR, OnMyPR, OnRepo}
+var onTargets = []string{OnIssue, OnPR, OnMyPR, OnRepo, OnSandbox}
+
+// OnSandboxes reports whether the recipe runs on sandboxes (on: [sandbox]).
+func (r *Recipe) OnSandboxes() bool { return slices.Contains(r.On, OnSandbox) }
 
 // DisplayLabel is Label, or the name capitalised.
 func (r *Recipe) DisplayLabel() string {
@@ -559,6 +567,9 @@ func (r *Recipe) validate(sandbox bool) error {
 		if !slices.Contains(onTargets, on) {
 			return fmt.Errorf("on %q is not one of: %s", on, strings.Join(onTargets, ", "))
 		}
+	}
+	if slices.Contains(r.On, OnSandbox) && len(r.On) > 1 {
+		return fmt.Errorf("on: [%s] is a recipe on sandboxes only; it runs on nothing else", OnSandbox)
 	}
 	if r.TaskType != "" && !taskTypeRE.MatchString(r.TaskType) {
 		return fmt.Errorf("task-type %q must match %s", r.TaskType, taskTypeRE)

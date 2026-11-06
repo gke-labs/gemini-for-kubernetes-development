@@ -1,0 +1,23 @@
+# factory recipe workspace-cleanup --sandbox <name>: makes room on a
+# sandbox's workspace disk. A recipe on sandboxes (on: [sandbox]): it runs
+# in an existing sandbox, on its disk, and makes none. A watch rule on
+# sandboxes runs it on one low on space, and the board offers it on
+# sandbox cards.
+#
+# This built-in one deletes nothing - what is safe to delete depends on
+# the repository's toolchain - and reports the disk's use. A repository
+# replaces it with its own .agents/recipes/workspace-cleanup.yaml (KCC's
+# trims its temporary builds and Go build cache).
+name: workspace-cleanup
+label: Clean disk
+on: [sandbox]
+as: coder
+inputs:
+  target_bytes:
+    description: free space wanted on the workspace, in bytes
+    default: "21474836480"
+start:
+  steps:
+    - run: |
+        df -h /workspaces | awk 'NR==2 {print "Workspace: " $3 " used of " $2 ", " $4 " free"}' || true
+        echo "No cleanup is configured for this repository (.agents/recipes/workspace-cleanup.yaml replaces this one): nothing deleted."
