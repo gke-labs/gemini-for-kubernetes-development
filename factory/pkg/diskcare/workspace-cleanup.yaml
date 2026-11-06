@@ -5,17 +5,23 @@
 # and only reports. A repository puts its own at
 # .agents/maintenance/workspace-cleanup.yaml.
 #
-# Each step is a run: step, run with bash in the repository's checkout,
-# with:
-#   WORKSPACE     the workspace's mount (/workspaces)
-#   FREE_BYTES    free space on it now
-#   TARGET_BYTES  free space wanted
-#   LOG_DIR       a directory for anything to keep
-#   TMPDIR, GOCACHE, ...  the sandbox's environment
-# A step that fails is reported and the next one runs.
+# It is a recipe like any other, run by factory's recipe runner: run: and
+# uses: steps (no ask: - no agent runs it), if:, continue-on-error, with
+# its inputs as INPUT_WORKSPACE, INPUT_FREE_BYTES and INPUT_TARGET_BYTES,
+# the sandbox's environment (TMPDIR, GOCACHE, ...), and TASK_DIR for its
+# step logs. A step that fails stops it, as in any recipe
+# (continue-on-error: true lets the next one run); the task then starts if
+# there is room enough.
 name: workspace-cleanup
+inputs:
+  workspace:
+    description: the workspace's mount (/workspaces)
+  free_bytes:
+    description: free space on the workspace now, in bytes
+  target_bytes:
+    description: free space wanted, in bytes
 start:
   steps:
     - run: |
-        df -h "$WORKSPACE" | awk 'NR==2 {print "Workspace: " $3 " used of " $2 ", " $4 " free"}' || true
+        df -h "$INPUT_WORKSPACE" | awk 'NR==2 {print "Workspace: " $3 " used of " $2 ", " $4 " free"}' || true
         echo "No cleanup is configured for this repository (.agents/maintenance/workspace-cleanup.yaml): nothing deleted."

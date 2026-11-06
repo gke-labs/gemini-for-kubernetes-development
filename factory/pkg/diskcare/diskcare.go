@@ -1,8 +1,9 @@
 // Package diskcare keeps a sandbox's workspace disk from filling mid-task
-// (KCC #15081: a 40 Gi workspace filled, and the task hung). Factory does
-// the generic part: it measures the workspace and records what it finds,
-// runs the repository's workspace-cleanup recipe when space runs low, and
-// refuses to start a task with too little room. What to delete - a
+// (KCC #15081: a 40 Gi workspace filled, and the task hung). It does the
+// generic part: it measures the workspace and records what it finds, has
+// the repository's workspace-cleanup recipe run (by factory's recipe
+// runner: Cleanup) when space runs low, and refuses to start a task with
+// too little room. What to delete - a
 // toolchain's temporary builds, a cache - is the cleanup recipe's to say:
 // the built-in one deletes nothing, and a repository puts its own at
 // .agents/maintenance/workspace-cleanup.yaml.
@@ -16,9 +17,7 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strconv"
 	"time"
 
 	"golang.org/x/sys/unix"
@@ -76,8 +75,8 @@ var builtinCleanup []byte
 
 // LoadCleanup is the cleanup recipe for the checkout at repoDir: the
 // repository's (CleanupPath) when it has one, else the built-in, which
-// deletes nothing. It says where it came from. Its steps must all be run:
-// steps - no agent, no uses: - since it runs before a task, outside it.
+// deletes nothing. It says where it came from. It runs before a task,
+// outside it, with no agent: an ask: step is refused.
 func LoadCleanup(repoDir string) (*recipe.Recipe, string, error) {
 	data, source := builtinCleanup, "built-in"
 	if repoDir != "" {
@@ -92,38 +91,24 @@ func LoadCleanup(repoDir string) (*recipe.Recipe, string, error) {
 		return nil, "", fmt.Errorf("%s: %w", source, err)
 	}
 	for i, st := range r.Start.Steps {
-		if st.Kind() != "run" {
-			return nil, "", fmt.Errorf("%s: step %s is a %s step; a cleanup recipe runs commands only (run:)", source, st.Label(i), st.Kind())
+		if st.Kind() == "ask" {
+			return nil, "", fmt.Errorf("%s: step %s asks the agent; a cleanup recipe runs no agent (run: and uses: steps only)", source, st.Label(i))
 		}
 	}
 	return r, source, nil
 }
 
-// RunCleanup runs rec's steps, each with bash in repoDir, with the
-// workspace's state in its environment: WORKSPACE, FREE_BYTES (free now),
-// TARGET_BYTES (free space wanted), and LOG_DIR, a directory for anything
-// it wants to keep. A step that fails is reported and the next one runs:
-// cleaning up is best effort.
-func RunCleanup(ctx context.Context, rec *recipe.Recipe, repoDir, workspace, logDir string, target uint64, out io.Writer) {
-	_ = os.MkdirAll(logDir, 0o755)
-	for i, st := range rec.Start.Steps {
-		u, err := Of(workspace)
-		if err != nil {
-			fmt.Fprintf(out, "::warning %s: %v\n", CleanupRecipe, err)
-			return
-		}
-		cmd := exec.CommandContext(ctx, "bash", "-euo", "pipefail", "-c", st.Run)
-		cmd.Dir = repoDir
-		cmd.Env = append(os.Environ(),
-			"WORKSPACE="+workspace,
-			"FREE_BYTES="+strconv.FormatUint(u.Free, 10),
-			"TARGET_BYTES="+strconv.FormatUint(target, 10),
-			"LOG_DIR="+logDir,
-		)
-		cmd.Stdout, cmd.Stderr = out, out
-		if err := cmd.Run(); err != nil {
-			fmt.Fprintf(out, "::warning %s step %s failed: %v\n", CleanupRecipe, st.Label(i), err)
-		}
+// Cleanup runs a cleanup recipe - factory's recipe runner, as any
+// recipe's steps run - with its inputs: workspace, free_bytes (free now)
+// and target_bytes (free space wanted).
+type Cleanup func(ctx context.Context, rec *recipe.Recipe, inputs map[string]string) error
+
+// CleanupInputs are a cleanup recipe's inputs for workspace u.
+func CleanupInputs(workspace string, u Usage, target uint64) map[string]string {
+	return map[string]string{
+		"workspace":    workspace,
+		"free_bytes":   fmt.Sprint(u.Free),
+		"target_bytes": fmt.Sprint(target),
 	}
 }
 
@@ -137,11 +122,12 @@ func (e *ErrFull) Error() string {
 }
 
 // Prepare makes room on workspace before a task: with less than MinFree
-// free it runs the cleanup recipe of the checkout at repoDir (LoadCleanup),
-// asked for TargetFree, and with less than Floor free after that it
-// returns *ErrFull. It says what it did on out, and returns the
-// workspace's space as the task starts.
-func Prepare(ctx context.Context, workspace, repoDir, logDir string, out io.Writer) (Usage, error) {
+// free it has run the cleanup recipe of the checkout at repoDir
+// (LoadCleanup), asked for TargetFree, and with less than Floor free after
+// that it returns *ErrFull. It says what it did on out, and returns the
+// workspace's space as the task starts. A cleanup that fails is reported;
+// the floor decides.
+func Prepare(ctx context.Context, workspace, repoDir string, run Cleanup, out io.Writer) (Usage, error) {
 	u, err := Of(workspace)
 	if err != nil || u.Free >= MinFree {
 		return u, err
@@ -152,7 +138,9 @@ func Prepare(ctx context.Context, workspace, repoDir, logDir string, out io.Writ
 		fmt.Fprintf(out, "::warning no cleanup: %v\n", err)
 	} else {
 		fmt.Fprintf(out, "Running %s (%s)\n", CleanupRecipe, source)
-		RunCleanup(ctx, rec, repoDir, workspace, logDir, TargetFree, out)
+		if err := run(ctx, rec, CleanupInputs(workspace, u, TargetFree)); err != nil {
+			fmt.Fprintf(out, "::warning %s: %v\n", CleanupRecipe, err)
+		}
 		if u, err = Of(workspace); err != nil {
 			return Usage{}, err
 		}

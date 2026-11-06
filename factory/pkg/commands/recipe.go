@@ -1442,7 +1442,7 @@ func runRecipeExec(ctx context.Context, recipePath, inputsPath, taskDir string) 
 	}
 	// Room on the workspace before the task, and what it left after
 	// (KCC #15081: a disk that filled mid-task hung it for hours).
-	done, err := prepareWorkspace(ctx, repoDir, taskDir, os.Stdout)
+	done, err := prepareWorkspace(ctx, repoDir, taskDir, stepScript, os.Stdout)
 	if err != nil {
 		return err
 	}
@@ -1552,18 +1552,23 @@ func recordWorkspaceUsage(ctx context.Context, kubeClient *clients.KubernetesCli
 }
 
 // prepareWorkspace makes room on the sandbox's workspace before a task
-// (diskcare.Prepare: the repository's workspace-cleanup recipe when space
-// is low): an error when there is too little even after cleaning, which
-// fails the task before its agent starts. done, deferred, records the
+// (diskcare.Prepare): when space is low, the repository's
+// workspace-cleanup recipe runs through factory's recipe runner - the same
+// executor as the task's own steps - with its step logs under the task
+// directory's cleanup/. An error when there is too little room even after
+// that fails the task before its agent starts. done, deferred, records the
 // workspace's space in the task directory (diskcare.UsageFile) for the
 // overseer to copy to the sandbox. Outside a sandbox (no /workspaces) it
 // does nothing.
-func prepareWorkspace(ctx context.Context, repoDir, taskDir string, out io.Writer) (done func(), err error) {
+func prepareWorkspace(ctx context.Context, repoDir, taskDir string, stepScript []byte, out io.Writer) (done func(), err error) {
 	const workspace = "/workspaces"
 	if info, err := os.Stat(workspace); err != nil || !info.IsDir() {
 		return func() {}, nil
 	}
-	u, err := diskcare.Prepare(ctx, workspace, repoDir, filepath.Join(taskDir, "cleanup"), out)
+	cleanup := func(ctx context.Context, rec *recipe.Recipe, inputs map[string]string) error {
+		return runCleanupRecipe(ctx, rec, inputs, repoDir, filepath.Join(taskDir, "cleanup"), stepScript, out)
+	}
+	u, err := diskcare.Prepare(ctx, workspace, repoDir, cleanup, out)
 	if u.Size > 0 {
 		_ = diskcare.Record(taskDir, u)
 	}
@@ -1575,6 +1580,28 @@ func prepareWorkspace(ctx context.Context, repoDir, taskDir string, out io.Write
 			_ = diskcare.Record(taskDir, u)
 		}
 	}, nil
+}
+
+// runCleanupRecipe runs a workspace-cleanup recipe with factory's recipe
+// runner and the task's own step executor, in repoDir, its step logs under
+// dir (its TASK_DIR).
+func runCleanupRecipe(ctx context.Context, rec *recipe.Recipe, inputs map[string]string, repoDir, dir string, stepScript []byte, out io.Writer) error {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	r := &recipe.Runner{
+		Exec: &recipe.SandboxExecutor{
+			StepScript:  stepScript,
+			TaskDir:     dir,
+			RepoDir:     repoDir,
+			Env:         os.Environ(),
+			Credentials: rec.Credentials,
+		},
+		TaskDir: dir,
+		Inputs:  inputs,
+		Log:     out,
+	}
+	return r.Run(ctx, rec)
 }
 
 // nextModel is the model after current in a run's list: the one it falls
