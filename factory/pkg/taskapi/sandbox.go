@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/clients"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/diskcare"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/k8s"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/spool"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/taskfiles"
@@ -44,6 +45,9 @@ type Sandbox interface {
 	// ReadFile is a file in the task's directory; os.ErrNotExist when it
 	// has none of that name.
 	ReadFile(ctx context.Context, id, name string) ([]byte, error)
+	// Disk is the sandbox's workspace space, as its daemon measures it
+	// (GET /v1/disk).
+	Disk(ctx context.Context) (diskcare.Usage, error)
 	WriteFile(ctx context.Context, id, name string, data []byte) error
 	// Files names the files in the task's directory.
 	Files(ctx context.Context, id string) ([]string, error)
@@ -427,6 +431,15 @@ func (s *ServerSandbox) log(ctx context.Context, id string, w io.Writer, follow 
 		_, err = io.Copy(w, body)
 		return err
 	})
+}
+
+func (s *ServerSandbox) Disk(ctx context.Context) (diskcare.Usage, error) {
+	var u diskcare.Usage
+	err := s.call(ctx, func(c *Client) (err error) {
+		u, err = c.Disk(ctx)
+		return err
+	})
+	return u, err
 }
 
 func (s *ServerSandbox) ReadFile(ctx context.Context, id, name string) ([]byte, error) {

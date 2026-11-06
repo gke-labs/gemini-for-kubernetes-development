@@ -514,3 +514,18 @@ func TestUntarRefusesUnsafeEntries(t *testing.T) {
 		}
 	}
 }
+
+// The daemon measures the workspace for the overseer (GET /v1/disk): its
+// fact about a sandbox's disk. The version says it can.
+func TestServerDisk(t *testing.T) {
+	c, _ := newTestServer(t)
+	ctx := context.Background()
+	v, err := c.Version(ctx)
+	if err != nil || v.Disk != DiskVersion {
+		t.Fatalf("version = %+v, %v", v, err)
+	}
+	u, err := c.Disk(ctx)
+	if err != nil || u.Size == 0 || u.Free > u.Size || u.At.IsZero() {
+		t.Errorf("Disk = %+v, %v", u, err)
+	}
+}

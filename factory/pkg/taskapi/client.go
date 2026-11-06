@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/diskcare"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/spool"
 )
 
@@ -143,6 +144,14 @@ func notExist(err error) error {
 		return fmt.Errorf("%w: %s", os.ErrNotExist, se.Message)
 	}
 	return err
+}
+
+// Disk is the sandbox's workspace space (GET /v1/disk), as its daemon
+// measures it.
+func (c *Client) Disk(ctx context.Context) (diskcare.Usage, error) {
+	var u diskcare.Usage
+	err := c.do(ctx, http.MethodGet, "/v1/disk", nil, &u)
+	return u, err
 }
 
 func (c *Client) do(ctx context.Context, method, path string, in, out any) error {

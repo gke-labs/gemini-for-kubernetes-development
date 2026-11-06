@@ -43,7 +43,13 @@ type Version struct {
 	// Uploads is the version of uploads this server serves (UploadsVersion),
 	// 0 when it does not.
 	Uploads int `json:"uploads,omitempty"`
+	// Disk is the version of GET /v1/disk this server serves
+	// (DiskVersion), 0 when it does not.
+	Disk int `json:"disk,omitempty"`
 }
+
+// DiskVersion is GET /v1/disk: the workspace's space (diskcare.Usage).
+const DiskVersion = 1
 
 // SecretsVersion is the PostRequest.Secrets this server honours.
 const SecretsVersion = 1
