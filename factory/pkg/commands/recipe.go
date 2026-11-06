@@ -1442,7 +1442,7 @@ func runRecipeExec(ctx context.Context, recipePath, inputsPath, taskDir string) 
 	}
 	// Room on the workspace before the task, and what it left after
 	// (KCC #15081: a disk that filled mid-task hung it for hours).
-	done, err := prepareWorkspace(taskDir, os.Stdout)
+	done, err := prepareWorkspace(ctx, repoDir, taskDir, os.Stdout)
 	if err != nil {
 		return err
 	}
@@ -1552,25 +1552,18 @@ func recordWorkspaceUsage(ctx context.Context, kubeClient *clients.KubernetesCli
 }
 
 // prepareWorkspace makes room on the sandbox's workspace before a task
-// (diskcare.Prepare): an error when there is too little even after
-// cleaning, which fails the task before its agent starts. done, deferred,
-// cleans up after the task and records the workspace's space in the task
-// directory (diskcare.UsageFile) for the overseer to copy to the sandbox.
-// Outside a sandbox (no /workspaces) it does nothing.
-func prepareWorkspace(taskDir string, out io.Writer) (done func(), err error) {
+// (diskcare.Prepare: the repository's workspace-cleanup recipe when space
+// is low): an error when there is too little even after cleaning, which
+// fails the task before its agent starts. done, deferred, records the
+// workspace's space in the task directory (diskcare.UsageFile) for the
+// overseer to copy to the sandbox. Outside a sandbox (no /workspaces) it
+// does nothing.
+func prepareWorkspace(ctx context.Context, repoDir, taskDir string, out io.Writer) (done func(), err error) {
 	const workspace = "/workspaces"
 	if info, err := os.Stat(workspace); err != nil || !info.IsDir() {
 		return func() {}, nil
 	}
-	tmpDir := os.Getenv("TMPDIR")
-	if tmpDir == "" {
-		tmpDir = factorysandbox.TmpDirPath
-	}
-	cacheDir := os.Getenv("GOCACHE")
-	if cacheDir == "" {
-		cacheDir = factorysandbox.GoCachePath
-	}
-	u, err := diskcare.Prepare(workspace, tmpDir, cacheDir, out)
+	u, err := diskcare.Prepare(ctx, workspace, repoDir, filepath.Join(taskDir, "cleanup"), out)
 	if u.Size > 0 {
 		_ = diskcare.Record(taskDir, u)
 	}
@@ -1578,7 +1571,6 @@ func prepareWorkspace(taskDir string, out io.Writer) (done func(), err error) {
 		return nil, err
 	}
 	return func() {
-		_, _, _ = diskcare.CleanTemp(tmpDir, time.Now().Add(-diskcare.LeftoverAge))
 		if u, err := diskcare.Of(workspace); err == nil {
 			_ = diskcare.Record(taskDir, u)
 		}

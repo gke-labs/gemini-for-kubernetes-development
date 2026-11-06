@@ -1,0 +1,21 @@
+# workspace-cleanup: makes room on a sandbox's workspace disk. Factory runs
+# it before a task when the workspace has less than 10 GB free (and the
+# overseer may run it on idle sandboxes). This built-in one deletes
+# nothing - what is safe to delete depends on the repository's toolchain -
+# and only reports. A repository puts its own at
+# .agents/maintenance/workspace-cleanup.yaml.
+#
+# Each step is a run: step, run with bash in the repository's checkout,
+# with:
+#   WORKSPACE     the workspace's mount (/workspaces)
+#   FREE_BYTES    free space on it now
+#   TARGET_BYTES  free space wanted
+#   LOG_DIR       a directory for anything to keep
+#   TMPDIR, GOCACHE, ...  the sandbox's environment
+# A step that fails is reported and the next one runs.
+name: workspace-cleanup
+start:
+  steps:
+    - run: |
+        df -h "$WORKSPACE" | awk 'NR==2 {print "Workspace: " $3 " used of " $2 ", " $4 " free"}' || true
+        echo "No cleanup is configured for this repository (.agents/maintenance/workspace-cleanup.yaml): nothing deleted."

@@ -1,42 +1,42 @@
-// Package diskcare keeps a sandbox's workspace disk from filling: it
-// removes what earlier tasks left in the temporary directory, trims the
-// Go build cache when free space runs low, and says when there is too
-// little room for a task to start (KCC #15081: a 40 Gi workspace filled
-// mid-task - a 22 GB build cache, 4.5 GB of leftover temporary builds -
-// and the task hung).
+// Package diskcare keeps a sandbox's workspace disk from filling mid-task
+// (KCC #15081: a 40 Gi workspace filled, and the task hung). Factory does
+// the generic part: it measures the workspace and records what it finds,
+// runs the repository's workspace-cleanup recipe when space runs low, and
+// refuses to start a task with too little room. What to delete - a
+// toolchain's temporary builds, a cache - is the cleanup recipe's to say:
+// the built-in one deletes nothing, and a repository puts its own at
+// .agents/maintenance/workspace-cleanup.yaml.
 package diskcare
 
 import (
+	"context"
+	_ "embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
-	"sort"
-	"strings"
+	"strconv"
 	"time"
 
 	"golang.org/x/sys/unix"
+
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/recipe"
 )
 
 // GB is a gigabyte, as df counts them.
 const GB = 1 << 30
 
-// Thresholds a task starts against: below MinFree free, the Go build cache
-// is trimmed, least recently used first, until TrimTarget is free; below
-// Floor after that, the task does not start.
+// Thresholds a task starts against: below MinFree free, the cleanup recipe
+// runs, asked to bring free space to TargetFree; below Floor after that,
+// the task does not start.
 const (
 	MinFree    = 10 * GB
-	TrimTarget = 20 * GB
+	TargetFree = 20 * GB
 	Floor      = 5 * GB
 )
-
-// LeftoverAge is how old a temporary entry must be to be an earlier
-// task's leftover: one task runs in a sandbox at a time, but a person's
-// terminal, or a build of the task just started, may be using a newer
-// one.
-const LeftoverAge = 2 * time.Hour
 
 // Usage is a filesystem's space, in bytes.
 type Usage struct {
@@ -46,12 +46,12 @@ type Usage struct {
 	At   time.Time `json:"at"`
 }
 
-// String is Usage as people read it: "33.1/58.8 GB used".
+// String is Usage as people read it: "33.1/58.8 GB used, 25.7 GB free".
 func (u Usage) String() string {
 	return fmt.Sprintf("%.1f/%.1f GB used, %.1f GB free", float64(u.Used)/GB, float64(u.Size)/GB, float64(u.Free)/GB)
 }
 
-// Of is the space of the filesystem path is on.
+// Of is the space of the filesystem path is on. A variable, for tests.
 var Of = func(path string) (Usage, error) {
 	var st unix.Statfs_t
 	if err := unix.Statfs(path, &st); err != nil {
@@ -63,108 +63,72 @@ var Of = func(path string) (Usage, error) {
 	return Usage{Used: used, Size: size, Free: free, At: time.Now().UTC().Truncate(time.Second)}, nil
 }
 
-// leftoverPrefixes name what builds, tests and the agent's shell leave in
-// the temporary directory: go build's work directories, envtest's
-// (k8s_test_framework_), gemini's shell scratch, mktemp's.
-var leftoverPrefixes = []string{"go-build", "k8s_test_framework_", "gemini-shell-", "tmp."}
+// CleanupRecipe is the recipe that makes room on a workspace.
+const CleanupRecipe = "workspace-cleanup"
 
-// CleanTemp removes the leftovers in dir last modified before cutoff, and
-// says how many it removed and roughly how many bytes they held.
-func CleanTemp(dir string, cutoff time.Time) (int, uint64, error) {
-	entries, err := os.ReadDir(dir)
+// CleanupPath is where a repository keeps its own cleanup recipe, outside
+// .agents/recipes: it is maintenance, not a recipe the board offers on
+// issues and pull requests.
+const CleanupPath = ".agents/maintenance/" + CleanupRecipe + ".yaml"
+
+//go:embed workspace-cleanup.yaml
+var builtinCleanup []byte
+
+// LoadCleanup is the cleanup recipe for the checkout at repoDir: the
+// repository's (CleanupPath) when it has one, else the built-in, which
+// deletes nothing. It says where it came from. Its steps must all be run:
+// steps - no agent, no uses: - since it runs before a task, outside it.
+func LoadCleanup(repoDir string) (*recipe.Recipe, string, error) {
+	data, source := builtinCleanup, "built-in"
+	if repoDir != "" {
+		if b, err := os.ReadFile(filepath.Join(repoDir, CleanupPath)); err == nil {
+			data, source = b, CleanupPath
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return nil, "", err
+		}
+	}
+	r, err := recipe.Parse(data)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return 0, 0, nil
-		}
-		return 0, 0, err
+		return nil, "", fmt.Errorf("%s: %w", source, err)
 	}
-	removed, freed := 0, uint64(0)
-	for _, e := range entries {
-		if !leftover(e.Name()) {
-			continue
+	for i, st := range r.Start.Steps {
+		if st.Kind() != "run" {
+			return nil, "", fmt.Errorf("%s: step %s is a %s step; a cleanup recipe runs commands only (run:)", source, st.Label(i), st.Kind())
 		}
-		info, err := e.Info()
-		if err != nil || !info.ModTime().Before(cutoff) {
-			continue
-		}
-		path := filepath.Join(dir, e.Name())
-		size := treeSize(path)
-		if err := os.RemoveAll(path); err != nil {
-			continue
-		}
-		removed++
-		freed += size
 	}
-	return removed, freed, nil
+	return r, source, nil
 }
 
-func leftover(name string) bool {
-	for _, p := range leftoverPrefixes {
-		if strings.HasPrefix(name, p) {
-			return true
+// RunCleanup runs rec's steps, each with bash in repoDir, with the
+// workspace's state in its environment: WORKSPACE, FREE_BYTES (free now),
+// TARGET_BYTES (free space wanted), and LOG_DIR, a directory for anything
+// it wants to keep. A step that fails is reported and the next one runs:
+// cleaning up is best effort.
+func RunCleanup(ctx context.Context, rec *recipe.Recipe, repoDir, workspace, logDir string, target uint64, out io.Writer) {
+	_ = os.MkdirAll(logDir, 0o755)
+	for i, st := range rec.Start.Steps {
+		u, err := Of(workspace)
+		if err != nil {
+			fmt.Fprintf(out, "::warning %s: %v\n", CleanupRecipe, err)
+			return
+		}
+		cmd := exec.CommandContext(ctx, "bash", "-euo", "pipefail", "-c", st.Run)
+		cmd.Dir = repoDir
+		cmd.Env = append(os.Environ(),
+			"WORKSPACE="+workspace,
+			"FREE_BYTES="+strconv.FormatUint(u.Free, 10),
+			"TARGET_BYTES="+strconv.FormatUint(target, 10),
+			"LOG_DIR="+logDir,
+		)
+		cmd.Stdout, cmd.Stderr = out, out
+		if err := cmd.Run(); err != nil {
+			fmt.Fprintf(out, "::warning %s step %s failed: %v\n", CleanupRecipe, st.Label(i), err)
 		}
 	}
-	return false
 }
 
-func treeSize(path string) uint64 {
-	var n uint64
-	_ = filepath.WalkDir(path, func(_ string, d fs.DirEntry, err error) error {
-		if err == nil && !d.IsDir() {
-			if info, err := d.Info(); err == nil {
-				n += uint64(info.Size())
-			}
-		}
-		return nil
-	})
-	return n
-}
-
-// TrimCache removes the Go build cache's entries in cacheDir, least
-// recently used first (go refreshes an entry's mtime when it uses it),
-// until the filesystem path is on has target bytes free, and says how many
-// bytes it removed. The cache stays valid: a removed entry is a miss, built
-// again when needed.
-func TrimCache(cacheDir, path string, target uint64) (uint64, error) {
-	u, err := Of(path)
-	if err != nil || u.Free >= target {
-		return 0, err
-	}
-	type entry struct {
-		path string
-		size uint64
-		mod  time.Time
-	}
-	var entries []entry
-	_ = filepath.WalkDir(cacheDir, func(p string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
-			return nil
-		}
-		// The cache's own bookkeeping stays.
-		if filepath.Dir(p) == cacheDir {
-			return nil
-		}
-		if info, err := d.Info(); err == nil {
-			entries = append(entries, entry{p, uint64(info.Size()), info.ModTime()})
-		}
-		return nil
-	})
-	sort.Slice(entries, func(i, j int) bool { return entries[i].mod.Before(entries[j].mod) })
-	need := target - u.Free
-	var freed uint64
-	for _, e := range entries {
-		if freed >= need {
-			break
-		}
-		if os.Remove(e.path) == nil {
-			freed += e.size
-		}
-	}
-	return freed, nil
-}
-
-// ErrFull is a workspace with too little room for a task even after
-// Prepare cleaned it. Its message starts "disk full", which the overseer
+// ErrFull is a workspace with too little room for a task even after the
+// cleanup recipe ran. Its message starts "disk full", which the overseer
 // reads as a failure not of the task's making.
 type ErrFull struct{ Usage Usage }
 
@@ -172,39 +136,27 @@ func (e *ErrFull) Error() string {
 	return fmt.Sprintf("disk full: %s on the workspace after cleaning; a task needs %d GB free", e.Usage, Floor/GB)
 }
 
-// Prepare makes room on workspace before a task: the earlier tasks'
-// leftovers in tmpDir go; with less than MinFree free the Go build cache
-// in cacheDir is trimmed to TrimTarget, and then any leftover older than a
-// few minutes goes too. With less than Floor free after all that, it
-// returns *ErrFull. It says what it did on out.
-func Prepare(workspace, tmpDir, cacheDir string, out io.Writer) (Usage, error) {
-	now := time.Now()
-	if n, freed, _ := CleanTemp(tmpDir, now.Add(-LeftoverAge)); n > 0 {
-		fmt.Fprintf(out, "Removed %d leftover temporary directories of earlier tasks (%.1f GB) from %s\n", n, float64(freed)/GB, tmpDir)
-	}
+// Prepare makes room on workspace before a task: with less than MinFree
+// free it runs the cleanup recipe of the checkout at repoDir (LoadCleanup),
+// asked for TargetFree, and with less than Floor free after that it
+// returns *ErrFull. It says what it did on out, and returns the
+// workspace's space as the task starts.
+func Prepare(ctx context.Context, workspace, repoDir, logDir string, out io.Writer) (Usage, error) {
 	u, err := Of(workspace)
-	if err != nil {
-		return Usage{}, err
-	}
-	if u.Free >= MinFree {
-		return u, nil
+	if err != nil || u.Free >= MinFree {
+		return u, err
 	}
 	fmt.Fprintf(out, "::warning the workspace is low on space: %s\n", u)
-	if cacheDir != "" {
-		if freed, err := TrimCache(cacheDir, workspace, TrimTarget); err == nil && freed > 0 {
-			fmt.Fprintf(out, "Trimmed the Go build cache by %.1f GB, least recently used first\n", float64(freed)/GB)
-		}
-	}
-	if u, err = Of(workspace); err != nil {
-		return Usage{}, err
-	}
-	if u.Free < MinFree {
-		if n, freed, _ := CleanTemp(tmpDir, now.Add(-10*time.Minute)); n > 0 {
-			fmt.Fprintf(out, "Removed %d more temporary directories (%.1f GB)\n", n, float64(freed)/GB)
-		}
+	rec, source, err := LoadCleanup(repoDir)
+	if err != nil {
+		fmt.Fprintf(out, "::warning no cleanup: %v\n", err)
+	} else {
+		fmt.Fprintf(out, "Running %s (%s)\n", CleanupRecipe, source)
+		RunCleanup(ctx, rec, repoDir, workspace, logDir, TargetFree, out)
 		if u, err = Of(workspace); err != nil {
 			return Usage{}, err
 		}
+		fmt.Fprintf(out, "After %s: %s\n", CleanupRecipe, u)
 	}
 	if u.Free < Floor {
 		return u, &ErrFull{Usage: u}
@@ -212,9 +164,9 @@ func Prepare(workspace, tmpDir, cacheDir string, out io.Writer) (Usage, error) {
 	return u, nil
 }
 
-// UsageFile is where a task records its workspace's space when it ends:
-// the overseer copies it to the sandbox (Annotation), for the board and
-// for sandboxes paused since.
+// UsageFile is where a task records its workspace's space: the overseer
+// copies it to the sandbox (Annotation), for the board and for sandboxes
+// paused since.
 const UsageFile = "disk.json"
 
 // Annotation is the sandbox annotation that carries the workspace's space
