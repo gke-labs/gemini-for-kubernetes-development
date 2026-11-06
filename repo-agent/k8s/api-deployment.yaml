@@ -44,6 +44,12 @@ spec:
               name: allowed-users
               key: GITHUB_ALLOWED_USERS
               optional: true
+        - name: GITHUB_ALLOWED_ORGS
+          valueFrom:
+            configMapKeyRef:
+              name: allowed-users
+              key: GITHUB_ALLOWED_ORGS
+              optional: true
         - name: GITHUB_ADMIN_USERS
           valueFrom:
             configMapKeyRef:
