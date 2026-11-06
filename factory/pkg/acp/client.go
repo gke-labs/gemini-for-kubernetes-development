@@ -95,7 +95,11 @@ func NewClient(r io.Reader, w io.Writer) *Client {
 // goroutine) for calls to complete.
 func (c *Client) Run() {
 	scanner := bufio.NewScanner(c.reader)
-	const maxLineSize = 10 * 1024 * 1024
+	// An engine's message can be large - a tool's whole output, a file it
+	// read - and a line over the limit ends the connection
+	// ("bufio.Scanner: token too long", KCC #15081), so the limit is set
+	// well above any message a turn sends.
+	const maxLineSize = 256 * 1024 * 1024
 	scanner.Buffer(make([]byte, 64*1024), maxLineSize)
 
 	for scanner.Scan() {

@@ -44,8 +44,10 @@ var engineUnavailableRE = regexp.MustCompile(`(?i)RPC error \[(429|503)\]|experi
 // exception TypeError: fetch failed sending request"), or the streamed
 // answer was cut off ("RPC error [500]: Incomplete JSON segment at the
 // end") - rather than that the model cannot serve: the same model, asked
-// again, usually answers.
-var engineTransientRE = regexp.MustCompile(`(?i)fetch failed sending request|Incomplete JSON segment|\b(ECONNRESET|ETIMEDOUT|EPIPE)\b|socket hang up`)
+// again, usually answers. So is a turn whose engine connection dropped
+// (acpd's "connection to agent closed") or whose end was lost from the
+// transcript (errTurnLost): the conversation is reopened and asked again.
+var engineTransientRE = regexp.MustCompile(`(?i)fetch failed sending request|Incomplete JSON segment|\b(ECONNRESET|ETIMEDOUT|EPIPE)\b|socket hang up|connection to agent closed|result was lost from the transcript`)
 
 // EngineUnavailable reports whether a turn failed because the engine could
 // not serve it - a state of the service at the moment, which another

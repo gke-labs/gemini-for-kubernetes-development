@@ -82,6 +82,12 @@ type Transcript struct {
 	// that lands between the check and the wait.
 	changed chan struct{}
 	closed  bool
+	// open is that the last write was cut short (a full disk): its line
+	// has no end, and the next event starts with one, or it would be glued
+	// to the broken line and lost with it (KCC #15081).
+	open bool
+	// write writes to f; tests replace it to cut a write short.
+	write func([]byte) (int, error)
 }
 
 // OpenTranscript opens (creating if needed) the transcript under dir.
@@ -188,9 +194,22 @@ func (t *Transcript) Append(kind string, data json.RawMessage) error {
 		return fmt.Errorf("marshaling %s event: %w", kind, err)
 	}
 	line = append(line, '\n')
+	if t.open {
+		line = append([]byte{'\n'}, line...)
+	}
 
-	n, err := t.f.Write(line)
+	write := t.f.Write
+	if t.write != nil {
+		write = t.write
+	}
+	n, err := write(line)
 	t.size += int64(n)
+	switch {
+	case n == len(line):
+		t.open = false
+	case n > 0:
+		t.open = true
+	}
 	// Wake followers even on a short or failed write: the bytes that did
 	// land are theirs to read, and a follower blocked forever is worse
 	// than one that sees a truncated line.

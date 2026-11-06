@@ -337,3 +337,43 @@ func TestAReopenedTranscriptContinuesItsSeq(t *testing.T) {
 		t.Errorf("seqs = %v, want %v", seqs, want)
 	}
 }
+
+// A write cut short (a full disk, KCC #15081) leaves a line with no end;
+// the next event starts on a line of its own, or it would be glued to the
+// broken one and lost with it - there, the error that ended the turn.
+func TestTranscriptEventAfterAShortWriteIsWhole(t *testing.T) {
+	tr, err := OpenTranscript(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tr.Close()
+	tr.write = func(b []byte) (int, error) {
+		n, _ := tr.f.Write(b[:len(b)/2])
+		return n, fmt.Errorf("write: no space left on device")
+	}
+	if err := tr.AppendValue("usage_update", map[string]string{"x": "y"}); err == nil {
+		t.Fatal("a short write was not an error")
+	}
+	tr.write = nil
+	if err := tr.AppendValue(KindError, map[string]string{"message": "prompt failed: connection to agent closed"}); err != nil {
+		t.Fatal(err)
+	}
+	chunk, _, err := tr.ReadFrom(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimRight(string(chunk), "\n"), "\n")
+	last := lines[len(lines)-1]
+	var ev Event
+	if len(lines) != 2 || json.Unmarshal([]byte(last), &ev) != nil || ev.Kind != KindError {
+		t.Errorf("the error event is not a line of its own:\n%s", chunk)
+	}
+	// And a whole write after it adds no blank line.
+	if err := tr.AppendValue(KindUserPrompt, map[string]string{"text": "next"}); err != nil {
+		t.Fatal(err)
+	}
+	chunk, _, _ = tr.ReadFrom(0)
+	if strings.Contains(string(chunk), "\n\n") {
+		t.Errorf("a blank line after the mended one:\n%q", chunk)
+	}
+}

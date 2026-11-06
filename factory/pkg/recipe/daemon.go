@@ -145,20 +145,116 @@ func (d *DaemonSession) Ask(ctx context.Context, prompt string) (string, error) 
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("following the task's session: %s", failure(resp))
 	}
-	var turn turn
-	r := bufio.NewReader(resp.Body)
-	for {
-		line, err := r.ReadBytes('\n')
-		if err != nil {
-			if ctx.Err() != nil {
-				return "", d.cancelled(ctx, ctx.Err())
+	return d.follow(ctx, resp.Body)
+}
+
+// Liveness while a turn is followed: how long after the last event, or
+// after a line that is not a whole event, the session's own state is
+// asked; and how long a busy session may send nothing before the turn is
+// given up as stalled. Variables, for tests.
+var (
+	turnCheckAfter     = 10 * time.Minute
+	turnBadLineGrace   = 30 * time.Second
+	turnStalledAfter   = 45 * time.Minute
+	turnCheckPollEvery = time.Minute
+)
+
+// errTurnLost is a turn whose session finished it, but whose end the task
+// could not read: the transcript line that carried it was cut short (a
+// full disk, KCC #15081) or never written. The turn is asked again
+// (EngineTransient), told it was interrupted.
+var errTurnLost = errors.New("the session ended the turn, but its result was lost from the transcript")
+
+// follow reads the turn's events from body until its end. The transcript
+// is the only channel, so the session's own state is asked as well when it
+// falls silent or sends a line that is no whole event: a session that is
+// no longer busy, or gone, ended the turn without the task seeing how; one
+// still busy but silent for turnStalledAfter (and not retrying a model
+// call) is stalled. Either fails the turn rather than waiting forever.
+func (d *DaemonSession) follow(ctx context.Context, body io.Reader) (string, error) {
+	type read struct {
+		line []byte
+		err  error
+	}
+	lines := make(chan read)
+	stop := make(chan struct{})
+	defer close(stop)
+	go func() {
+		r := bufio.NewReader(body)
+		for {
+			line, err := r.ReadBytes('\n')
+			select {
+			case lines <- read{line, err}:
+			case <-stop:
+				return
 			}
-			// Whole lines only; the stream ends when the session does.
-			return "", fmt.Errorf("the session ended mid-turn")
+			if err != nil {
+				return
+			}
 		}
-		if reply, done, err := turn.event(line); done {
-			d.usage = turn.usage
-			return reply, err
+	}()
+
+	var turn turn
+	// tools are the agent's tool calls still running: a build or a test
+	// suite runs silent for as long as it takes (validate-prereqs.sh, ~40
+	// minutes), so a turn with one open is never stalled; the task's
+	// timeout bounds it.
+	tools := map[string]bool{}
+	last := time.Now()
+	checkAt := last.Add(turnCheckAfter)
+	poll := time.NewTicker(turnCheckPollEvery)
+	defer poll.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return "", d.cancelled(ctx, ctx.Err())
+		case rd := <-lines:
+			if rd.err != nil {
+				if ctx.Err() != nil {
+					return "", d.cancelled(ctx, ctx.Err())
+				}
+				// Whole lines only; the stream ends when the session does.
+				return "", fmt.Errorf("the session ended mid-turn")
+			}
+			last = time.Now()
+			checkAt = last.Add(turnCheckAfter)
+			if !json.Valid(bytes.TrimSpace(rd.line)) {
+				// Not a whole event: a write cut short, perhaps the one
+				// that ended the turn. Ask the session soon.
+				checkAt = last.Add(turnBadLineGrace)
+				continue
+			}
+			trackTool(tools, rd.line)
+			if reply, done, err := turn.event(rd.line); done {
+				d.usage = turn.usage
+				return reply, err
+			}
+		case now := <-poll.C:
+			if now.Before(checkAt) {
+				continue
+			}
+			checkAt = now.Add(turnCheckAfter)
+			var state struct {
+				Busy     bool `json:"busy"`
+				Retrying *struct {
+					Model string `json:"model"`
+				} `json:"retrying"`
+			}
+			err := d.call(ctx, http.MethodGet, "/sessions/"+d.id, nil, http.StatusOK, &state)
+			var status statusError
+			switch {
+			case errors.As(err, &status) && status.code == http.StatusNotFound:
+				return "", fmt.Errorf("%w (the session is gone)", errTurnLost)
+			case err != nil:
+				continue // the daemon unreachable for now: ask again later
+			case !state.Busy:
+				return "", errTurnLost
+			case state.Retrying == nil && len(tools) == 0 && now.Sub(last) >= turnStalledAfter:
+				stopCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				_ = d.call(stopCtx, http.MethodPost, "/sessions/"+d.id+"/cancel", nil, http.StatusNoContent, nil)
+				cancel()
+				return "", fmt.Errorf("the turn stalled: no event for %s", now.Sub(last).Round(time.Minute))
+			}
 		}
 	}
 }
@@ -175,6 +271,29 @@ func (d *DaemonSession) cancelled(ctx context.Context, err error) error {
 	defer cancel()
 	_ = d.call(stop, http.MethodPost, "/sessions/"+d.id+"/cancel", nil, http.StatusNoContent, nil)
 	return err
+}
+
+// trackTool keeps tools, the turn's tool calls still running, up to date
+// with one transcript event.
+func trackTool(tools map[string]bool, line []byte) {
+	var ev struct {
+		Kind string `json:"kind"`
+		Data struct {
+			ToolCallID string `json:"toolCallId"`
+			Status     string `json:"status"`
+		} `json:"data"`
+	}
+	if json.Unmarshal(line, &ev) != nil || ev.Data.ToolCallID == "" {
+		return
+	}
+	switch ev.Kind {
+	case "tool_call", "tool_call_update":
+		if ev.Data.Status == "completed" || ev.Data.Status == "failed" {
+			delete(tools, ev.Data.ToolCallID)
+		} else {
+			tools[ev.Data.ToolCallID] = true
+		}
+	}
 }
 
 // Close ends the engine, if this task started it. The transcript and the
