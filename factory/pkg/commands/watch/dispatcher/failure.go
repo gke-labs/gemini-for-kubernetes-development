@@ -19,6 +19,10 @@ type RunError struct {
 	// EngineUnavailable is that the log shows the engine could not serve
 	// the run (recipe.EngineUnavailableMessage): its model at capacity, not the task.
 	EngineUnavailable bool
+	// DiskFull is that the run did not start because its sandbox's
+	// workspace was full even after cleaning (diskcare.ErrFull): not the
+	// task's failure either, so no attempt of its own.
+	DiskFull bool
 }
 
 func (e *RunError) Error() string {
@@ -51,9 +55,20 @@ func failureFromLog(path string) string {
 // reason is then that line, which says so, rather than the "task failed"
 // factory prints last.
 func failureOfLog(path string) (string, bool) {
+	reason, unavailable, _ := failureKindOfLog(path)
+	return reason, unavailable
+}
+
+// diskFullPrefix starts diskcare.ErrFull's message, as factory prints it.
+const diskFullPrefix = "disk full: "
+
+// failureKindOfLog is failureOfLog, and also whether the run failed for a
+// full workspace (an error line from diskcare.ErrFull): the reason is then
+// that line.
+func failureKindOfLog(path string) (string, bool, bool) {
 	f, err := os.Open(path)
 	if err != nil {
-		return "", false
+		return "", false, false
 	}
 	defer f.Close()
 	if info, err := f.Stat(); err == nil && info.Size() > logTail {
@@ -61,9 +76,9 @@ func failureOfLog(path string) (string, bool) {
 	}
 	data, err := io.ReadAll(f)
 	if err != nil {
-		return "", false
+		return "", false, false
 	}
-	reason, unavailable := "", false
+	reason, unavailable, diskFull := "", false, false
 	lines := strings.Split(string(data), "\n")
 	for i := len(lines) - 1; i >= 0; i-- {
 		line := strings.TrimSpace(lines[i])
@@ -78,9 +93,13 @@ func failureOfLog(path string) (string, bool) {
 			reason, unavailable = line, true
 			break
 		}
+		if strings.Contains(line, diskFullPrefix) {
+			reason, diskFull = line, true
+			break
+		}
 	}
 	if len(reason) > maxReason {
 		reason = reason[:maxReason] + "…"
 	}
-	return reason, unavailable
+	return reason, unavailable, diskFull
 }

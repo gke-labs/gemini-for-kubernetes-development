@@ -99,3 +99,18 @@ func TestFailureOfLogEngineUnavailable(t *testing.T) {
 		}
 	}
 }
+
+// A task that did not start because its sandbox's workspace was full even
+// after cleaning (diskcare.ErrFull) is told apart: its reason is that
+// line, and it is no attempt of the task's own.
+func TestFailureKindOfLogDiskFull(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "task.log")
+	log := "Removed 3 leftover temporary directories\nError: disk full: 38.1/40.0 GB used, 1.9 GB free on the workspace after cleaning; a task needs 5 GB free\nError: running recipe: task failed with exit code 1\n"
+	if err := os.WriteFile(path, []byte(log), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	reason, unavailable, diskFull := failureKindOfLog(path)
+	if !diskFull || unavailable || !strings.HasPrefix(reason, "disk full: ") {
+		t.Errorf("failureKindOfLog = %q, %v, %v", reason, unavailable, diskFull)
+	}
+}
