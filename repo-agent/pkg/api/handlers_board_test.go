@@ -2222,3 +2222,40 @@ func TestAPostingRebuildReadsKubernetesOnly(t *testing.T) {
 		t.Error("the snapshot survived the click's invalidation")
 	}
 }
+
+// A paused sandbox's card shows its workspace disk as the overseer last
+// recorded it (factory.gemini.google.com/disk), with when; a running one's,
+// measured now by the card's own script (#disk line).
+func TestSandboxCardDisk(t *testing.T) {
+	paused := sandboxCR("fix-repo-10",
+		map[string]interface{}{"factory.gemini.google.com/managed": "true"},
+		map[string]interface{}{
+			"sandbox.gemini.google.com/last-task-state": "Completed",
+			"htmlURL":                        "https://github.com/test/repo/issues/10",
+			"factory.gemini.google.com/disk": `{"used":35433480192,"size":63350005760,"free":27916525568,"at":"2026-11-06T20:00:00Z"}`,
+		}, 0)
+	server, r, _ := boardTestServer(t, map[string]string{}, boardCR(), paused)
+	r.GET("/sandbox-card/:name", server.getSandboxCard)
+	req, _ := http.NewRequest("GET", "/sandbox-card/fix-repo-10", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	var card sandboxCardView
+	if err := json.Unmarshal(w.Body.Bytes(), &card); err != nil {
+		t.Fatalf("bad json: %v", err)
+	}
+	if card.Disk == nil || card.Disk.Size != 63350005760 || card.Disk.Free != 27916525568 || card.Disk.At != "2026-11-06T20:00:00Z" || card.Disk.Live {
+		t.Errorf("recorded disk = %+v", card.Disk)
+	}
+
+	if d := parseDiskLine("#disk|36700160|61696000|24996864"); d == nil || !d.Live || d.Size != 61696000*1024 || d.Free != 24996864*1024 {
+		t.Errorf("parseDiskLine = %+v", d)
+	}
+	for _, bad := range []string{"fix-1|0|no|10|", "#disk|x|1|2", "#disk|1|0|0", "#disk|1|2"} {
+		if parseDiskLine(bad) != nil {
+			t.Errorf("parseDiskLine(%q) is a disk", bad)
+		}
+	}
+	if recordedDisk(map[string]string{diskAnnotation: "not json"}) != nil || recordedDisk(nil) != nil {
+		t.Error("an unreadable or missing annotation is a disk")
+	}
+}
