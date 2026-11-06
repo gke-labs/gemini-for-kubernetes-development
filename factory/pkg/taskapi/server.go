@@ -691,8 +691,8 @@ func (s *Server) diskPath() string {
 	}
 }
 
-// handleDisk is the workspace's space (diskcare.Usage): what the overseer
-// decides a workspace-cleanup run, or a task refused, on.
+// handleDisk is the workspace's space (diskcare.Usage): the overseer's
+// fact about a sandbox's disk, for its rules and the board.
 func (s *Server) handleDisk(w http.ResponseWriter, r *http.Request) {
 	u, err := diskcare.Of(s.diskPath())
 	if err != nil {

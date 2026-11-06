@@ -525,13 +525,6 @@ func (d *Dispatcher) executeTask(ctx context.Context, taskFilename string, task 
 			until := d.engineFailed(time.Now())
 			klog.Warningf("Task %s failed because its engine could not serve it; no task starts until %s", taskFilename, until.UTC().Format(time.TimeOnly))
 		}
-		// Its sandbox's workspace was full even after cleaning: not an
-		// attempt of the task's own either (the flag is "not the task's
-		// failure"), but no reason to hold back other sandboxes' tasks.
-		if errors.As(taskErr, &runErr) && runErr.DiskFull {
-			task.EngineUnavailable = true
-			klog.Warningf("Task %s did not start: its sandbox's workspace is full (%s)", taskFilename, runErr.Reason)
-		}
 		_ = d.queue.FailTask(taskFilename, task, taskErr.Error())
 		d.coordinator.NotifyTaskFinished(ctx, task, taskErr)
 

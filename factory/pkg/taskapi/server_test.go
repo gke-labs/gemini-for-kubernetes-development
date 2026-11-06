@@ -515,9 +515,8 @@ func TestUntarRefusesUnsafeEntries(t *testing.T) {
 	}
 }
 
-// The daemon measures the workspace for the overseer (GET /v1/disk): what
-// it decides a workspace-cleanup run, or a task refused, on. The version
-// says it can.
+// The daemon measures the workspace for the overseer (GET /v1/disk): its
+// fact about a sandbox's disk. The version says it can.
 func TestServerDisk(t *testing.T) {
 	c, _ := newTestServer(t)
 	ctx := context.Background()
