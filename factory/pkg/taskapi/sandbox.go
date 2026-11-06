@@ -1,6 +1,7 @@
 package taskapi
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -323,10 +325,11 @@ func (s *ServerSandbox) Attach(ctx context.Context, id string, env map[string]st
 	}
 
 	quota := taskfiles.NewQuotaWatch(env)
+	var failed failedStep
 	var offset int64
 	broken := 0
 	for {
-		err := s.follow(loopCtx, id, &offset, quota)
+		err := s.follow(loopCtx, id, &offset, quota, &failed)
 		var qe *quotaError
 		switch {
 		case loopCtx.Err() != nil:
@@ -375,6 +378,12 @@ func (s *ServerSandbox) Attach(ctx context.Context, id string, env map[string]st
 			return fmt.Errorf("invalid exit code '%s': %w", e.ExitCode, convErr)
 		}
 		if code != 0 {
+			// What the task's log says failed - its last "::failed" step -
+			// rather than its exit status alone: the reason a board row, a
+			// watch's record or a person at the CLI reads.
+			if why := failed.reason(); why != "" {
+				return fmt.Errorf("task failed with exit code %d: %s", code, why)
+			}
 			return fmt.Errorf("task failed with exit code %d", code)
 		}
 		return nil
@@ -383,7 +392,7 @@ func (s *ServerSandbox) Attach(ctx context.Context, id string, env map[string]st
 
 // follow copies the task's log from *offset to stdout until the server
 // ends it, which it does once the task has ended.
-func (s *ServerSandbox) follow(ctx context.Context, id string, offset *int64, quota *taskfiles.QuotaWatch) error {
+func (s *ServerSandbox) follow(ctx context.Context, id string, offset *int64, quota *taskfiles.QuotaWatch, failed *failedStep) error {
 	body, err := s.client().Log(ctx, id, *offset, true)
 	if err != nil {
 		return err
@@ -394,6 +403,7 @@ func (s *ServerSandbox) follow(ctx context.Context, id string, offset *int64, qu
 		n, err := body.Read(buf)
 		if n > 0 {
 			_, _ = os.Stdout.Write(buf[:n])
+			failed.observe(buf[:n])
 			*offset += int64(n)
 			if qerr := quota.Poll(buf[:n]); qerr != nil {
 				return &quotaError{qerr}
@@ -406,6 +416,44 @@ func (s *ServerSandbox) follow(ctx context.Context, id string, offset *int64, qu
 			return err
 		}
 	}
+}
+
+// failedStep keeps the last step a task's log says failed: the recipe
+// runner prints "::failed <step>: <error>" when one does, e.g. "::failed
+// 3:ask: agent: prompt failed: RPC error [503]: …". Lines can span the
+// chunks the log arrives in.
+type failedStep struct {
+	partial []byte
+	last    string
+}
+
+// maxFailedReason bounds the reason added to a failed task's error.
+const maxFailedReason = 300
+
+func (f *failedStep) observe(chunk []byte) {
+	data := append(f.partial, chunk...)
+	for {
+		i := bytes.IndexByte(data, '\n')
+		if i < 0 {
+			break
+		}
+		if line := strings.TrimSpace(string(data[:i])); strings.HasPrefix(line, "::failed ") {
+			f.last = strings.TrimPrefix(line, "::failed ")
+		}
+		data = data[i+1:]
+	}
+	if len(data) > 4<<10 {
+		data = data[len(data)-4<<10:] // a line that long is no step's failure
+	}
+	f.partial = append(f.partial[:0], data...)
+}
+
+// reason is the last failed step and its error, clipped; "" for none.
+func (f *failedStep) reason() string {
+	if len(f.last) > maxFailedReason {
+		return f.last[:maxFailedReason] + "…"
+	}
+	return f.last
 }
 
 func (s *ServerSandbox) Log(ctx context.Context, id string, w io.Writer) error {
