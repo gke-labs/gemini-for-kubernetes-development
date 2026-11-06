@@ -230,3 +230,64 @@ func TestNamedACPSessionKeepsItsOwnTranscript(t *testing.T) {
 		}
 	}
 }
+
+// A step session's gh is logged out and its git has the run's settings
+// without anything that carries or reaches the task's token: credential
+// helpers, URL rewrites, includes (followed, then filtered too).
+func TestStepSessionHasNoWayToGitHub(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git required")
+	}
+	home := t.TempDir()
+	write := func(name, body string) string {
+		p := filepath.Join(home, name)
+		if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	write("extra.gitconfig", "[url \"https://bot:tok-two@github.com/\"]\n\tinsteadOf = https://github.com/\n[safe]\n\tdirectory = /workspaces/repo\n")
+	global := write(".gitconfig", "[user]\n\tname = coder-bot\n\temail = bot@example.com\n"+
+		"[url \"https://bot:tok-one@github.com/\"]\n\tinsteadOf = https://github.com/\n"+
+		"[credential \"https://github.com\"]\n\thelper = !gh auth git-credential\n"+
+		"[core]\n\thooksPath = /dev/null\n"+
+		"[include]\n\tpath = "+filepath.Join(home, "extra.gitconfig")+"\n")
+	t.Setenv("GIT_CONFIG_GLOBAL", global)
+
+	env := map[string]string{"GOOGLE_CLOUD_PROJECT": "p"}
+	got, err := noGitHubEnv(filepath.Join(t.TempDir(), "session-review-1"), env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got["GOOGLE_CLOUD_PROJECT"] != "p" || got["GIT_TERMINAL_PROMPT"] != "0" || len(env) != 1 {
+		t.Errorf("env = %v (the agent's env kept, git never prompts, the caller's map untouched)", got)
+	}
+	if entries, err := os.ReadDir(got["GH_CONFIG_DIR"]); err != nil || len(entries) != 0 {
+		t.Errorf("GH_CONFIG_DIR %s: %v, %d entries; want an empty directory", got["GH_CONFIG_DIR"], err, len(entries))
+	}
+	out, err := exec.Command("git", "config", "--file", got["GIT_CONFIG_GLOBAL"], "--list").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := string(out)
+	for _, want := range []string{"user.name=coder-bot", "user.email=bot@example.com", "core.hookspath=/dev/null", "safe.directory=/workspaces/repo"} {
+		if !strings.Contains(cfg, want) {
+			t.Errorf("the session's git config lost %s:\n%s", want, cfg)
+		}
+	}
+	for _, bad := range []string{"tok-one", "tok-two", "credential.", "url.", "include."} {
+		if strings.Contains(cfg, bad) {
+			t.Errorf("the session's git config has %q:\n%s", bad, cfg)
+		}
+	}
+
+	// No global config at all: an empty one, still nothing to reach GitHub with.
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(home, "missing"))
+	got, err = noGitHubEnv(filepath.Join(t.TempDir(), "s"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if data, err := os.ReadFile(got["GIT_CONFIG_GLOBAL"]); err != nil || len(data) != 0 {
+		t.Errorf("with no global config, the session's is %q, %v; want empty", data, err)
+	}
+}
