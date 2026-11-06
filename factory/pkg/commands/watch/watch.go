@@ -106,6 +106,13 @@ func (w *Watcher) Run(ctx context.Context) error {
 			defer wg.Done()
 			_ = w.dispatcher.Run(github.WithComponent(daemonCtx, "dispatcher"))
 		}()
+		if w.sandboxRules != nil {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				_ = w.sandboxRules.Run(github.WithComponent(daemonCtx, "sandbox-rules"))
+			}()
+		}
 		if w.warmWorkspace != nil {
 			wg.Add(1)
 			go func() {

@@ -1,0 +1,29 @@
+# Makes room on a sandbox's workspace disk that is running low: an awake
+# sandbox with no task of its own queued or running and less than 10 GiB
+# free gets the workspace-cleanup recipe (factory recipe workspace-cleanup
+# --sandbox <name>), asked for 20 GiB free, at most once an hour.
+#
+# What it deletes is the recipe's: the built-in one only reports; a
+# repository's own .agents/recipes/workspace-cleanup.yaml says what is
+# safe to delete for its toolchain. A repository changes the threshold, or
+# turns this off, with its own .agents/watch/workspace-cleanup.yaml.
+#
+# The watch checks sandboxes on a sweep of its own and as soon as a task
+# in one ends (the sandbox rules controller).
+name: workspace-cleanup
+description: Make room on a sandbox's workspace disk running low
+on: sandbox
+order: 10
+when:
+  awake: true
+  task: none
+  disk: {free-below: 10Gi}
+run:
+  recipe: workspace-cleanup
+  inputs:
+    target_bytes: "21474836480"
+policy:
+  cooldown:
+    success: 1h
+    failure: 1h
+  phase: 4

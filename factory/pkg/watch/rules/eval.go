@@ -98,6 +98,15 @@ type Item struct {
 	HeadChangedAt time.Time
 	HumanSpokeAt  time.Time
 	PausedAt      time.Time
+
+	// Sandboxes (OnSandbox), whose Number is 0: the sandbox's name, its
+	// workspace's free and total space in bytes (DiskSize 0: not measured,
+	// and a disk predicate fails), and whether it is awake. Whether a task
+	// of it runs is TaskActive.
+	Sandbox  string `json:",omitempty"`
+	DiskFree uint64 `json:",omitempty"`
+	DiskSize uint64 `json:",omitempty"`
+	Awake    bool   `json:",omitempty"`
 }
 
 // Closing is an issue a PR closes.
@@ -346,6 +355,26 @@ func (w When) holds(r *Rule, it Item, env Env, runs []PastRun) bool {
 		case it.LastTrustedActivity.IsZero() || env.Now.Sub(it.LastTrustedActivity) < d:
 			return false
 		}
+	}
+
+	if d := w.Disk; d != nil {
+		below, err := d.freeBelow()
+		if err != nil || it.DiskSize == 0 || it.DiskFree >= below {
+			return false
+		}
+	}
+	switch w.Task {
+	case "none":
+		if it.TaskActive {
+			return false
+		}
+	case "running":
+		if !it.TaskActive {
+			return false
+		}
+	}
+	if w.Awake != nil && *w.Awake != it.Awake {
+		return false
 	}
 
 	if len(w.AnyOf) > 0 {

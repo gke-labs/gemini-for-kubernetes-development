@@ -19,6 +19,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/prs"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/retros"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/sandbox"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/sandboxrules"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/scan"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/warmworkspace"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/whyclosed"
@@ -181,9 +182,11 @@ type Watcher struct {
 	fanouts       *fanouts.Controller
 	graphs        *graphs.Controller
 	warmWorkspace *warmworkspace.Controller
-	retro         *retros.Controller
-	whyClosed     *whyclosed.Tracker
-	timeoutChan   <-chan time.Time
+	// sandboxRules runs the rules on sandboxes (a workspace's cleanup).
+	sandboxRules *sandboxrules.Controller
+	retro        *retros.Controller
+	whyClosed    *whyclosed.Tracker
+	timeoutChan  <-chan time.Time
 }
 
 // initComponents builds the in-memory primitives and subcontrollers of the
@@ -226,6 +229,7 @@ func (w *Watcher) initComponents() {
 	w.fanouts = w.newFanoutController()
 	w.graphs = w.newGraphController()
 	w.warmWorkspace = w.newWarmWorkspaceController()
+	w.sandboxRules = w.newSandboxRulesController()
 	w.retro = w.newRetroController()
 	w.whyClosed = w.newWhyClosed()
 	w.reconciler = w.newReconciler()

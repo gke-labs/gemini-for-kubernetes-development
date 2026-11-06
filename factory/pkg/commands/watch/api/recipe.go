@@ -52,6 +52,10 @@ func RuleRunName(t *QueueTask) string {
 	if prefix == "" {
 		prefix = "rule"
 	}
+	if t.Sandbox != "" {
+		// A sandbox's upkeep: of the sandbox, not of an item or commit.
+		return fmt.Sprintf("%s-%s-%d", prefix, t.Sandbox, at.Unix())
+	}
 	return fmt.Sprintf("%s-%d-%s-%d", prefix, t.Number, sha, at.Unix())
 }
 

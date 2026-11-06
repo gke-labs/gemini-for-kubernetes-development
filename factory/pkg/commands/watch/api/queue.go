@@ -18,7 +18,17 @@ const (
 	// TypeAgentChore runs factory agent create: a scheduled chore, or a
 	// workflow's step.
 	TypeAgentChore TaskType = "agent-chore"
+	// TypeSandboxRule is a rule's task on a sandbox itself (a rule on:
+	// sandbox): its recipe, one on sandboxes, runs in QueueTask.Sandbox
+	// (factory recipe <name> --sandbox), in SandboxRuleTaskFile.
+	TypeSandboxRule TaskType = "sandbox-rule"
 )
+
+// SandboxRuleTaskFile is the task file of rule's task on sandbox:
+// task-sandbox-<sandbox>-rule-<rule>.yaml.
+func SandboxRuleTaskFile(sandbox, rule string) string {
+	return fmt.Sprintf("task-sandbox-%s-rule-%s.yaml", sandbox, rule)
+}
 
 // RuleTaskFile is the task file of rule's task on a pull request (pr) or
 // an issue: task-pr-<n>-rule-<rule>.yaml, task-issue-<n>-rule-<rule>.yaml.
@@ -160,8 +170,10 @@ type QueueTask struct {
 	// (act.Task). The runner runs them (RecipeArgs); a task without a
 	// Recipe runs nothing. PRLabels is an input of {{pr-labels}}: the CLI's
 	// --pr-labels labels the PR as the overseer does, when it opens it.
-	Rule     string            `yaml:"rule,omitempty" json:"rule,omitempty"`
-	Recipe   string            `yaml:"recipe,omitempty" json:"recipe,omitempty"`
+	Rule   string `yaml:"rule,omitempty" json:"rule,omitempty"`
+	Recipe string `yaml:"recipe,omitempty" json:"recipe,omitempty"`
+	// Sandbox is the sandbox a TypeSandboxRule task's recipe runs in.
+	Sandbox  string            `yaml:"sandbox,omitempty" json:"sandbox,omitempty"`
 	Apply    string            `yaml:"apply,omitempty" json:"apply,omitempty"`
 	Inputs   map[string]string `yaml:"inputs,omitempty" json:"inputs,omitempty"`
 	PRLabels bool              `yaml:"prLabels,omitempty" json:"prLabels,omitempty"`
