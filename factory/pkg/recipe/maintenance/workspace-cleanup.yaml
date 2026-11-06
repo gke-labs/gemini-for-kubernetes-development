@@ -1,6 +1,6 @@
-# workspace-cleanup: makes room on a sandbox's workspace disk. Factory runs
-# it before a task when the workspace has less than 10 GB free (and the
-# overseer may run it on idle sandboxes). This built-in one deletes
+# workspace-cleanup: makes room on a sandbox's workspace disk. The overseer
+# runs it on a sandbox whose workspace is low on space (diskcare: less than
+# 10 GB free), as a recipe run of its own. This built-in one deletes
 # nothing - what is safe to delete depends on the repository's toolchain -
 # and only reports. A repository puts its own at
 # .agents/maintenance/workspace-cleanup.yaml.
@@ -10,8 +10,7 @@
 # its inputs as INPUT_WORKSPACE, INPUT_FREE_BYTES and INPUT_TARGET_BYTES,
 # the sandbox's environment (TMPDIR, GOCACHE, ...), and TASK_DIR for its
 # step logs. A step that fails stops it, as in any recipe
-# (continue-on-error: true lets the next one run); the task then starts if
-# there is room enough.
+# (continue-on-error: true lets the next one run).
 name: workspace-cleanup
 inputs:
   workspace:

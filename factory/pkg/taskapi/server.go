@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/acpd"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/diskcare"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/spool"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/taskfiles"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/taskoutput"
@@ -62,12 +63,13 @@ func NewServer(incomingDir, tasksDir string, launch spool.Launcher) *Server {
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/version", func(w http.ResponseWriter, r *http.Request) {
-		v := Version{API: APIVersion, Secrets: SecretsVersion, Uploads: UploadsVersion}
+		v := Version{API: APIVersion, Secrets: SecretsVersion, Uploads: UploadsVersion, Disk: DiskVersion}
 		if s.sessions != nil {
 			v.Sessions = SessionsVersion
 		}
 		writeJSON(w, http.StatusOK, v)
 	})
+	mux.HandleFunc("GET /v1/disk", s.handleDisk)
 	mux.HandleFunc("GET /v1/tasks", s.handleList)
 	mux.HandleFunc("POST /v1/tasks", s.handlePost)
 	mux.HandleFunc("GET /v1/tasks/{id}", s.handleGet)
@@ -670,4 +672,32 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 
 func writeError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, errorBody{Error: msg})
+}
+
+// diskPath is the filesystem GET /v1/disk measures: the one the tasks'
+// directories are on, the sandbox's workspace - its nearest directory that
+// exists, before any task has made it.
+func (s *Server) diskPath() string {
+	p := s.tasksDir
+	for {
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+		parent := filepath.Dir(p)
+		if parent == p {
+			return p
+		}
+		p = parent
+	}
+}
+
+// handleDisk is the workspace's space (diskcare.Usage): what the overseer
+// decides a workspace-cleanup run, or a task refused, on.
+func (s *Server) handleDisk(w http.ResponseWriter, r *http.Request) {
+	u, err := diskcare.Of(s.diskPath())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, u)
 }

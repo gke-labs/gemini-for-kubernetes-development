@@ -1,7 +1,6 @@
 package commands
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -25,7 +24,6 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/spool"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/taskapi"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/taskoutput"
-	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/tasks"
 )
 
 func TestParseGitHubItemURL(t *testing.T) {
@@ -854,30 +852,5 @@ func TestNextModel(t *testing.T) {
 	}
 	if _, ok := nextModel(nil, ""); ok {
 		t.Error("no list: no fallback")
-	}
-}
-
-// A workspace-cleanup recipe runs as any recipe does - factory's recipe
-// runner, the task's step executor - in the checkout, its inputs as
-// INPUT_<NAME>, its step logs under its own directory.
-func TestRunCleanupRecipe(t *testing.T) {
-	repo, dir := t.TempDir(), filepath.Join(t.TempDir(), "cleanup")
-	rec, err := recipe.Parse([]byte("name: workspace-cleanup\ninputs:\n  target_bytes: {}\nstart:\n  steps:\n    - run: echo \"$INPUT_TARGET_BYTES\" > target\n"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	script, err := tasks.GetRecipeStepScript()
-	if err != nil {
-		t.Fatal(err)
-	}
-	var out bytes.Buffer
-	if err := runCleanupRecipe(context.Background(), rec, map[string]string{"target_bytes": "42"}, repo, dir, script, &out); err != nil {
-		t.Fatalf("%v:\n%s", err, out.String())
-	}
-	if got, _ := os.ReadFile(filepath.Join(repo, "target")); strings.TrimSpace(string(got)) != "42" {
-		t.Errorf("target = %q:\n%s", got, out.String())
-	}
-	if entries, _ := os.ReadDir(filepath.Join(dir, "steps")); len(entries) == 0 {
-		t.Errorf("no step logs under %s", dir)
 	}
 }

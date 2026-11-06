@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"maps"
 	"math/rand"
 	"net/url"
@@ -29,7 +28,6 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/conventions"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/config"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/constants"
-	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/diskcare"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/graph"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/k8s"
@@ -1030,7 +1028,6 @@ func startRecipeTask(ctx context.Context, kubeClient *clients.KubernetesClient, 
 	}
 	_ = factorysandbox.MarkSandboxRunStarted(ctx, kubeClient, rootFlags.Namespace, sandboxName, taskType, rootFlags.Engine, side, recordedRun(task, rec, time.Now().UTC()))
 	if err := spoolRecipe(ctx, sb, task, recipeBytes, inputs, envMap, secrets, opts.files); err != nil {
-		recordWorkspaceUsage(ctx, kubeClient, sb, task.ID)
 		_ = update(ctx, kubeClient, rootFlags.Namespace, sandboxName, taskType, "Failed")
 		return false, fmt.Errorf("running recipe: %w", err)
 	}
@@ -1046,7 +1043,6 @@ func startRecipeTask(ctx context.Context, kubeClient *clients.KubernetesClient, 
 	if rootFlags.Detached {
 		return false, nil
 	}
-	recordWorkspaceUsage(ctx, kubeClient, sb, task.ID)
 	_ = update(ctx, kubeClient, rootFlags.Namespace, sandboxName, taskType, "Completed")
 
 	meta := usagereport.Meta{Repo: it.Owner + "/" + it.Repo, TaskType: taskType, Sandbox: sandboxName}
@@ -1440,13 +1436,6 @@ func runRecipeExec(ctx context.Context, recipePath, inputsPath, taskDir string) 
 	if err != nil {
 		return err
 	}
-	// Room on the workspace before the task, and what it left after
-	// (KCC #15081: a disk that filled mid-task hung it for hours).
-	done, err := prepareWorkspace(ctx, repoDir, taskDir, stepScript, os.Stdout)
-	if err != nil {
-		return err
-	}
-	defer done()
 
 	engine := os.Getenv("ENGINE")
 	if engine == "" {
@@ -1527,81 +1516,6 @@ func runRecipeExec(ctx context.Context, recipePath, inputsPath, taskDir string) 
 		return err
 	}
 	return writeTaskOutput(taskDir, repoDir, inputs, engine)
-}
-
-// recordWorkspaceUsage copies the workspace's space as task id left it
-// (diskcare.UsageFile) to its sandbox (diskcare.Annotation): the board
-// shows it, and it is there while the sandbox is paused. Best effort: an
-// image without it, or a task that never started, records nothing.
-func recordWorkspaceUsage(ctx context.Context, kubeClient *clients.KubernetesClient, sb taskapi.Sandbox, id string) {
-	data, err := sb.ReadFile(ctx, id, diskcare.UsageFile)
-	if err != nil || len(data) == 0 {
-		return
-	}
-	var u diskcare.Usage
-	if json.Unmarshal(data, &u) != nil || u.Size == 0 {
-		return
-	}
-	if err := factorysandbox.AnnotateSandbox(ctx, kubeClient, rootFlags.Namespace, sb.Name(), map[string]string{diskcare.Annotation: string(data)}); err != nil {
-		fmt.Printf("::warning recording %s's disk use: %v\n", sb.Name(), err)
-		return
-	}
-	if u.Size > 0 && u.Free < diskcare.MinFree {
-		fmt.Printf("::warning %s's workspace is low on space: %s\n", sb.Name(), u)
-	}
-}
-
-// prepareWorkspace makes room on the sandbox's workspace before a task
-// (diskcare.Prepare): when space is low, the repository's
-// workspace-cleanup recipe runs through factory's recipe runner - the same
-// executor as the task's own steps - with its step logs under the task
-// directory's cleanup/. An error when there is too little room even after
-// that fails the task before its agent starts. done, deferred, records the
-// workspace's space in the task directory (diskcare.UsageFile) for the
-// overseer to copy to the sandbox. Outside a sandbox (no /workspaces) it
-// does nothing.
-func prepareWorkspace(ctx context.Context, repoDir, taskDir string, stepScript []byte, out io.Writer) (done func(), err error) {
-	const workspace = "/workspaces"
-	if info, err := os.Stat(workspace); err != nil || !info.IsDir() {
-		return func() {}, nil
-	}
-	cleanup := func(ctx context.Context, rec *recipe.Recipe, inputs map[string]string) error {
-		return runCleanupRecipe(ctx, rec, inputs, repoDir, filepath.Join(taskDir, "cleanup"), stepScript, out)
-	}
-	u, err := diskcare.Prepare(ctx, workspace, repoDir, cleanup, out)
-	if u.Size > 0 {
-		_ = diskcare.Record(taskDir, u)
-	}
-	if err != nil {
-		return nil, err
-	}
-	return func() {
-		if u, err := diskcare.Of(workspace); err == nil {
-			_ = diskcare.Record(taskDir, u)
-		}
-	}, nil
-}
-
-// runCleanupRecipe runs a workspace-cleanup recipe with factory's recipe
-// runner and the task's own step executor, in repoDir, its step logs under
-// dir (its TASK_DIR).
-func runCleanupRecipe(ctx context.Context, rec *recipe.Recipe, inputs map[string]string, repoDir, dir string, stepScript []byte, out io.Writer) error {
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return err
-	}
-	r := &recipe.Runner{
-		Exec: &recipe.SandboxExecutor{
-			StepScript:  stepScript,
-			TaskDir:     dir,
-			RepoDir:     repoDir,
-			Env:         os.Environ(),
-			Credentials: rec.Credentials,
-		},
-		TaskDir: dir,
-		Inputs:  inputs,
-		Log:     out,
-	}
-	return r.Run(ctx, rec)
 }
 
 // nextModel is the model after current in a run's list: the one it falls
