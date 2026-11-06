@@ -882,3 +882,20 @@ func TestCheckSandboxKeyOnSandboxes(t *testing.T) {
 		t.Error("a --sandbox-key with --sandbox")
 	}
 }
+
+// A step session starts on the run's first model and falls back down the
+// list; a run on the engine's default model has that one and no other.
+func TestModelAt(t *testing.T) {
+	models := []string{"gemini-3.7-flash", "gemini-3.6-flash"}
+	for i, want := range []string{"gemini-3.7-flash", "gemini-3.6-flash", ""} {
+		if got, ok := modelAt(models, i); got != want || ok != (want != "") {
+			t.Errorf("modelAt(%d) = %q, %v", i, got, ok)
+		}
+	}
+	if got, ok := modelAt(nil, 0); got != "" || !ok {
+		t.Errorf("modelAt(no list, 0) = %q, %v; want the default model", got, ok)
+	}
+	if _, ok := modelAt(nil, 1); ok {
+		t.Error("modelAt(no list, 1) found a model to fall back to")
+	}
+}

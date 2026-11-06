@@ -151,6 +151,13 @@ type Runner struct {
 	// one of its own (NewSession), so the next run in the session
 	// continues that one.
 	Rotated func() error
+	// StartNamed opens a step's session (Step.Session) called name: a
+	// conversation of the run's own beside its main one, on the run's
+	// engine. fallback is how far down the run's model list it starts: 0
+	// the first model, one more each time the engine could not serve a
+	// turn on the last. It says which model, ErrNoFallback when the list
+	// is spent. Nil: a recipe with step sessions cannot run.
+	StartNamed func(ctx context.Context, name string, fallback int) (Session, string, error)
 	// TaskDir is where step logs and captured replies are written.
 	TaskDir string
 	Inputs  map[string]string
@@ -201,9 +208,14 @@ func (r *Runner) Run(ctx context.Context, rec *Recipe) (err error) {
 		data.Inputs = map[string]string{}
 	}
 	var session Session
+	// named are the run's step sessions (Step.Session), by name.
+	named := map[string]*namedSession{}
 	defer func() {
 		if session != nil {
 			_ = session.Close()
+		}
+		for _, ns := range named {
+			_ = ns.s.Close()
 		}
 	}()
 	contextSent := false
@@ -257,6 +269,17 @@ func (r *Runner) Run(ctx context.Context, rec *Recipe) (err error) {
 			var prompt string
 			prompt, err = render(label, step.Ask, data, r.TaskDir)
 			if err != nil {
+				break
+			}
+			if step.Session != "" {
+				var s Session
+				s, res.Reply, err = r.askNamed(ctx, label, step.Session, prompt, named)
+				if err == nil && step.Capture != "" {
+					err = os.WriteFile(filepath.Join(r.TaskDir, step.Capture), []byte(res.Reply), 0o644)
+				}
+				if err == nil && step.Expects != "" {
+					err = r.expect(ctx, s, label, step.Expects)
+				}
 				break
 			}
 			if session == nil {
@@ -386,6 +409,71 @@ func (r *Runner) Run(ctx context.Context, rec *Recipe) (err error) {
 	}
 	fmt.Fprintf(r.Log, "::done %s\n", rec.Name)
 	return nil
+}
+
+// namedSession is a step session (Step.Session) of a run, and how far
+// down the run's model list it is.
+type namedSession struct {
+	s        Session
+	fallback int
+}
+
+// askNamed sends prompt to the step session called name, starting it on
+// its first ask. It is retried as the run's conversation is: a broken
+// exchange asked again a few times, a while apart, then the next model
+// when the engine cannot serve the turn. Unlike the run's conversation, a
+// step session is started again rather than reloaded, and the ask sent
+// again whole: what it said before is gone, which an ask that stands on
+// its own - a reviewer's - does not miss.
+func (r *Runner) askNamed(ctx context.Context, label, name, prompt string, named map[string]*namedSession) (Session, string, error) {
+	if r.StartNamed == nil {
+		return nil, "", fmt.Errorf("this run cannot open the step session %q", name)
+	}
+	ns := named[name]
+	if ns == nil {
+		s, _, err := r.StartNamed(ctx, name, 0)
+		if err != nil {
+			return nil, "", fmt.Errorf("starting the %s session: %w", name, err)
+		}
+		ns = &namedSession{s: s}
+		named[name] = ns
+	}
+	reply, err := ns.s.Ask(ctx, prompt)
+	r.addUsage(label, ns.s)
+	retries := 0
+	for err != nil {
+		failed := err
+		switch {
+		case EngineTransient(err) && retries < transientRetries:
+			retries++
+			wait := transientBackoff(retries)
+			fmt.Fprintf(r.Log, "::warning %s: the exchange with the %s session's model broke (%v); starting it again in %s (%d of %d)\n", label, name, failed, wait, retries, transientRetries)
+			if serr := r.sleep(ctx, wait); serr != nil {
+				return ns.s, reply, fmt.Errorf("%w; waiting to ask again: %w", failed, serr)
+			}
+		case EngineUnavailable(err):
+			retries = 0
+			ns.fallback++
+		default:
+			return ns.s, reply, err
+		}
+		_ = ns.s.Close()
+		s, model, serr := r.StartNamed(ctx, name, ns.fallback)
+		if serr != nil {
+			delete(named, name)
+			if errors.Is(serr, ErrNoFallback) {
+				return nil, reply, failed
+			}
+			return nil, reply, fmt.Errorf("%w; starting the %s session again: %w", failed, name, serr)
+		}
+		ns.s = s
+		if EngineUnavailable(failed) {
+			fmt.Fprintf(r.Log, "::warning %s: the engine could not serve the %s session's turn (%v); starting it again on %s\n", label, name, failed, model)
+		}
+		reply, err = ns.s.Ask(ctx, prompt)
+		r.addUsage(label, ns.s)
+	}
+	return ns.s, reply, nil
 }
 
 // addUsage records what session's last turn used beside the task's other

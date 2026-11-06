@@ -144,13 +144,25 @@ type ACPSession struct {
 // <taskDir>/session/stream.ndjson, the same format a research session
 // writes, so it can be followed while the task runs.
 func StartACPSession(ctx context.Context, engine, model, apiKey, repoDir, taskDir string, env map[string]string) (*ACPSession, error) {
+	return startACPSession(ctx, filepath.Base(taskDir), filepath.Join(taskDir, "session"), engine, model, apiKey, repoDir, env)
+}
+
+// StartNamedACPSession starts a conversation of its own beside the run's,
+// for the asks of a step session (Step.Session): in this process, so the
+// daemon - whose task sessions are one per task, named after it - is not
+// asked for a second. Its transcript goes to <taskDir>/session-<name>/.
+func StartNamedACPSession(ctx context.Context, name, engine, model, apiKey, repoDir, taskDir string, env map[string]string) (*ACPSession, error) {
+	return startACPSession(ctx, filepath.Base(taskDir)+"-"+name, filepath.Join(taskDir, "session-"+name), engine, model, apiKey, repoDir, env)
+}
+
+func startACPSession(ctx context.Context, id, dir, engine, model, apiKey, repoDir string, env map[string]string) (*ACPSession, error) {
 	s, err := acpd.StartSession(ctx, acpd.SessionConfig{
-		ID:     filepath.Base(taskDir),
+		ID:     id,
 		Engine: engine,
 		APIKey: apiKey,
 		Model:  model,
 		CWD:    repoDir,
-		Dir:    filepath.Join(taskDir, "session"),
+		Dir:    dir,
 		// Nobody is at the sandbox to answer: the same trust as --yolo.
 		Mode:        acpd.GeminiModeYolo,
 		AutoApprove: true,

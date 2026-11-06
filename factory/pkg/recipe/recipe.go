@@ -324,6 +324,15 @@ type Step struct {
 	With map[string]string `yaml:"with,omitempty"`
 	Run  string            `yaml:"run,omitempty"`
 	Ask  string            `yaml:"ask,omitempty"`
+	// Session sends an ask to a conversation of its own in this task,
+	// named so the asks that share it continue it: a reviewer beside the
+	// run's own agent. Unset, the ask goes to the run's conversation, as
+	// every ask does (the recipe's session: tag names that one, across
+	// tasks; this one lives only in its task). A named conversation starts
+	// on its first ask, on the run's engine and first model, and is not
+	// sent the recipe's context - its ask says who it is talking to. Its
+	// transcript is <taskDir>/session-<name>/.
+	Session string `yaml:"session,omitempty"`
 	// Capture writes an ask's reply to this file in the task directory,
 	// where the CLI reads it back, as runEngine's output file is today.
 	Capture string `yaml:"capture,omitempty"`
@@ -385,10 +394,13 @@ var NamedSteps = map[string]string{
 }
 
 var (
-	stepIDRE   = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
-	inputRE    = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
-	taskTypeRE = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
-	withKeyRE  = regexp.MustCompile(`^[a-z][a-z0-9_-]*$`)
+	// stepSessionRE is a step's session name: it names a directory of the
+	// task (session-<name>) and an acpd session id.
+	stepSessionRE = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
+	stepIDRE      = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
+	inputRE       = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
+	taskTypeRE    = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
+	withKeyRE     = regexp.MustCompile(`^[a-z][a-z0-9_-]*$`)
 )
 
 // Parse reads and validates a recipe.
@@ -636,6 +648,11 @@ func (r *Recipe) validate(sandbox bool) error {
 	if err := validateSteps(r.Start.Steps); err != nil {
 		return fmt.Errorf("start: %w", err)
 	}
+	for i, st := range r.Start.Steps {
+		if st.Session != "" && st.Session == r.Session {
+			return fmt.Errorf("start: step %d: session %q is the recipe's session tag, its conversation across tasks; a step's session is one of its own in the task", i+1, st.Session)
+		}
+	}
 	if err := r.validateCredentials(); err != nil {
 		return err
 	}
@@ -728,6 +745,14 @@ func validateSteps(steps []Step) error {
 			}
 			if s.Capture != "" {
 				return fmt.Errorf("step %d: an ask either captures its reply or expects a file the agent writes, not both", i+1)
+			}
+		}
+		if s.Session != "" {
+			if s.Ask == "" {
+				return fmt.Errorf("step %d: session is only for ask steps", i+1)
+			}
+			if !stepSessionRE.MatchString(s.Session) {
+				return fmt.Errorf("step %d: session %q must match %s", i+1, s.Session, stepSessionRE)
 			}
 		}
 		if s.ContinueOnError && s.Run == "" {

@@ -1567,6 +1567,21 @@ func runRecipeExec(ctx context.Context, recipePath, inputsPath, taskDir string) 
 		// which is what the next run in the session reads
 		// (continuedSession).
 		Rotated: func() error { return markSpoolRotated(taskDir) },
+		// A step session (Step.Session): a conversation of the run's own
+		// beside its main one, in this process, on the run's engine and
+		// its model list from the top, fallback models down.
+		StartNamed: func(ctx context.Context, name string, fallback int) (recipe.Session, string, error) {
+			m, ok := modelAt(models, fallback)
+			if !ok {
+				return nil, "", recipe.ErrNoFallback
+			}
+			env, err := rec.RenderAgentEnv(inputs)
+			if err != nil {
+				return nil, "", err
+			}
+			s, err := recipe.StartNamedACPSession(ctx, name, engine, m, os.Getenv("GEMINI_API_KEY"), repoDir, taskDir, env)
+			return s, m, err
+		},
 		TaskDir: taskDir,
 		Inputs:  inputs,
 		Log:     os.Stdout,
@@ -1575,6 +1590,18 @@ func runRecipeExec(ctx context.Context, recipePath, inputsPath, taskDir string) 
 		return err
 	}
 	return writeTaskOutput(taskDir, repoDir, inputs, engine)
+}
+
+// modelAt is the model i places down a run's list. A run with no list
+// (the engine's default) has its one model at 0 and none after it.
+func modelAt(models []string, i int) (string, bool) {
+	if len(models) == 0 {
+		return "", i == 0
+	}
+	if i < 0 || i >= len(models) {
+		return "", false
+	}
+	return models[i], true
 }
 
 // nextModel is the model after current in a run's list: the one it falls
