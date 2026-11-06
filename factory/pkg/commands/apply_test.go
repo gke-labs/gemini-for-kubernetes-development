@@ -175,7 +175,7 @@ func TestFillChange(t *testing.T) {
 	if err := fillChange(retitled, spool.Task{Recipe: "care-iterate"}, dir, inputs); err != nil {
 		t.Fatal(err)
 	}
-	if c, _ = retitled.ChangeSpec(); c.Title != "t1" || c.Body != "b0" {
+	if c, _ = retitled.ChangeSpec(); c.Title != "t1" || c.Body != "b0" || len(c.Feedback) != 0 {
 		t.Errorf("retitled %+v", c)
 	}
 	started, _ := taskoutput.Wrap("Change", "change:\n  report: rebased\n", taskoutput.Target{}, taskoutput.Source{})
@@ -184,6 +184,18 @@ func TestFillChange(t *testing.T) {
 	}
 	if c, _ = started.ChangeSpec(); c.Title != "t0" || c.Body != "b0" || started.Target.URL != "https://github.com/o/r/pull/9" {
 		t.Errorf("care start filled %+v, target %+v", c, started.Target)
+	}
+
+	// An address-comments task names the feedback it was handed.
+	if err := os.WriteFile(filepath.Join(dir, taskoutput.FeedbackFile), []byte(`[{"kind":"review-comment","id":4,"author":"rev","body":"x"},{"kind":"review","id":5,"nodeId":"PRR_5","body":"y"}]`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	addressed, _ := taskoutput.Wrap("Change", "change:\n  replies:\n    - inReplyTo: 4\n      body: done\n", taskoutput.Target{}, taskoutput.Source{})
+	if err := fillChange(addressed, spool.Task{Recipe: "care-comments"}, dir, inputs); err != nil {
+		t.Fatal(err)
+	}
+	if c, _ = addressed.ChangeSpec(); fmt.Sprint(c.Feedback) != "[{review-comment 4 } {review 5 PRR_5}]" {
+		t.Errorf("feedback %v", c.Feedback)
 	}
 }
 
