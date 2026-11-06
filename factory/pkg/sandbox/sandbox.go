@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -979,4 +980,47 @@ func LastActivity(item *unstructured.Unstructured) time.Time {
 		}
 	}
 	return lastActivity
+}
+
+// repoOfItemURL is the repository URL (https://github.com/<owner>/<repo>)
+// an issue's, a PR's or a repository's URL is of.
+var repoOfItemURL = regexp.MustCompile(`^(https://github\.com/[^/]+/[^/]+?)(\.git)?(/.*)?$`)
+
+// ExistingSandbox is a sandbox a recipe on sandboxes runs in: its
+// repository (from the item URL it was made for) and the account it
+// belongs to (its user label).
+type ExistingSandbox struct {
+	Name    string
+	RepoURL string
+	User    string
+}
+
+// GetExistingSandbox reads sandbox name, for a recipe on sandboxes: the
+// sandbox must exist (a recipe on it makes none), and say which repository
+// it holds.
+func GetExistingSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, name string) (ExistingSandbox, error) {
+	sb, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return ExistingSandbox{}, fmt.Errorf("sandbox %s: %w", name, err)
+	}
+	if terminating(sb) {
+		return ExistingSandbox{}, fmt.Errorf("sandbox %s is being deleted", name)
+	}
+	m := repoOfItemURL.FindStringSubmatch(sb.GetAnnotations()["htmlURL"])
+	if m == nil {
+		return ExistingSandbox{}, fmt.Errorf("sandbox %s does not say which repository it holds (no htmlURL annotation)", name)
+	}
+	return ExistingSandbox{Name: name, RepoURL: m[1], User: sb.GetLabels()["factory.gemini.google.com/user"]}, nil
+}
+
+// ReuseExistingSandbox readies sandbox name for a recipe on sandboxes, as
+// an Ensure* function readies the sandbox it hands back: woken if the idle
+// suspender scaled it to zero, moved to image. It makes nothing.
+func ReuseExistingSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, name, user, image string) error {
+	sb, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("sandbox %s: %w", name, err)
+	}
+	prepareReusedSandbox(ctx, kubeClient, namespace, sb, user, image)
+	return nil
 }
