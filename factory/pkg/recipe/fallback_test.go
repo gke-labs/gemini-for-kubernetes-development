@@ -143,7 +143,11 @@ func TestEngineTransient(t *testing.T) {
 		"prompt failed: RPC error [500]: exception TypeError: fetch failed sending request": true,
 		"prompt failed: RPC error [500]: Incomplete JSON segment at the end":                true,
 		"read ECONNRESET": true,
-		busy:              false,
+		// The engine's connection dropped (KCC #15081), or the turn's end
+		// was lost from the transcript.
+		"agent: prompt failed: connection to agent closed: bufio.Scanner: token too long": true,
+		errTurnLost.Error(): true,
+		busy:                false,
 		"prompt failed: RPC error [429]: RESOURCE_EXHAUSTED": false,
 		"prompt failed: the agent stopped":                   false,
 	} {
