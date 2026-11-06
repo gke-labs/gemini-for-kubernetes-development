@@ -25,15 +25,21 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/prs"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/retros"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/sandbox"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/sandboxrules"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/scan"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/warmworkspace"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/whyclosed"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/config"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/diskcare"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/graph"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/k8s"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/recipe"
 	factorysandbox "github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/sandbox"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/taskapi"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/watch/rules"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
 // newDispatcher constructs the task dispatcher used by the watcher, wiring it to
@@ -793,6 +799,12 @@ func (c *watcherTaskCoordinator) NotifyTaskStarted(ctx context.Context, task *ap
 func (c *watcherTaskCoordinator) NotifyTaskFinished(ctx context.Context, task *api.QueueTask, taskErr error) {
 	w := c.w
 	c.endWrites(ctx, task, taskErr)
+	// The sandbox the task ran in is checked against the rules on
+	// sandboxes now, while it is awake and idle: its disk may need
+	// cleaning after the run.
+	if w.sandboxRules != nil && w.sandboxes != nil {
+		w.sandboxRules.Wake(w.sandboxes.ResolveTaskName(ctx, task))
+	}
 	if task.Acknowledge != rules.AcknowledgeFeedback || w.cfg == nil {
 		return
 	}
@@ -810,5 +822,74 @@ func (c *watcherTaskCoordinator) NotifyTaskFinished(ctx context.Context, task *a
 		// The scanner times an address-comments task from the oldest
 		// feedback it picked up, so nothing older can be this task's.
 		Since: task.TriggerEventTime,
+	})
+}
+
+// newSandboxRulesController is the rules on sandboxes' controller: it
+// checks the namespace's awake sandboxes - their daemon's disk measurement,
+// whether a task runs - and queues what a rule on sandboxes decides.
+func (w *Watcher) newSandboxRulesController() *sandboxrules.Controller {
+	if w.kubeClient == nil || w.sandboxes == nil {
+		return nil
+	}
+	toSandbox := func(ctx context.Context, sb *unstructured.Unstructured) (sandboxrules.Sandbox, bool) {
+		if replicas, found, _ := unstructured.NestedInt64(sb.Object, "spec", "replicas"); found && replicas == 0 {
+			return sandboxrules.Sandbox{}, false // paused: no daemon to ask
+		}
+		if sb.GetDeletionTimestamp() != nil || sb.GetLabels()["sandbox.gemini.google.com/type"] == "warm" ||
+			factorysandbox.IsCurrentSandbox(ctx, w.kubeClient, sb, w.Namespace) {
+			return sandboxrules.Sandbox{}, false
+		}
+		es, err := factorysandbox.GetExistingSandbox(ctx, w.kubeClient, w.Namespace, sb.GetName())
+		if err != nil {
+			return sandboxrules.Sandbox{}, false // no repository: not a task's sandbox
+		}
+		return sandboxrules.Sandbox{Name: es.Name, RepoURL: es.RepoURL, User: es.User}, true
+	}
+	return sandboxrules.New(sandboxrules.DefaultInterval, sandboxrules.Deps{
+		Awake: func(ctx context.Context) ([]sandboxrules.Sandbox, error) {
+			list, err := w.sandboxes.List(ctx)
+			if err != nil {
+				return nil, err
+			}
+			var out []sandboxrules.Sandbox
+			for i := range list {
+				if sb, ok := toSandbox(ctx, &list[i]); ok {
+					out = append(out, sb)
+				}
+			}
+			return out, nil
+		},
+		Get: func(ctx context.Context, name string) (sandboxrules.Sandbox, bool) {
+			obj, err := w.kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(w.Namespace).Get(ctx, name, metav1.GetOptions{})
+			if err != nil {
+				return sandboxrules.Sandbox{}, false
+			}
+			return toSandbox(ctx, obj)
+		},
+		Busy: func(ctx context.Context, name string) bool {
+			if w.sandboxLocks != nil && w.sandboxLocks.IsBusy(name) {
+				return true
+			}
+			running, err := w.sandboxes.IsTaskRunning(ctx, name)
+			return err != nil || running
+		},
+		Disk: func(ctx context.Context, name string) (diskcare.Usage, error) {
+			sb, err := taskapi.ConnectServer(ctx, w.Namespace, name)
+			if err != nil {
+				return diskcare.Usage{}, err
+			}
+			defer sb.Close()
+			return sb.Disk(ctx)
+		},
+		Annotate: func(ctx context.Context, name string, annotations map[string]string) error {
+			return factorysandbox.AnnotateSandbox(ctx, w.kubeClient, w.Namespace, name, annotations)
+		},
+		Control: func() *rules.Control { return w.rulesControl },
+		Env: func() rules.Env {
+			return rules.Env{Trigger: w.triggerLabel, Prefixes: conventions.Prefixes(w.triggerLabel), Watcher: w.githubLogin, Now: time.Now()}
+		},
+		Queue:  w.queueMgr,
+		Paused: w.draining,
 	})
 }

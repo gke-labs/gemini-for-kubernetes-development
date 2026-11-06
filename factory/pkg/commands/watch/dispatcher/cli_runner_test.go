@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -338,5 +339,26 @@ func TestEveryTaskNamesItsRun(t *testing.T) {
 	// Neither an agent definition nor a recipe: nothing to run.
 	if args := r.BuildArgs(&api.QueueTask{Type: api.TypePRRule, Number: 1}, "coder-bot"); args != nil {
 		t.Errorf("a task that runs nothing builds %v", args)
+	}
+}
+
+// A sandbox rule's recipe runs in its sandbox: --sandbox, not --url, and a
+// run name of the sandbox's rather than of an item and commit.
+func TestCLIRunner_BuildArgsSandboxRule(t *testing.T) {
+	r := testCLIRunner(t.TempDir())
+	at := time.Unix(1700000000, 0)
+	task := &api.QueueTask{Type: api.TypeSandboxRule, Sandbox: "fix-repo-1", URL: "https://github.com/o/repo",
+		Rule: "workspace-cleanup", Recipe: "workspace-cleanup", Inputs: map[string]string{"target_bytes": "21474836480"}, EnqueuedAt: at}
+	args := strings.Join(r.BuildArgs(task, "ada-coder-bot"), " ")
+	for _, want := range []string{
+		"recipe workspace-cleanup --sandbox fix-repo-1 --run-name workspace-cleanup-fix-repo-1-1700000000",
+		"--input target_bytes=21474836480", "--user ada-coder-bot",
+	} {
+		if !strings.Contains(args, want) {
+			t.Errorf("args lack %q:\n%s", want, args)
+		}
+	}
+	if strings.Contains(args, "--url") {
+		t.Errorf("a sandbox rule's run got a --url:\n%s", args)
 	}
 }

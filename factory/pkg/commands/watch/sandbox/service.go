@@ -101,6 +101,9 @@ func (s *Service) Namespace() string {
 // create), named by its definition and session rather than its type and
 // number: agent-<repo>-<agent>, or a workflow's wf-issue-<n>.
 func (s *Service) ResolveTaskName(ctx context.Context, task *api.QueueTask) string {
+	if task.Type == api.TypeSandboxRule {
+		return task.Sandbox // a sandbox's own upkeep runs in it
+	}
 	if task.Type != api.TypeAgentChore {
 		return s.ResolveName(ctx, task.Type, task.Recipe, task.Number)
 	}

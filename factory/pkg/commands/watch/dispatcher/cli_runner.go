@@ -77,11 +77,17 @@ func (r *CLIRunner) BuildArgs(t *api.QueueTask, selectedUser string) []string {
 		}
 		return r.withCommonArgs(args, selectedUser)
 	case t.Recipe != "":
-		// Its result applied by the CLI as the user picked (--user).
-		args = []string{"recipe", t.Recipe, "--url", t.URL, "--run-name", api.RunNameOf(t)}
+		// Its result applied by the CLI as the user picked (--user). A
+		// sandbox rule's recipe runs in its sandbox (--sandbox), not on a
+		// URL.
+		target := []string{"--url", t.URL}
+		if t.Type == api.TypeSandboxRule {
+			target = []string{"--sandbox", t.Sandbox}
+		}
+		args = append(append([]string{"recipe", t.Recipe}, target...), "--run-name", api.RunNameOf(t))
 		if _, _, err := recipe.Builtin(t.Recipe); err != nil {
 			// A repository's recipe has no command of its name.
-			args = []string{"recipe", "run", "--recipe", t.Recipe, "--url", t.URL, "--run-name", api.RunNameOf(t)}
+			args = append(append([]string{"recipe", "run", "--recipe", t.Recipe}, target...), "--run-name", api.RunNameOf(t))
 		}
 		args = append(args, api.RecipeArgs(t)...)
 		for _, inst := range t.Instructions {

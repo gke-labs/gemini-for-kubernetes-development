@@ -259,7 +259,7 @@ func printWatchRules(out io.Writer, set rules.Set, output string) error {
 	return w.Flush()
 }
 
-var ruleOnOrder = map[string]int{rules.OnIssue: 0, rules.OnPR: 1}
+var ruleOnOrder = map[string]int{rules.OnIssue: 0, rules.OnPR: 1, rules.OnSandbox: 2}
 
 // orderWatchRules orders the rules by what they look at; within that, in
 // the order the engine walks them.

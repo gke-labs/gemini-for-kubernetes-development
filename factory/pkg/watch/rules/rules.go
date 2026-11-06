@@ -24,6 +24,8 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/recipe"
+
+	"k8s.io/apimachinery/pkg/api/resource"
 )
 
 // What a rule looks at.
@@ -35,6 +37,11 @@ const (
 	// rules.
 	OnIssue = "issue"
 	OnPR    = "pr"
+	// OnSandbox is a sandbox's rules: facts about the sandbox itself (its
+	// workspace disk, whether a task runs in it, whether it is awake), its
+	// recipe one on sandboxes (factory recipe <name> --sandbox) - its
+	// upkeep, a workspace's cleanup.
+	OnSandbox = "sandbox"
 )
 
 // Floors a rule's policy cannot go past: a repository's rule that drops its
@@ -202,6 +209,34 @@ type When struct {
 	Approved         *bool    `yaml:"approved,omitempty" json:"approved,omitempty"`
 	Draft            *bool    `yaml:"draft,omitempty" json:"draft,omitempty"`
 	InactiveFor      Duration `yaml:"inactive-for,omitempty" json:"inactive-for,omitzero"`
+
+	// Sandboxes'.
+	// Disk is the sandbox's workspace disk: below a free space.
+	Disk *Disk `yaml:"disk,omitempty" json:"disk,omitempty"`
+	// Task is whether a task of the sandbox is queued or running: none |
+	// running.
+	Task string `yaml:"task,omitempty" json:"task,omitempty"`
+	// Awake is whether the sandbox is scaled up (not paused by the idle
+	// suspender).
+	Awake *bool `yaml:"awake,omitempty" json:"awake,omitempty"`
+}
+
+// Disk is a sandbox's workspace disk predicate: FreeBelow is a quantity
+// (10Gi), and the predicate holds when the workspace has less free.
+type Disk struct {
+	FreeBelow string `yaml:"free-below" json:"free-below"`
+}
+
+// freeBelow is FreeBelow in bytes.
+func (d Disk) freeBelow() (uint64, error) {
+	q, err := resource.ParseQuantity(d.FreeBelow)
+	if err != nil {
+		return 0, fmt.Errorf("free-below %q: %w", d.FreeBelow, err)
+	}
+	if q.Sign() <= 0 {
+		return 0, fmt.Errorf("free-below %q is not a positive quantity", d.FreeBelow)
+	}
+	return uint64(q.Value()), nil
 }
 
 // Run is the action: a recipe run, or GitHub writes.
@@ -405,9 +440,10 @@ func Parse(data []byte) (*Rule, error) {
 
 // predicates are the When fields each kind of rule may set, by YAML name.
 var predicates = map[string][]string{
-	"*":     {"any-of", "labels", "assignee", "author", "last-run"},
-	OnIssue: {"linked-pr", "connected-pr", "workflow", "opened-by", "fanout", "graph", "plan", "questions"},
-	OnPR:    {"checks", "mergeable", "feedback", "closes", "reviewed-at-head", "changes-requested", "approved", "draft", "inactive-for"},
+	"*":       {"any-of", "labels", "assignee", "author", "last-run"},
+	OnIssue:   {"linked-pr", "connected-pr", "workflow", "opened-by", "fanout", "graph", "plan", "questions"},
+	OnPR:      {"checks", "mergeable", "feedback", "closes", "reviewed-at-head", "changes-requested", "approved", "draft", "inactive-for"},
+	OnSandbox: {"disk", "task", "awake"},
 }
 
 // set lists the When fields that are set, by YAML name.
@@ -440,6 +476,9 @@ func (w When) set() []string {
 	add("approved", w.Approved != nil)
 	add("draft", w.Draft != nil)
 	add("inactive-for", w.InactiveFor.IsSet())
+	add("disk", w.Disk != nil)
+	add("task", w.Task != "")
+	add("awake", w.Awake != nil)
 	return out
 }
 
@@ -461,6 +500,7 @@ var enums = map[string][]string{
 	"revisit":      {"every-scan"},
 	"acknowledge":  {AcknowledgeFeedback},
 	"since":        {"head", "human", "pause"},
+	"task":         {"none", "running"},
 }
 
 func checkEnum(field, value string) error {
@@ -492,7 +532,7 @@ func (w When) validate(on string, nested bool) error {
 	for field, value := range map[string]string{
 		"assignee": w.Assignee, "linked-pr": w.LinkedPR, "connected-pr": w.ConnectedPR,
 		"workflow": w.Workflow, "opened-by": w.OpenedBy, "plan": w.Plan, "questions": w.Questions,
-		"checks": w.Checks, "feedback": w.Feedback, "last-run": w.LastRun,
+		"checks": w.Checks, "feedback": w.Feedback, "last-run": w.LastRun, "task": w.Task,
 	} {
 		if err := checkEnum(field, value); err != nil {
 			return fmt.Errorf(".%v", err)
@@ -508,6 +548,11 @@ func (w When) validate(on string, nested bool) error {
 	}
 	if c := w.Closes; c != nil && c.Labels == nil {
 		return errors.New(".closes needs labels")
+	}
+	if d := w.Disk; d != nil {
+		if _, err := d.freeBelow(); err != nil {
+			return fmt.Errorf(".disk.%v", err)
+		}
 	}
 	if len(w.AnyOf) > 0 {
 		if nested {

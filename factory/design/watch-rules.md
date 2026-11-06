@@ -81,6 +81,17 @@ rules as data, so the loop is one engine and a repository can say what
 its overseer does without a Go change, as `.agents/recipes` did for
 recipes (design/repo-recipes.md).
 
+### Rules on sandboxes
+
+A rule may look at a sandbox itself rather than an issue or a PR: `on: sandbox`. Its predicates are the sandbox's facts:
+- `disk: {free-below: <quantity>}`: the workspace has less free space, as the sandbox's daemon measures it (`GET /v1/disk`). A disk not measured holds no disk predicate.
+- `task: none | running`: a task of the sandbox queued or running.
+- `awake: true | false`: scaled up, not paused.
+
+Its recipe is one on sandboxes (`on: [sandbox]`), run in that sandbox (`factory recipe <name> --sandbox <sandbox>`) as a `sandbox-rule` task, in `task-sandbox-<sandbox>-rule-<rule>.yaml`. Cooldowns come from that file's history, as an item's do. None of the issue and PR gates (stop label, closed, minimum number) apply.
+
+The sandbox rules controller (`pkg/commands/watch/sandboxrules`) checks every awake sandbox every 10 minutes, and the sandbox a task ran in as soon as the task ends. It records the measured disk on the sandbox (`factory.gemini.google.com/disk`) for the board. The built-in `workspace-cleanup` rule runs the `workspace-cleanup` recipe, asked for 20 GiB free, on an awake, idle sandbox with less than 10 GiB free, at most once an hour. The built-in recipe only reports; a repository's own `.agents/recipes/workspace-cleanup.yaml` says what to delete, and its `.agents/watch/workspace-cleanup.yaml` changes the threshold or turns the rule off.
+
 ## Before the move
 
 ### The loops
