@@ -24,8 +24,8 @@
 # adds the step to the PR, marking it ready when the step is the group's
 # last. A step that commits nothing pushes nothing.
 #
-# An issue that wants a review (*/review) gets one review round before
-# the push: a fresh reviewer (a step session, no way to GitHub) reviews
+# An issue that wants a review (*/review), or a run given --input
+# review=true, gets one review round before the push: a fresh reviewer (a step session, no way to GitHub) reviews
 # this step's commits alone with the issue's own review instructions, and
 # the agent addresses what it found. The PR's review rule still reviews
 # the PR.
@@ -58,14 +58,14 @@ inputs:
     default: ""
   review:
     description: >-
-      Set by factory, never by a caller: whether the issue wants a review
-      (*/review), true or false; the fix then reviews its own change once
-      before it is pushed
-    default: "false"
+      Whether the fix reviews its own change once before it is pushed:
+      true or false; unset, it does when the issue wants a review
+      (*/review)
+    default: ""
   review_instructions:
     description: >-
-      Set by factory, never by a caller: the issue's own review
-      instructions (its ## Review Instructions section)
+      The review's instructions; unset, factory gives the issue's own (its
+      ## Review Instructions section)
     default: ""
 
 context: |
@@ -204,7 +204,8 @@ start:
         rationale behind your changes, and the alternatives you
         considered. This summary is for the human reviewer.
 
-    # One review round, for an issue that wants a review (*/review): a
+    # One review round, for an issue that wants a review (*/review on it,
+    # unless the review input says otherwise): a
     # reviewer that did not write the change - a step session of its own,
     # with no way to GitHub - reviews this step's commits alone, from the
     # commit the step started on (base: the default branch, or a grouped
@@ -212,7 +213,7 @@ start:
     # agent addresses what it found, and only then is anything pushed. No
     # commit, no review.
     - id: unchanged
-      if: '{{ eq .Inputs.review "true" }}'
+      if: '{{ or (eq .Inputs.review "true") (and (eq .Inputs.review "") (hasLabel (index .Inputs "issue_labels") "*/review")) }}'
       run: |
         base="$(tr -d '[:space:]' < "$TASK_DIR/base")"
         printf '%s' "${base}" > "$TASK_DIR/review-base"

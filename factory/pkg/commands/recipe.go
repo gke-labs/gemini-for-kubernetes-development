@@ -310,6 +310,7 @@ func issueInputs(it githubItem, issue *githubv39.Issue) map[string]string {
 		"issue_number": strconv.Itoa(it.Number),
 		"issue_title":  issue.GetTitle(),
 		"issue_body":   issue.GetBody(),
+		"issue_labels": strings.Join(labelNames(issue.Labels), ","),
 	}
 }
 
@@ -582,7 +583,7 @@ func runRecipeIn(ctx context.Context, opts recipeRunOpts, recipeArg, itemURL, ru
 		}
 	}
 	if issue != nil {
-		issueReviewInputs(rec, issue, conventions.Prefixes(resolveTriggerLabel(cfg)), inputs)
+		issueReviewInstructions(rec, issue, inputs)
 	}
 	if err := rec.CheckRender(inputs); err != nil {
 		return fmt.Errorf("recipe %s on %s: %w", rec.Name, htmlURL, err)
@@ -801,24 +802,13 @@ func groupInputs(ctx context.Context, gh *githubv39.Client, it githubItem, group
 	return nil
 }
 
-// issueReviewInputs sets, for a recipe that takes them (fix), whether the
-// issue wants a review - */review in any of prefixes, the trigger's - and
-// its own review instructions (its ## Review Instructions section), past
-// --input: they are the issue's to say. The fix then reviews its own
-// change once, with this issue's instructions alone, before it pushes.
-func issueReviewInputs(rec *recipe.Recipe, issue *githubv39.Issue, prefixes []string, inputs map[string]string) {
-	if _, ok := rec.Inputs["review"]; ok {
-		wants := false
-		for _, l := range issue.Labels {
-			for _, p := range prefixes {
-				if strings.EqualFold(l.GetName(), p+"/review") {
-					wants = true
-				}
-			}
-		}
-		inputs["review"] = strconv.FormatBool(wants)
-	}
-	if _, ok := rec.Inputs["review_instructions"]; ok {
+// issueReviewInstructions gives a recipe that takes review instructions
+// (fix) the issue's own - its ## Review Instructions section - unless the
+// caller gave some: a fact of the issue, as its body is. Whether to review
+// is the recipe's to decide (fix: the review input, else */review in the
+// issue's labels).
+func issueReviewInstructions(rec *recipe.Recipe, issue *githubv39.Issue, inputs map[string]string) {
+	if _, ok := rec.Inputs["review_instructions"]; ok && strings.TrimSpace(inputs["review_instructions"]) == "" {
 		inputs["review_instructions"] = strings.Join(common.ExtractReviewInstructions(issue.GetBody()), "\n")
 	}
 }

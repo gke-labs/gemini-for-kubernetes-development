@@ -900,31 +900,27 @@ func TestModelAt(t *testing.T) {
 	}
 }
 
-// A fix is told whether its issue wants a review (*/review in the
-// trigger's prefixes) and the issue's own review instructions, whatever
-// --input said; a recipe that takes neither is told nothing.
-func TestIssueReviewInputs(t *testing.T) {
+// A fix is given the issue's own review instructions, unless its caller
+// gave some; a recipe that takes none is given none.
+func TestIssueReviewInstructions(t *testing.T) {
 	_, fix, err := recipe.Builtin("fix")
 	if err != nil {
 		t.Fatal(err)
 	}
-	issue := &githubv39.Issue{
-		Labels: []*githubv39.Label{{Name: githubv39.String("kcc/review")}, {Name: githubv39.String("area/review-tools")}},
-		Body:   githubv39.String("Do it.\n\n## Review Instructions\n\nUse .gemini/skills/x/SKILL.md to conduct the review.\n\n## Other\n\nno"),
-	}
-	inputs := map[string]string{"review": "false", "review_instructions": "caller's"}
-	issueReviewInputs(fix, issue, []string{"overseer", "kcc"}, inputs)
-	if inputs["review"] != "true" || inputs["review_instructions"] != "Use .gemini/skills/x/SKILL.md to conduct the review." {
+	issue := &githubv39.Issue{Body: githubv39.String("Do it.\n\n## Review Instructions\n\nUse .gemini/skills/x/SKILL.md to conduct the review.\n\n## Other\n\nno")}
+	inputs := map[string]string{"review_instructions": ""}
+	issueReviewInstructions(fix, issue, inputs)
+	if inputs["review_instructions"] != "Use .gemini/skills/x/SKILL.md to conduct the review." {
 		t.Errorf("inputs = %v", inputs)
 	}
-	issue.Labels = []*githubv39.Label{{Name: githubv39.String("other/review")}}
-	issueReviewInputs(fix, issue, []string{"overseer", "kcc"}, inputs)
-	if inputs["review"] != "false" {
-		t.Errorf("a review label of no trigger prefix asked for a review: %v", inputs)
+	inputs = map[string]string{"review_instructions": "the caller's"}
+	issueReviewInstructions(fix, issue, inputs)
+	if inputs["review_instructions"] != "the caller's" {
+		t.Errorf("the caller's instructions were replaced: %v", inputs)
 	}
 	_, triage, _ := recipe.Builtin("triage")
 	none := map[string]string{}
-	issueReviewInputs(triage, issue, []string{"overseer"}, none)
+	issueReviewInstructions(triage, issue, none)
 	if len(none) != 0 {
 		t.Errorf("triage was given %v", none)
 	}

@@ -653,7 +653,26 @@ func templateFuncs(taskDir string) template.FuncMap {
 			return filepath.Join(taskDir, name), nil
 		},
 		"resourcePrefix": ResourcePrefix,
+		// hasLabel is whether a comma-separated list of labels (an issue's,
+		// issue_labels) has name, case-insensitively; "*/suffix" is suffix
+		// under any prefix (overseer/review, kcc/review).
+		"hasLabel": hasLabel,
 	}
+}
+
+func hasLabel(labels, name string) bool {
+	suffix, anyPrefix := strings.CutPrefix(name, "*/")
+	for _, l := range strings.Split(labels, ",") {
+		l = strings.TrimSpace(l)
+		if anyPrefix {
+			if _, s, ok := strings.Cut(l, "/"); ok && strings.EqualFold(s, suffix) {
+				return true
+			}
+		} else if l != "" && strings.EqualFold(l, name) {
+			return true
+		}
+	}
+	return false
 }
 
 // ResourcePrefix is the project-unique identity of everything a run

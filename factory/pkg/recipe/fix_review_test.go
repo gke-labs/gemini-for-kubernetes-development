@@ -64,11 +64,12 @@ func git(t *testing.T, dir string, args ...string) string {
 	return strings.TrimSpace(string(out))
 }
 
-// A fix of an issue that wants a review reviews its own change once
-// before it pushes: a fresh reviewer (a step session) reviews the step's
-// commits alone, from the commit it started on, with the issue's review
-// instructions, and the agent addresses what it found. An issue that
-// wants none, or a fix that committed nothing, gets no review.
+// A fix of an issue that wants a review (*/review), or told to review,
+// reviews its own change once before it pushes: a fresh reviewer (a step
+// session) reviews the step's commits alone, from the commit it started
+// on, with the issue's review instructions, and the agent addresses what
+// it found. An issue that wants none, a fix told not to, or one that
+// committed nothing, gets no review.
 func TestFixReviewRound(t *testing.T) {
 	for _, tool := range []string{"bash", "git"} {
 		if _, err := exec.LookPath(tool); err != nil {
@@ -80,16 +81,18 @@ func TestFixReviewRound(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, tc := range []struct {
-		name            string
-		review, verdict string
-		commit          bool
-		reviewers       int
-		addressed       bool
+		name                    string
+		review, labels, verdict string
+		commit                  bool
+		reviewers               int
+		addressed               bool
 	}{
-		{"no review wanted", "false", "changes", true, 0, false},
-		{"nothing committed", "true", "changes", false, 0, false},
-		{"reviewed clean", "true", "clean", true, 1, false},
-		{"reviewed, findings addressed", "true", "changes", true, 1, true},
+		{"no review wanted", "", "overseer,bug", "changes", true, 0, false},
+		{"nothing committed", "", "overseer,overseer/review", "changes", false, 0, false},
+		{"*/review: reviewed clean", "", "overseer,kcc/review", "clean", true, 1, false},
+		{"*/review: findings addressed", "", "overseer,overseer/review", "changes", true, 1, true},
+		{"told to review, no label", "true", "overseer", "changes", true, 1, true},
+		{"told not to, though */review", "false", "overseer,overseer/review", "changes", true, 0, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			repo, taskDir := t.TempDir(), t.TempDir()
@@ -127,7 +130,7 @@ func TestFixReviewRound(t *testing.T) {
 				TaskDir: taskDir,
 				Inputs: map[string]string{
 					"issue_url": "https://github.com/o/r/issues/7", "issue_number": "7", "issue_title": "T", "issue_body": "B",
-					"disclose": "false", "review": tc.review, "review_instructions": "Use the skill X.",
+					"disclose": "false", "review": tc.review, "issue_labels": tc.labels, "review_instructions": "Use the skill X.",
 					"plan": "", "instructions": "", "group_pr": "", "labels": "", "draft": "true",
 				},
 				Log: io.Discard,
@@ -154,5 +157,23 @@ func TestFixReviewRound(t *testing.T) {
 				t.Errorf("findings addressed: %t, want %t", addressed, tc.addressed)
 			}
 		})
+	}
+}
+
+func TestHasLabel(t *testing.T) {
+	for _, tc := range []struct {
+		labels, name string
+		want         bool
+	}{
+		{"overseer, Overseer/Review", "*/review", true},
+		{"kcc/review", "*/review", true},
+		{"area/review-tools,review", "*/review", false},
+		{"overseer,bug", "BUG", true},
+		{"", "*/review", false},
+		{"", "", false},
+	} {
+		if got := hasLabel(tc.labels, tc.name); got != tc.want {
+			t.Errorf("hasLabel(%q, %q) = %t", tc.labels, tc.name, got)
+		}
 	}
 }
