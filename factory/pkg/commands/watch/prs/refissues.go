@@ -2,6 +2,8 @@ package prs
 
 import (
 	"context"
+	"maps"
+	"slices"
 
 	githubv39 "github.com/google/go-github/v39/github"
 	"k8s.io/klog/v2"
@@ -59,7 +61,8 @@ func (r *refIssues) all(ctx context.Context) []*githubv39.Issue {
 	if r.gh == nil || r.pr == nil {
 		return r.resolved
 	}
-	for num := range github.GetClosingIssues(r.pr) {
+	// By number, so every evaluation reads them in one order.
+	for _, num := range slices.Sorted(maps.Keys(github.GetClosingIssues(r.pr))) {
 		issue, err := r.gh.GetIssue(ctx, num)
 		if err != nil {
 			klog.Warningf("Failed to fetch referenced parent issue #%d for PR #%d: %v", num, r.pr.GetNumber(), err)

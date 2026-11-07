@@ -1,9 +1,13 @@
 package prs
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"os"
+	"regexp"
+	"slices"
+	"strconv"
 	"time"
 
 	githubv39 "github.com/google/go-github/v39/github"
@@ -208,19 +212,50 @@ func commentsTrigger(_ context.Context, s *Scanner, pc *prContext, filename stri
 
 // reviewInstructions are the review instructions the pull request and the
 // issues it closes carry ({{review-instructions}}), so a repository can
-// steer a review from wherever the requirement was written down.
+// steer a review from wherever the requirement was written down: the
+// pull request's own, else the first closing issue's that has some, in
+// instructionOrder.
 func reviewInstructions(ctx context.Context, pc *prContext) []string {
 	var bodies []string
 	if pc.pr.GetBody() != "" {
 		bodies = append(bodies, pc.pr.GetBody())
 	}
 	// Shared with the evaluation, which fetched them for the label sync.
-	for _, refIssue := range pc.refIssues.all(ctx) {
+	for _, refIssue := range instructionOrder(pc.pr.GetBody(), pc.refIssues.all(ctx)) {
 		if refIssue.GetBody() != "" {
 			bodies = append(bodies, refIssue.GetBody())
 		}
 	}
 	return common.ExtractReviewInstructions(bodies...)
+}
+
+// groupStepRE is a grouped graph's step's section marker in its group's PR
+// body (taskoutput's groupStepMarker): each step after the first appends
+// its own, in order.
+var groupStepRE = regexp.MustCompile(`<!-- factory:group-step issue=(\d+) -->`)
+
+// instructionOrder orders the issues a PR closes for its review
+// instructions: a grouped graph's PR is the latest step's to review, so the
+// issue of the last step section in its body comes first; then the issues
+// in the order the body first names them (the first step's Fixes line
+// before the next's); then the rest, by number.
+func instructionOrder(body string, issues []*githubv39.Issue) []*githubv39.Issue {
+	latest := 0
+	if m := groupStepRE.FindAllStringSubmatch(body, -1); len(m) > 0 {
+		latest, _ = strconv.Atoi(m[len(m)-1][1])
+	}
+	rank := func(n int) int {
+		if n == latest {
+			return -1
+		}
+		if i := regexp.MustCompile(fmt.Sprintf(`#%d\b`, n)).FindStringIndex(body); i != nil {
+			return i[0]
+		}
+		return len(body) + n
+	}
+	out := slices.Clone(issues)
+	slices.SortStableFunc(out, func(a, b *githubv39.Issue) int { return cmp.Compare(rank(a.GetNumber()), rank(b.GetNumber())) })
+	return out
 }
 
 // reviewTrigger is an automated review's: timed from when the checks went
