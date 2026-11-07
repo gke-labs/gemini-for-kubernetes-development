@@ -3,6 +3,7 @@ import { Terminal as XTerm } from 'xterm';
 import { FitAddon } from 'xterm-addon-fit';
 import 'xterm/css/xterm.css';
 import Chip from './Chip';
+import DiskBar from './DiskBar';
 
 // apiBase is where the card's routes are: /api, the member's (the
 // board's), by default; /api/overseers/<name> for an overseer's
@@ -191,6 +192,7 @@ export default function SandboxCard({ name, namespace, onClose, apiBase = '/api'
             </span>
           </span>
         </div>
+        {card && <DiskBar disk={card.disk} />}
         {err && <div style={{ color: 'var(--danger, #d33)', fontSize: 'small', marginTop: '8px' }}>{err}</div>}
         {!card && !err && <div style={{ color: 'var(--text-secondary)', fontStyle: 'italic', marginTop: '12px' }}>Loading…</div>}
         {card && card.paused && (

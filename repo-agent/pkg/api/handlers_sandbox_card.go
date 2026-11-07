@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -43,11 +44,73 @@ type sandboxCardView struct {
 	TaskState string        `json:"taskState,omitempty"`
 	TaskType  string        `json:"taskType,omitempty"`
 	Tasks     []sandboxTask `json:"tasks"`
+	// Disk is the sandbox's workspace disk: measured now when the sandbox
+	// is up (Live), else as the overseer last recorded it on the sandbox
+	// (diskAnnotation, with At). Nil when neither is known.
+	Disk *sandboxDisk `json:"disk,omitempty"`
+}
+
+// sandboxDisk is a workspace disk's space, in bytes.
+type sandboxDisk struct {
+	Used uint64 `json:"used"`
+	Size uint64 `json:"size"`
+	Free uint64 `json:"free"`
+	// At is when it was measured; Live, that it was just now.
+	At   string `json:"at,omitempty"`
+	Live bool   `json:"live,omitempty"`
+}
+
+// diskAnnotation is where the overseer records a sandbox's workspace disk
+// as it last measured it (factory's sandbox rules: diskcare.Usage, JSON).
+const diskAnnotation = "factory.gemini.google.com/disk"
+
+// recordedDisk is the disk the overseer recorded on a sandbox, nil when
+// none or unreadable.
+func recordedDisk(annotations map[string]string) *sandboxDisk {
+	raw := annotations[diskAnnotation]
+	if raw == "" {
+		return nil
+	}
+	var d sandboxDisk
+	if err := json.Unmarshal([]byte(raw), &d); err != nil || d.Size == 0 {
+		return nil
+	}
+	d.Live = false
+	return &d
+}
+
+// diskLinePrefix starts the card script's line with the workspace disk:
+// #disk|<used KiB>|<size KiB>|<available KiB> (df -Pk).
+const diskLinePrefix = "#disk|"
+
+// parseDiskLine is the card script's disk line, nil when line is not one.
+func parseDiskLine(line string) *sandboxDisk {
+	rest, ok := strings.CutPrefix(strings.TrimSpace(line), diskLinePrefix)
+	if !ok {
+		return nil
+	}
+	parts := strings.Split(rest, "|")
+	if len(parts) != 3 {
+		return nil
+	}
+	var kib [3]uint64
+	for i, p := range parts {
+		n, err := strconv.ParseUint(strings.TrimSpace(p), 10, 64)
+		if err != nil {
+			return nil
+		}
+		kib[i] = n * 1024
+	}
+	if kib[1] == 0 {
+		return nil
+	}
+	return &sandboxDisk{Used: kib[0], Size: kib[1], Free: kib[2], Live: true}
 }
 
 var safeTaskName = regexp.MustCompile(`^[a-zA-Z0-9._-]+$`)
 
-const listTasksScript = `for d in /workspaces/tasks/*/; do
+const listTasksScript = `df -Pk /workspaces 2>/dev/null | awk 'NR==2 {print "#disk|" $3 "|" $2 "|" $4}'
+for d in /workspaces/tasks/*/; do
   [ -d "$d" ] || continue
   n=$(basename "$d")
   ec=$(cat "$d/exit_code" 2>/dev/null)
@@ -89,6 +152,7 @@ func (s *Server) getSandboxCard(c *gin.Context) {
 		TaskState: annotations["sandbox.gemini.google.com/last-task-state"],
 		TaskType:  annotations["sandbox.gemini.google.com/last-task-type"],
 		Tasks:     []sandboxTask{},
+		Disk:      recordedDisk(annotations),
 	}
 	replicas, found, _ := unstructured.NestedInt64(sb.Object, "spec", "replicas")
 	if found && replicas == 0 {
@@ -118,6 +182,10 @@ func (s *Server) getSandboxCard(c *gin.Context) {
 	}
 
 	for _, line := range strings.Split(stdout.String(), "\n") {
+		if d := parseDiskLine(line); d != nil {
+			view.Disk = d
+			continue
+		}
 		parts := strings.SplitN(strings.TrimSpace(line), "|", 5)
 		if len(parts) < 4 || parts[0] == "" {
 			continue
