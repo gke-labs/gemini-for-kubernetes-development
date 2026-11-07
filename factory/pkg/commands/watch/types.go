@@ -119,6 +119,12 @@ type Watcher struct {
 	// its own (a person closed it, or it needed no change). Nil: the
 	// watcher's own client tries, which GitHub refuses for a fork's PR.
 	MarkReadyAs func(ctx context.Context, owner, repo string, pr int, login string) error
+	// RerunFailedJobsAs reruns the failed jobs of GitHub Actions run run
+	// of owner/repo as login, with login's own GitHub token: a deferred
+	// rerun, as the pool bot (the PR's author) that deferred it, where the
+	// watcher may not rerun the repository's runs. Nil: the watcher's own
+	// client tries.
+	RerunFailedJobsAs func(ctx context.Context, owner, repo string, run int64, login string) error
 	// WarmWorkspace moves the repository's warm workspace cycle on by a
 	// step (pkg/commands' warmWorkspace), cloning as user. Nil, or no
 	// warmWorkspace in the config, the repository is not warmed.

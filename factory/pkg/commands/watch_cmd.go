@@ -65,6 +65,7 @@ func NewWatchCommand(ctx context.Context) *cobra.Command {
 			watcher := watch.NewWatcher(rootFlags, flags)
 			watcher.ProposeFanout = proposeFanout
 			watcher.MarkReadyAs = markReadyAs
+			watcher.RerunFailedJobsAs = rerunFailedJobsAs
 			watcher.WarmWorkspace = warmWorkspace
 			watcher.Retro = watchRetro
 			watcher.RepoRules = repoWatchRules(flags.Repo.Owner, flags.Repo.Repo)

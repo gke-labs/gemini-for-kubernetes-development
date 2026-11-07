@@ -24,10 +24,13 @@ type deferredGitHub interface {
 // PR because their run was still running (taskoutput.DeferredRerun): a
 // pending marker in a comment by the watcher or a pool bot. Once its run has
 // completed and failed, at the head it was judged at, its failed jobs are
-// rerun, once; a run that passed, a head that moved on, or one still not
-// done past its time settles it unrerun. Each is said in the comment. A
-// failure is logged, not the scan's: the next scan tries again.
-func carryOutDeferredReruns(ctx context.Context, gh deferredGitHub, pr *githubv39.PullRequest, comments []*githubv39.IssueComment, trusted []string, now time.Time, dryRun bool) {
+// rerun, once, as the marker's author (rerunAs: the PR's author, who
+// deferred it and whom GitHub lets rerun it, where the watcher may not);
+// nil rerunAs, with gh. A run that passed, a head that moved on, or one
+// still not done past its time settles it unrerun. Each is said in the
+// comment. A failed rerun is logged, not the scan's: the next scan tries
+// again, until the marker's time is past, when it is settled unrerun.
+func carryOutDeferredReruns(ctx context.Context, gh deferredGitHub, rerunAs func(ctx context.Context, run int64, login string) error, pr *githubv39.PullRequest, comments []*githubv39.IssueComment, trusted []string, now time.Time, dryRun bool) {
 	head := pr.GetHead().GetSHA()
 	for _, c := range comments {
 		d, ok := taskoutput.ParseDeferredRerun(c.GetBody())
@@ -52,9 +55,20 @@ func carryOutDeferredReruns(ctx context.Context, gh deferredGitHub, pr *githubv3
 				klog.Infof("[dry-run] PR #%d: would rerun the failed jobs of run %d", pr.GetNumber(), d.Run)
 				continue
 			}
-			if err := gh.RerunFailedJobs(ctx, d.Run); err != nil {
-				klog.Warningf("PR #%d: rerunning the failed jobs of run %d: %v", pr.GetNumber(), d.Run, err)
-				continue
+			author := c.GetUser().GetLogin()
+			var err error
+			if rerunAs != nil {
+				err = rerunAs(ctx, d.Run, author)
+			} else {
+				err = gh.RerunFailedJobs(ctx, d.Run)
+			}
+			if err != nil {
+				klog.Warningf("PR #%d: rerunning the failed jobs of run %d as %s: %v", pr.GetNumber(), d.Run, author, err)
+				if !now.After(d.Until) {
+					continue
+				}
+				state, note = taskoutput.DeferredClosed, fmt.Sprintf("Not re-run: rerunning run %d as %s failed: %v", d.Run, author, err)
+				break
 			}
 			klog.Infof("PR #%d: reran the failed jobs of run %d, as deferred", pr.GetNumber(), d.Run)
 			state, note = taskoutput.DeferredDone, fmt.Sprintf("Re-ran the failed jobs of run %d at %s.", d.Run, now.UTC().Format("15:04Z"))
