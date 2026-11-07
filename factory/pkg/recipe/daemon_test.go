@@ -2,6 +2,8 @@ package recipe
 
 import (
 	"context"
+	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -9,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/acpd"
 )
@@ -145,12 +148,48 @@ func TestARunPromptsTheSessionItContinues(t *testing.T) {
 		t.Errorf("a session the run started outlived it: %v", err)
 	}
 
-	// A member has it open: the run uses it and leaves it open.
+	// Open, but nobody follows it - an engine an earlier run left: the run
+	// takes it over, and ends it.
+	if _, err := StartDaemonSession(ctx, base, "run-tok", "recipe-fake", "", "k", root, taskDir, nil); err != nil {
+		t.Fatal(err)
+	}
+	s, err = OpenDaemonSession(ctx, base, "run-tok", session, "recipe-fake", "", "k", root, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil || live() {
+		t.Errorf("a leftover session the run took over outlived it: %v", err)
+	}
+
+	// A member has it open, following it: the run uses it and leaves it
+	// open.
 	member, err := StartDaemonSession(ctx, base, "run-tok", "recipe-fake", "", "k", root, taskDir, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = member.Close() })
+	follow, cancelFollow := context.WithCancel(ctx)
+	t.Cleanup(cancelFollow)
+	go func() {
+		req, _ := http.NewRequestWithContext(follow, http.MethodGet, base+"/sessions/"+session+"/events", nil)
+		if resp, err := http.DefaultClient.Do(req); err == nil {
+			_, _ = io.Copy(io.Discard, resp.Body)
+			resp.Body.Close()
+		}
+	}()
+	for i := 0; i < 100; i++ {
+		var st struct {
+			Watchers int `json:"watchers"`
+		}
+		if resp, err := http.Get(base + "/sessions/" + session); err == nil {
+			_ = json.NewDecoder(resp.Body).Decode(&st)
+			resp.Body.Close()
+		}
+		if st.Watchers > 0 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 	s, err = OpenDaemonSession(ctx, base, "run-tok", session, "recipe-fake", "", "k", root, nil)
 	if err != nil {
 		t.Fatal(err)

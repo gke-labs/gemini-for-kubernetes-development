@@ -1,6 +1,7 @@
 package acpd
 
 import (
+	"context"
 	"crypto/subtle"
 	"encoding/json"
 	"fmt"
@@ -181,6 +182,9 @@ type sessionResponse struct {
 	// Held says the session's task is running, so only the task may
 	// prompt, answer, switch mode, cancel or close it.
 	Held bool `json:"held,omitempty"`
+	// Watchers is how many clients follow its events now: a session
+	// someone watches is theirs, not a leftover to close.
+	Watchers int `json:"watchers,omitempty"`
 }
 
 func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
@@ -391,6 +395,8 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 
 	transcript := sess.Transcript()
 	ctx := r.Context()
+	sess.watchers.Add(1)
+	defer sess.watchers.Add(-1)
 	for {
 		chunk, next, err := transcript.ReadFrom(offset)
 		if err != nil {
@@ -623,6 +629,48 @@ func (s *Server) describe(sess *Session) sessionResponse {
 		ModeError:      sess.ModeError(),
 		AutoApprove:    sess.AutoApprove(),
 		Loaded:         sess.Loaded(),
+		Watchers:       sess.Watchers(),
+	}
+}
+
+// CloseIdle closes and forgets the sessions idle for longer than idle: no
+// turn in flight, their task not running, nobody following their events,
+// nothing in their transcript since. Their conversations stay on disk, and
+// opening the session again loads them. It returns the ids closed.
+func (s *Server) CloseIdle(idle time.Duration, now time.Time) []string {
+	s.mu.Lock()
+	var stale []*Session
+	for id, sess := range s.sessions {
+		if sess.Busy() || s.held(sess) || sess.Watchers() > 0 || now.Sub(sess.LastActivity()) < idle {
+			continue
+		}
+		stale = append(stale, sess)
+		delete(s.sessions, id)
+	}
+	s.mu.Unlock()
+	var ids []string
+	for _, sess := range stale {
+		_ = sess.Close()
+		ids = append(ids, sess.ID)
+	}
+	return ids
+}
+
+// ReapIdle closes idle sessions (CloseIdle) every interval until ctx is
+// done: engines a run left open, or a member walked away from, do not
+// hold memory for the sandbox's life.
+func (s *Server) ReapIdle(ctx context.Context, idle, interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-ticker.C:
+			if ids := s.CloseIdle(idle, now); len(ids) > 0 {
+				klog.FromContext(ctx).Info("Closed idle agent sessions", "sessions", ids, "idle", idle)
+			}
+		}
 	}
 }
 

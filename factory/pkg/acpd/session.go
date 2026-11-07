@@ -203,6 +203,11 @@ type Session struct {
 	// Task is the task the session belongs to, if any; set by the server.
 	Task string
 
+	// watchers counts the clients following the session's events now (a
+	// browser, a task waiting on its turn): one watched is someone's, and
+	// neither a run adopting it nor the idle reaper closes it.
+	watchers atomic.Int32
+
 	transcript *Transcript
 	client     *acp.Client
 	cmd        *exec.Cmd
@@ -1049,4 +1054,16 @@ func envRefusal(name string) string {
 		return "looks like a credential, which never goes to the engine this way"
 	}
 	return ""
+}
+
+// Watchers is how many clients follow the session's events now.
+func (s *Session) Watchers() int { return int(s.watchers.Load()) }
+
+// LastActivity is when the session last did anything: its transcript's
+// last event, else its start.
+func (s *Session) LastActivity() time.Time {
+	if t := s.transcript.LastAppend(); !t.IsZero() {
+		return t
+	}
+	return s.CreatedAt
 }

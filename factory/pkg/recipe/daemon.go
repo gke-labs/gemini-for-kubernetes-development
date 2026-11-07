@@ -55,12 +55,16 @@ func StartDaemonSession(ctx context.Context, base, token, engine, model, apiKey,
 
 // OpenDaemonSession is a run's way in to the session it continues,
 // session: the daemon holds it for the run, whose token is token. Open
-// already — a member is talking in it — it is used as it is, unless a
-// turn is in flight, which refuses the run before it sends anything. Otherwise it is created, which loads the conversation.
+// already, it is used as it is, unless a turn is in flight, which refuses
+// the run before it sends anything; nobody following it - an engine an
+// earlier run left - the run adopts it and closes it when it ends, as one
+// it created. Otherwise it is created, which loads the conversation, and
+// closed when the run ends.
 func OpenDaemonSession(ctx context.Context, base, token, session, engine, model, apiKey, repoDir string, env map[string]string) (*DaemonSession, error) {
 	d := newDaemonSession(base, session, token)
 	var state struct {
-		Busy bool `json:"busy"`
+		Busy     bool `json:"busy"`
+		Watchers int  `json:"watchers"`
 	}
 	err := d.call(ctx, http.MethodGet, "/sessions/"+session, nil, http.StatusOK, &state)
 	var status statusError
@@ -68,6 +72,9 @@ func OpenDaemonSession(ctx context.Context, base, token, session, engine, model,
 	case err == nil && state.Busy:
 		return nil, fmt.Errorf("session %s is busy: a turn is in flight; run again once it has ended", session)
 	case err == nil:
+		// Watched, it is a member's: left open. Not, it is a leftover the
+		// run takes over, closing it at its end.
+		d.created = state.Watchers == 0
 		return d, nil
 	case errors.As(err, &status) && status.code == http.StatusNotFound:
 	default:
