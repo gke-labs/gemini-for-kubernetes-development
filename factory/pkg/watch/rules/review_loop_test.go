@@ -41,7 +41,12 @@ func TestReviewLoopRule(t *testing.T) {
 		{"checks failing: ci first", step(func(it *Item) { it.Checks = "failing" }), "ci run"},
 		{"it ran on the head: review", step(func(it *Item) { it.Runs = []PastRun{loop("h2", false)} }), "review run"},
 		{"a new head since (its own push, or anyone's): the loop again", step(func(it *Item) { it.Runs = []PastRun{loop("h1", false)} }), "review-loop run"},
-		{"it failed on the head: again", step(func(it *Item) { it.Runs = []PastRun{loop("h2", true)} }), "review-loop run"},
+		{"it failed on the head 30m ago: again", step(func(it *Item) { it.Runs = []PastRun{loop("h2", true)} }), "review-loop run"},
+		{"it failed on the head 5m ago: in its failure cooldown, review takes the PR", step(func(it *Item) {
+			r := loop("h2", true)
+			r.StartedAt, r.EndedAt = ago(6*time.Minute), ago(5*time.Minute)
+			it.Runs = []PastRun{r}
+		}), "review run"},
 		{"not a draft: review", step(func(it *Item) { it.Draft = false }), "review run"},
 		{"no review wanted: nothing", step(func(it *Item) {
 			it.Labels = []string{"overseer"}

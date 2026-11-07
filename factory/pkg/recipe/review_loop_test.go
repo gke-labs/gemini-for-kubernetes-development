@@ -176,3 +176,17 @@ func TestReviewLoopReviewerPrompts(t *testing.T) {
 		t.Errorf("reviewer sessions %v, want a fresh one per round", sessions)
 	}
 }
+
+// review-loop declares no task output but pushes: on a PR it is given the
+// PR's branch and head (the pushed_* inputs), as a Change recipe is.
+func TestReviewLoopPushes(t *testing.T) {
+	for name, want := range map[string]bool{"review-loop": true, "care-comments": true, "fix": true, "review": false, "triage": false} {
+		_, rec, err := Builtin(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if rec.Pushes() != want {
+			t.Errorf("%s pushes: %t, want %t", name, rec.Pushes(), want)
+		}
+	}
+}

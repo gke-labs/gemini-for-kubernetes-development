@@ -562,9 +562,9 @@ func runRecipeIn(ctx context.Context, opts recipeRunOpts, recipeArg, itemURL, ru
 	if labelsAsSelf(apply, rec) {
 		ctx = taskoutput.WithLabeler(ctx, ownClient)
 	}
-	if rec.TaskOutput != nil && rec.TaskOutput.Kind == "Change" && pr != nil {
-		// A Change on a PR continues it: the PR's head stands in for the
-		// push a start would otherwise make.
+	if pr != nil && (rec.Pushes() || rec.TaskOutput != nil && rec.TaskOutput.Kind == "Change") {
+		// A recipe that pushes, or a Change, on a PR continues it: the PR's
+		// head stands in for the push a start would otherwise make.
 		if err := prPushInputs(ctx, ghClient, it, pr, inputs); err != nil {
 			return err
 		}
