@@ -41,7 +41,7 @@ ENV GOTOOLCHAIN=auto
 # We want a functional python, because gemini-cli likes to use python
 RUN apt-get update && apt-get install -y python3 python3-pip python3-yaml python-is-python3 python3-venv
 
-RUN apt-get update && apt-get install -y git tmux nodejs npm sudo curl apt-transport-https ca-certificates gnupg jq ripgrep
+RUN apt-get update && apt-get install -y git tmux nodejs npm sudo curl apt-transport-https ca-certificates gnupg jq ripgrep tini
 
 # Install Google Cloud CLI
 RUN echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" | tee -a /etc/apt/sources.list.d/google-cloud-sdk.list && \
@@ -98,4 +98,6 @@ RUN go install sigs.k8s.io/controller-runtime/tools/setup-envtest@release-0.22 &
 ENV KUBEBUILDER_ASSETS=/usr/local/kubebuilder/bin
 
 WORKDIR /workspaces
-ENTRYPOINT ["/usr/local/bin/factory", "daemon"]
+# tini as PID 1 reaps the zombies builds and tests leave; factory's
+# sandbox pods set the same command (sandbox.DaemonCommand).
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/factory", "daemon"]
