@@ -925,6 +925,11 @@ func repinImage(sb *unstructured.Unstructured, image string) bool {
 				continue
 			}
 			ctr["image"] = image
+			// A sandbox made before its daemon ran under tini moves to it
+			// with the image (DaemonCommand).
+			if field == "containers" && isBareDaemonCommand(ctr["command"]) {
+				ctr["command"] = DaemonCommand()
+			}
 			containers[i] = ctr
 			fieldChanged = true
 		}
@@ -934,6 +939,13 @@ func repinImage(sb *unstructured.Unstructured, image string) bool {
 		}
 	}
 	return changed
+}
+
+// isBareDaemonCommand is whether command is the daemon's started as PID 1,
+// as sandboxes were made before DaemonCommand.
+func isBareDaemonCommand(command interface{}) bool {
+	parts, ok := command.([]interface{})
+	return ok && len(parts) == 2 && parts[0] == "factory" && parts[1] == "daemon"
 }
 
 // imageRepository is ref without its tag or digest.

@@ -203,7 +203,7 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 			map[string]interface{}{
 				"name":         "sandbox",
 				"image":        opt.Image,
-				"command":      []interface{}{"factory", "daemon"},
+				"command":      DaemonCommand(),
 				"resources":    buildPodResources(opt.DevSandboxOptions),
 				"env":          env,
 				"volumeMounts": volumeMounts,
@@ -286,4 +286,16 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 	}
 
 	return sandbox, service
+}
+
+// daemonCommandLine starts the sandbox's daemon under tini when the image
+// has it: tini, as PID 1, reaps the zombies a build or a test leaves (an
+// orphan is handed to PID 1, and the daemon waits only for its own tasks),
+// and passes signals on to the daemon. An image without tini runs the
+// daemon as PID 1, as before.
+const daemonCommandLine = "if command -v tini >/dev/null 2>&1; then exec tini -- factory daemon; fi; exec factory daemon"
+
+// DaemonCommand is the sandbox container's command (daemonCommandLine).
+func DaemonCommand() []interface{} {
+	return []interface{}{"sh", "-c", daemonCommandLine}
 }
