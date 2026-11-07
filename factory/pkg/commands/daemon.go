@@ -83,6 +83,10 @@ func runDaemon(ctx context.Context) error {
 		<-ctx.Done()
 		sessions.Close()
 	}()
+	// Engines nobody uses go: a run that died before closing its own, a
+	// conversation a member walked away from. Their transcripts stay, and
+	// opening the session again loads them.
+	go sessions.ReapIdle(ctx, idleSessionTimeout, 5*time.Minute)
 
 	// The same tasks over HTTP, and the agent sessions with them, on the
 	// loopback only: clients come in through a port-forward, which the
@@ -148,3 +152,8 @@ func hasNonEmptyFile(path string) bool {
 	}
 	return strings.TrimSpace(string(data)) != ""
 }
+
+// idleSessionTimeout is how long an agent session may sit unused - no
+// turn, its task ended, nobody following it - before the daemon closes its
+// engine (acpd.Server.ReapIdle).
+const idleSessionTimeout = 2 * time.Hour

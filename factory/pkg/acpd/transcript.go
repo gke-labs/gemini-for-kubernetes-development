@@ -88,6 +88,8 @@ type Transcript struct {
 	open bool
 	// write writes to f; tests replace it to cut a write short.
 	write func([]byte) (int, error)
+	// lastAppend is when the last event was appended.
+	lastAppend time.Time
 }
 
 // OpenTranscript opens (creating if needed) the transcript under dir.
@@ -204,6 +206,7 @@ func (t *Transcript) Append(kind string, data json.RawMessage) error {
 	}
 	n, err := write(line)
 	t.size += int64(n)
+	t.lastAppend = time.Now()
 	switch {
 	case n == len(line):
 		t.open = false
@@ -318,4 +321,11 @@ type TurnEnd struct {
 	// Forced marks a turn acpd ended itself (Session.ForceStop): the
 	// engine never answered session/prompt, not even after a cancel.
 	Forced bool `json:"forced,omitempty"`
+}
+
+// LastAppend is when the last event was appended, zero before any.
+func (t *Transcript) LastAppend() time.Time {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.lastAppend
 }
