@@ -1067,6 +1067,13 @@ func TestBuiltinFixRenders(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(dir, "comments.md"), []byte("the trusted comments"), 0o644); err != nil {
 			t.Fatal(err)
 		}
+		// The review round's files: the commit the step started on, and
+		// the reviewer's findings.
+		for name, body := range map[string]string{"review-base": "b0", "review.yaml": "verdict: clean\nfindings: []\n"} {
+			if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
 		var all strings.Builder
 		comments := false
 		for i, s := range r.Start.Steps {
