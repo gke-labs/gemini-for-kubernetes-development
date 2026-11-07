@@ -30,7 +30,7 @@ export const SECTIONS = [
 // overseer runs: the care recipes share the care session, one chip.
 const GROUPS = {
   care: ['care', 'Care'], 'care-ci': ['care', 'Care'], 'care-comments': ['care', 'Care'],
-  'care-rebase': ['care', 'Care'], 'care-iterate': ['care', 'Care'], 'review-loop': ['care', 'Care'],
+  'care-rebase': ['care', 'Care'], 'care-iterate': ['care', 'Care'],
   fix: ['fix', 'Fix'], review: ['review', 'Review'], plan: ['plan', 'Plan'], triage: ['triage', 'Triage'],
   fanout: ['fanout', 'Fan out'], workflow: ['workflow', 'Workflow'], agent: ['agent', 'Agent'],
 };

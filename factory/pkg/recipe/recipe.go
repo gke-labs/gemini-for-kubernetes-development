@@ -804,9 +804,9 @@ func (r *Recipe) OutputDecl() *taskoutput.Decl {
 	return &decl
 }
 
-// Pushes is whether the recipe pushes to a branch (a push step), as a
-// Change recipe does and review-loop, which declares no task output,
-// does too: on a PR it continues the PR's branch from its head.
+// Pushes is whether the recipe pushes to a branch (a push step): on a PR
+// it continues the PR's branch from its head, whether or not it declares
+// a Change.
 func (r *Recipe) Pushes() bool {
 	return slices.ContainsFunc(r.Start.Steps, func(s Step) bool { return s.Uses == "push" })
 }
