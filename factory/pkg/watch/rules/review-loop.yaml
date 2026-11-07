@@ -31,4 +31,8 @@ run:
     comment: "AI Factory started reviewing and fixing this pull request in its sandbox before its review."
 policy:
   dedupe: head
+  # A failed run is no run for the dedupe: it is retried after 20m, and
+  # meanwhile review takes the PR, as it would without the loop.
+  cooldown:
+    failure: 20m
   phase: 1
