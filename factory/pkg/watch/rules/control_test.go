@@ -46,3 +46,29 @@ func TestParseList(t *testing.T) {
 		t.Errorf("list = %q", got)
 	}
 }
+
+// The operator turns on a rule factory's files have off; an unknown rule
+// cannot be; disabled still wins.
+func TestTurnOn(t *testing.T) {
+	set, _ := Builtin()
+	if _, err := TurnOn(set, []string{"nope"}); err == nil || !strings.Contains(err.Error(), "there is no rule nope") {
+		t.Errorf("an unknown rule enabled: %v", err)
+	}
+	on, err := TurnOn(set, []string{"review-loop"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r := on.Named("review-loop"); !r.IsEnabled() || r.EnabledBy != SourceOverseer {
+		t.Errorf("review-loop enabled %t by %q", r.IsEnabled(), r.EnabledBy)
+	}
+	if set.Named("review-loop").IsEnabled() {
+		t.Error("TurnOn changed the set it was given")
+	}
+	c, err := NewControl([]string{"review-loop"}, on)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Takes("review-loop") || c.Set().Named("review-loop").IsEnabled() {
+		t.Error("disabled does not win over enabled")
+	}
+}

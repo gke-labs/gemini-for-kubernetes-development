@@ -621,12 +621,20 @@ func newOverseerSandboxFromOverseer(o *overseerv1alpha1.Overseer, name, namespac
 	return u
 }
 
-// rulesEnv is spec.rules for the watcher: WATCH_RULES_DISABLED, when set.
+// rulesEnv is spec.rules for the watcher: WATCH_RULES_DISABLED and
+// WATCH_RULES_ENABLED, each when set.
 func rulesEnv(r *overseerv1alpha1.OverseerRules) []interface{} {
-	if r == nil || len(r.Disabled) == 0 {
+	if r == nil {
 		return nil
 	}
-	return []interface{}{map[string]interface{}{"name": "WATCH_RULES_DISABLED", "value": strings.Join(r.Disabled, ",")}}
+	var env []interface{}
+	if len(r.Disabled) > 0 {
+		env = append(env, map[string]interface{}{"name": "WATCH_RULES_DISABLED", "value": strings.Join(r.Disabled, ",")})
+	}
+	if len(r.Enabled) > 0 {
+		env = append(env, map[string]interface{}{"name": "WATCH_RULES_ENABLED", "value": strings.Join(r.Enabled, ",")})
+	}
+	return env
 }
 
 // repoRecipeEnv is spec.repoRecipe for the watcher and the factory

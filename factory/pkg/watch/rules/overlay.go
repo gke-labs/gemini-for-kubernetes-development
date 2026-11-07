@@ -14,6 +14,8 @@ const (
 	SourceFactory = "factory"
 	// SourceRepo is a repository's rules, .agents/watch/<name>.yaml.
 	SourceRepo = "repo"
+	// SourceOverseer is the operator's: the Overseer's spec.rules.
+	SourceOverseer = "overseer"
 )
 
 // IsToggle reports whether the rule file only turns a rule of its name on

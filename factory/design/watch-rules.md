@@ -531,8 +531,9 @@ repository's recipes:
      name: review
      enabled: false
      ```
-  3. **the Overseer** (`spec.rules.disabled`, and the engine's modes
-     below), the operator's, has the last word over both.
+  3. **the Overseer** (`spec.rules.enabled` turns on a rule the files
+     have off, `spec.rules.disabled` turns one off and wins, and the
+     engine's modes below), the operator's, has the last word over both.
 
   `factory watch rules --dir <checkout>` shows the result for a local
   checkout: whose each rule is (SOURCE) and whose its enabled is

@@ -94,6 +94,9 @@ type Flags struct {
 	// the scanners or the engine: the operator's emergency switch
 	// ("review,ci").
 	RulesDisabled string
+	// RulesEnabled are rules the watch turns on that factory's files or
+	// the repository's have off ("review-loop"); RulesDisabled wins.
+	RulesEnabled string
 	// RulesRecord is the file the issue and PR scanners record each
 	// decision in, with the facts it was made on, for the watch rules'
 	// replay (`factory watch rules replay`); empty records nothing. What
@@ -284,6 +287,11 @@ func (w *Watcher) newRulesControl() *rules.Control {
 			set = repoSet
 			klog.Infof("Watch rules: the repository's %s", from)
 		}
+	}
+	if on, err := rules.TurnOn(set, rules.ParseList(w.RulesEnabled)); err != nil {
+		klog.Warningf("Watch rules settings: %v; leaving the rules on or off as their files say", err)
+	} else {
+		set = on
 	}
 	c, err := rules.NewControl(rules.ParseList(w.RulesDisabled), set)
 	if err != nil {

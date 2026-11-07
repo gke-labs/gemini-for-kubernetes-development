@@ -264,6 +264,15 @@ func TestBuildSandboxManifest_RulesEngine(t *testing.T) {
 	if env["WATCH_RULES_DISABLED"] != "review,inactive" {
 		t.Errorf("WATCH_RULES_DISABLED = %v", env["WATCH_RULES_DISABLED"])
 	}
+	if _, ok := env["WATCH_RULES_ENABLED"]; ok {
+		t.Error("WATCH_RULES_ENABLED is set with nothing enabled")
+	}
+	o.Spec.Rules = &overseerv1alpha1.OverseerRules{Enabled: []string{"review-loop"}}
+	if env := overseerEnv(t, o); env["WATCH_RULES_ENABLED"] != "review-loop" {
+		t.Errorf("WATCH_RULES_ENABLED = %v", env["WATCH_RULES_ENABLED"])
+	} else if _, ok := env["WATCH_RULES_DISABLED"]; ok {
+		t.Error("WATCH_RULES_DISABLED is set with nothing disabled")
+	}
 	for _, gone := range []string{"WATCH_RULES_ENGINE", "WATCH_RULES_USE", "WATCH_RULES_CANARY_LABEL", "WATCH_RULES_CANARY_PERCENT"} {
 		if _, ok := env[gone]; ok {
 			t.Errorf("%s is set: %v", gone, env)

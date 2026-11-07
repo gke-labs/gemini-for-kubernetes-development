@@ -42,6 +42,33 @@ func NewControl(disabled []string, set Set) (*Control, error) {
 	return &Control{Disabled: disabled, set: overlaid}, nil
 }
 
+// TurnOn turns on the rules of set named, which factory's files or the
+// repository's have off (review-loop): the operator's say, the Overseer's
+// spec.rules.enabled. Disabled, given to NewControl after, still wins.
+func TurnOn(set Set, names []string) (Set, error) {
+	on := true
+	var toggles []*Rule
+	for _, name := range names {
+		if set.Named(name) == nil {
+			return nil, fmt.Errorf("rules enabled: there is no rule %s", name)
+		}
+		toggles = append(toggles, &Rule{Name: name, Enabled: &on})
+	}
+	if len(toggles) == 0 {
+		return set, nil
+	}
+	out, err := Overlay(set, toggles)
+	if err != nil {
+		return nil, err
+	}
+	for _, r := range out {
+		if slices.Contains(names, r.Name) {
+			r.EnabledBy = SourceOverseer
+		}
+	}
+	return out, nil
+}
+
 // ParseList reads "a,b,c".
 func ParseList(s string) []string {
 	var out []string

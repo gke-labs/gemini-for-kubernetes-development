@@ -131,6 +131,10 @@ spec:
                     items:
                       type: string
                     type: array
+                  enabled:
+                    items:
+                      type: string
+                    type: array
                 type: object
               rulesRecord:
                 type: boolean

@@ -55,6 +55,10 @@ type OverseerRules struct {
 	// switch. The rules engine decides every other rule.
 	// +kubebuilder:validation:Optional
 	Disabled []string `json:"disabled,omitempty"`
+	// Enabled are rules the watcher turns on that factory's rule files or
+	// the repository's have off (review-loop). Disabled wins.
+	// +kubebuilder:validation:Optional
+	Enabled []string `json:"enabled,omitempty"`
 }
 
 // OverseerRepoRecipe is how the repository's own recipes run, and at
