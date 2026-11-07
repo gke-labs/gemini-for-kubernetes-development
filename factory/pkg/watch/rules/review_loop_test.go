@@ -6,22 +6,17 @@ import (
 	"time"
 )
 
-// review-loop is off until a repository turns it on; on, it takes a
+// review-loop is on by default: it takes a
 // grouped graph's draft PR that wants a review before review does, once
 // per head: not again on the head it ran on, once more on the head its
 // own push left.
 func TestReviewLoopRule(t *testing.T) {
-	base, err := Builtin()
+	set, err := Builtin()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r := base.Named("review-loop"); r == nil || r.IsEnabled() {
-		t.Fatal("review-loop is not a built-in rule that is off")
-	}
-	on := true
-	set, err := Overlay(base, []*Rule{{Name: "review-loop", Enabled: &on}})
-	if err != nil {
-		t.Fatal(err)
+	if r := set.Named("review-loop"); r == nil || !r.IsEnabled() {
+		t.Fatal("review-loop is not a built-in rule that is on")
 	}
 	loop := func(head string, failed bool) PastRun {
 		return PastRun{Rule: "review-loop", StartedAt: ago(time.Hour), EndedAt: ago(30 * time.Minute), Head: head, Failed: failed}

@@ -9,13 +9,13 @@
 # round's fix it carries on the loop. It does not wait for green checks:
 # CI runs on each round's push while the next round reviews.
 #
-# Off unless the repository turns it on (.agents/watch/review-loop.yaml:
-# name: review-loop, enabled: true).
+# On by default; an overseer turns it off with spec.rules.disabled:
+# [review-loop], a repository with .agents/watch/review-loop.yaml: name:
+# review-loop, enabled: false.
 name: review-loop
 description: Review and fix a grouped graph's draft PR before its review
 on: pr
 order: 37
-enabled: false
 when:
   author: pool
   draft: true
