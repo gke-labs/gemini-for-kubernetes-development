@@ -593,6 +593,12 @@ func TestReadyForNextStep(t *testing.T) {
 		{"review wanted, reviewed at the head, changes asked", draft(func(it *rules.Item) { reviewWanted(it); it.ReviewedAtHead, it.ChangesRequested = true, true }), false},
 		{"review wanted, reviewed at the head, no changes asked: ready", draft(func(it *rules.Item) { reviewWanted(it); it.ReviewedAtHead = true }), true},
 		{"does not merge", draft(func(it *rules.Item) { no := false; it.Mergeable = &no }), false},
+		// A graph grouped once its first PR was open and handed to people
+		// (KCC #15000, #15068): ready all the same.
+		{"handed to people already (not a draft, ready-for-human): ready", draft(func(it *rules.Item) {
+			it.Draft = false
+			it.Labels = append(it.Labels, "overseer/ready-for-human")
+		}), true},
 	} {
 		if got := readyForNextStep(control, tc.it, env); got != tc.ready {
 			t.Errorf("%s: ready %v, want %v", tc.name, got, tc.ready)

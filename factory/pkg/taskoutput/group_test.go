@@ -22,13 +22,20 @@ type groupPR struct {
 	draft   bool
 	edits   int
 	readied []string // node ids markPullRequestReadyForReview was called with
+	labels  []string
+	drafted []string // node ids convertPullRequestToDraft was called with
+	removed []string // labels taken off
 }
 
 func (g *groupPR) client(t *testing.T) *githubv39.Client {
 	t.Helper()
 	pr := func() *githubv39.PullRequest {
-		return &githubv39.PullRequest{Number: githubv39.Int(12), HTMLURL: githubv39.String("https://github.com/o/r/pull/12"),
+		pr := &githubv39.PullRequest{Number: githubv39.Int(12), HTMLURL: githubv39.String("https://github.com/o/r/pull/12"),
 			Body: githubv39.String(g.body), Draft: githubv39.Bool(g.draft), NodeID: githubv39.String("PR_12")}
+		for _, l := range g.labels {
+			pr.Labels = append(pr.Labels, &githubv39.Label{Name: githubv39.String(l)})
+		}
+		return pr
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/user", func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, `{"login":"me"}`) })
@@ -45,6 +52,14 @@ func (g *groupPR) client(t *testing.T) *githubv39.Client {
 		_ = json.NewEncoder(w).Encode(pr())
 	})
 	mux.HandleFunc("/repos/o/r/issues/12/labels", func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, `[]`) })
+	mux.HandleFunc("/repos/o/r/issues/12/labels/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete {
+			t.Errorf("unexpected %s %s", r.Method, r.URL)
+		}
+		name, _ := url.PathUnescape(strings.TrimPrefix(r.URL.EscapedPath(), "/repos/o/r/issues/12/labels/"))
+		g.removed = append(g.removed, name)
+		fmt.Fprint(w, `[]`)
+	})
 	mux.HandleFunc("/graphql", func(w http.ResponseWriter, r *http.Request) {
 		b, _ := io.ReadAll(r.Body)
 		var q struct {
@@ -52,11 +67,16 @@ func (g *groupPR) client(t *testing.T) *githubv39.Client {
 			Variables map[string]string `json:"variables"`
 		}
 		_ = json.Unmarshal(b, &q)
-		if !strings.Contains(q.Query, "markPullRequestReadyForReview") {
+		switch {
+		case strings.Contains(q.Query, "markPullRequestReadyForReview"):
+			g.readied, g.draft = append(g.readied, q.Variables["id"]), false
+			fmt.Fprint(w, `{"data":{"markPullRequestReadyForReview":{"pullRequest":{"isDraft":false}}}}`)
+		case strings.Contains(q.Query, "convertPullRequestToDraft"):
+			g.drafted, g.draft = append(g.drafted, q.Variables["id"]), true
+			fmt.Fprint(w, `{"data":{"convertPullRequestToDraft":{"pullRequest":{"isDraft":true}}}}`)
+		default:
 			t.Errorf("graphql query %q", q.Query)
 		}
-		g.readied, g.draft = append(g.readied, q.Variables["id"]), false
-		fmt.Fprint(w, `{"data":{"markPullRequestReadyForReview":{"pullRequest":{"isDraft":false}}}}`)
 	})
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
@@ -111,6 +131,30 @@ func TestOpenPRContinuesTheGroupsPR(t *testing.T) {
 		}
 		if g.edits != 1 || strings.Count(g.body, "Fixes #8") != 1 {
 			t.Errorf("applied twice: %d edits\n%s", g.edits, g.body)
+		}
+	})
+
+	t.Run("a step in the middle on a PR handed to people: a draft again, unlabelled", func(t *testing.T) {
+		// KCC #15000 / #15068: the graph was grouped once the first step's
+		// PR was open, and the ready rule had handed it to people.
+		g := &groupPR{body: first, draft: false, labels: []string{"overseer", "overseer/ready-for-human"}}
+		var out bytes.Buffer
+		if err := ApplyAction(ctx, g.client(t), stepDoc(t, 12, false), "open-pr", false, &out); err != nil {
+			t.Fatal(err)
+		}
+		if strings.Join(g.drafted, ",") != "PR_12" || !g.draft || strings.Join(g.removed, ",") != "overseer/ready-for-human" || len(g.readied) != 0 {
+			t.Errorf("drafted %v, removed %v, readied %v:\n%s", g.drafted, g.removed, g.readied, out.String())
+		}
+	})
+
+	t.Run("the group's last on a PR that is not a draft: left ready", func(t *testing.T) {
+		g := &groupPR{body: first, draft: false, labels: []string{"overseer/ready-for-human"}}
+		var out bytes.Buffer
+		if err := ApplyAction(ctx, g.client(t), stepDoc(t, 12, true), "open-pr", false, &out); err != nil {
+			t.Fatal(err)
+		}
+		if len(g.drafted) != 0 || len(g.removed) != 0 || len(g.readied) != 0 {
+			t.Errorf("drafted %v, removed %v, readied %v", g.drafted, g.removed, g.readied)
 		}
 	})
 
