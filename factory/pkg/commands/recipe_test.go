@@ -899,3 +899,29 @@ func TestModelAt(t *testing.T) {
 		t.Error("modelAt(no list, 1) found a model to fall back to")
 	}
 }
+
+// A fix is given the issue's own review instructions, unless its caller
+// gave some; a recipe that takes none is given none.
+func TestIssueReviewInstructions(t *testing.T) {
+	_, fix, err := recipe.Builtin("fix")
+	if err != nil {
+		t.Fatal(err)
+	}
+	issue := &githubv39.Issue{Body: githubv39.String("Do it.\n\n## Review Instructions\n\nUse .gemini/skills/x/SKILL.md to conduct the review.\n\n## Other\n\nno")}
+	inputs := map[string]string{"review_instructions": ""}
+	issueReviewInstructions(fix, issue, inputs)
+	if inputs["review_instructions"] != "Use .gemini/skills/x/SKILL.md to conduct the review." {
+		t.Errorf("inputs = %v", inputs)
+	}
+	inputs = map[string]string{"review_instructions": "the caller's"}
+	issueReviewInstructions(fix, issue, inputs)
+	if inputs["review_instructions"] != "the caller's" {
+		t.Errorf("the caller's instructions were replaced: %v", inputs)
+	}
+	_, triage, _ := recipe.Builtin("triage")
+	none := map[string]string{}
+	issueReviewInstructions(triage, issue, none)
+	if len(none) != 0 {
+		t.Errorf("triage was given %v", none)
+	}
+}

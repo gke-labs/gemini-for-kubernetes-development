@@ -218,6 +218,13 @@ The PR mode (deleted by [care-recipe.md](care-recipe.md)) deviated where:
 - **The revises name no issue.** They ask to keep the description's `Fixes #…` line "if it has one", so they render on a PR's inputs. `CheckRender` leaves out the start on a target it does not run on.
 - **`factory recipe list` reports it** as `revisesOn: [my-pr]`, the targets where the recipe has no start. A board offers the revises there before any run.
 - **Auto does not see it yet.** `factory pr watch` finds a fix run only on the PR's labelled sandbox, and `recipe-<repo>-<n>` is unlabelled so that `factory pr` never adopts it.
+- **An issue that wants a review reviews its own fix once, before the push.** The decision is in `fix.yaml`, not in Go:
+  - **The review round runs when** the issue's labels (`issue_labels`, a fact factory gives every issue recipe, like `issue_body`) include `*/review`: the `hasLabel` template function, where `*/` means any prefix. The same label asks for the PR's external review.
+  - **Instructions:** factory fills `review_instructions` from the issue's `## Review Instructions` section, unless the caller gave some.
+  - **The round:** after the agent commits, a reviewer step session (`session: review`, no recipe context, no GitHub access) reviews `git diff <base>...HEAD`. `<base>` is where the step started: the default branch, or for a grouped graph step the group PR's head, so it reviews this step's commits only, with this issue's instructions. It writes `review.yaml` (`verdict: clean|changes`, `findings`). If the verdict isn't clean, the agent addresses the findings in its own conversation. Then `change.yaml` and `push` run as before.
+  - **A fix with no commit isn't reviewed.**
+  - **Unchanged:** the PR's `review` rule still reviews the PR.
+  - **Why:** this replaces the removed `review-loop` rule, which reviewed a batch PR's whole diff after the fact, never saw a group's last step, and used one closing issue's instructions picked at random.
 
 ## Not planned here
 
