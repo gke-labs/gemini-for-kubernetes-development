@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"regexp"
+	"strconv"
 	"time"
 
 	githubv39 "github.com/google/go-github/v39/github"
@@ -206,21 +208,65 @@ func commentsTrigger(_ context.Context, s *Scanner, pc *prContext, filename stri
 	}
 }
 
-// reviewInstructions are the review instructions the pull request and the
-// issues it closes carry ({{review-instructions}}), so a repository can
-// steer a review from wherever the requirement was written down.
+// reviewInstructions are the review instructions ({{review-instructions}})
+// of the change a review of the pull request is for, never an earlier
+// one's:
+//
+//   - a grouped graph's PR is its latest step's to review - the steps
+//     before were reviewed when they were the latest - so the
+//     instructions are that step's issue's (the last group-step marker in
+//     the body), or none;
+//   - any other PR's are its own, else those of the issue its body names
+//     first (a group's first step, or a fix's one issue), or none.
 func reviewInstructions(ctx context.Context, pc *prContext) []string {
-	var bodies []string
-	if pc.pr.GetBody() != "" {
-		bodies = append(bodies, pc.pr.GetBody())
-	}
+	body := pc.pr.GetBody()
 	// Shared with the evaluation, which fetched them for the label sync.
-	for _, refIssue := range pc.refIssues.all(ctx) {
-		if refIssue.GetBody() != "" {
-			bodies = append(bodies, refIssue.GetBody())
+	issues := pc.refIssues.all(ctx)
+	if latest := latestGroupStep(body); latest != 0 {
+		for _, i := range issues {
+			if i.GetNumber() == latest {
+				return common.ExtractReviewInstructions(i.GetBody())
+			}
+		}
+		return nil
+	}
+	if own := common.ExtractReviewInstructions(body); len(own) > 0 {
+		return own
+	}
+	if i := firstNamed(body, issues); i != nil {
+		return common.ExtractReviewInstructions(i.GetBody())
+	}
+	return nil
+}
+
+// groupStepRE is a grouped graph's step's section marker in its group's PR
+// body (taskoutput's groupStepMarker): each step after the first appends
+// its own, in order.
+var groupStepRE = regexp.MustCompile(`<!-- factory:group-step issue=(\d+) -->`)
+
+// latestGroupStep is the issue of the last step section in a grouped
+// graph's PR body, 0 for a body without one (a group's first step, or no
+// group's PR).
+func latestGroupStep(body string) int {
+	m := groupStepRE.FindAllStringSubmatch(body, -1)
+	if len(m) == 0 {
+		return 0
+	}
+	n, _ := strconv.Atoi(m[len(m)-1][1])
+	return n
+}
+
+// firstNamed is the issue of issues the body names first (#n), nil for
+// none.
+func firstNamed(body string, issues []*githubv39.Issue) *githubv39.Issue {
+	var first *githubv39.Issue
+	at := len(body)
+	for _, i := range issues {
+		if loc := regexp.MustCompile(fmt.Sprintf(`#%d\b`, i.GetNumber())).FindStringIndex(body); loc != nil && loc[0] < at {
+			first, at = i, loc[0]
 		}
 	}
-	return common.ExtractReviewInstructions(bodies...)
+	return first
 }
 
 // reviewTrigger is an automated review's: timed from when the checks went
