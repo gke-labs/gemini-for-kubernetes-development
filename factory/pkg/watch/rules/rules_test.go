@@ -15,7 +15,7 @@ func TestBuiltinRulesParseAndValidate(t *testing.T) {
 		t.Fatalf("Builtin: %v", err)
 	}
 	want := []string{"ci", "comments", "conflict", "fix", "implement", "implement-graph", "implement-not-ready", "implement-unplanned", "inactive",
-		"inherit-labels", "issue-answered", "issue-asking", "plan", "plan-answered", "plan-asking", "ready", "ready-unreview", "review", "review-loop", "workflow", "workflow-missing", "workspace-cleanup"}
+		"inherit-labels", "issue-answered", "issue-asking", "plan", "plan-answered", "plan-asking", "ready", "ready-unreview", "review", "workflow", "workflow-missing", "workspace-cleanup"}
 	var got []string
 	for _, r := range set {
 		got = append(got, r.Name)
@@ -25,7 +25,7 @@ func TestBuiltinRulesParseAndValidate(t *testing.T) {
 	}
 	// Each file says what code it mirrors; the plan flow's, which mirror
 	// none (they were born rules), say what they do.
-	native := []string{"plan.yaml", "implement.yaml", "implement-graph.yaml", "implement-unplanned.yaml", "implement-not-ready.yaml", "plan-asking.yaml", "plan-answered.yaml", "issue-asking.yaml", "issue-answered.yaml", "workspace-cleanup.yaml", "review-loop.yaml"}
+	native := []string{"plan.yaml", "implement.yaml", "implement-graph.yaml", "implement-unplanned.yaml", "implement-not-ready.yaml", "plan-asking.yaml", "plan-answered.yaml", "issue-asking.yaml", "issue-answered.yaml", "workspace-cleanup.yaml"}
 	entries, _ := builtinFS.ReadDir(".")
 	for _, e := range entries {
 		data, _ := builtinFS.ReadFile(e.Name())
@@ -59,7 +59,7 @@ func TestBuiltinPROrder(t *testing.T) {
 		}
 		got = append(got, name)
 	}
-	if want := "inherit-labels inactive comments* conflict* ci* review-loop* review* ready* ready-unreview*"; strings.Join(got, " ") != want {
+	if want := "inherit-labels inactive comments* conflict* ci* review* ready* ready-unreview*"; strings.Join(got, " ") != want {
 		t.Errorf("PR rules = %v, want %s", got, want)
 	}
 }

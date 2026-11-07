@@ -38,7 +38,6 @@ care splits into five recipes in session `care`, each a whole recipe: today's ca
 | `care-ci` | Fix CI | today's fix-ci ask |
 | `care-rebase` | Rebase | fetch upstream → base, today's rebase ask |
 | `care-iterate` | Iterate | input `instruction`, today's iterate ask |
-| `review-loop` | Review and fix | up to three rounds of a fresh reviewer step session and a fix in `care` (design/review-loop.md) |
 
 ```yaml
 # recipes/care-rebase.yaml
