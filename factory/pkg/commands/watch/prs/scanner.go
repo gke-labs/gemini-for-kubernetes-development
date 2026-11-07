@@ -186,6 +186,10 @@ type Deps struct {
 	// Rules is the operator's say over the rules: those disabled, which
 	// the engine does not decide. nil: every rule on.
 	Rules *rules.Control
+	// RerunAs reruns the failed jobs of a GitHub Actions run of the
+	// repository as login, with login's own token: a deferred rerun, as the
+	// pool bot that deferred it. nil: with GitHub, the watcher's client.
+	RerunAs func(ctx context.Context, run int64, login string) error
 }
 
 // Scanner evaluates open pull requests and queues the work they need.
@@ -199,6 +203,7 @@ type Scanner struct {
 	paused    func() bool
 	recorder  *rules.Recorder
 	rules     *rules.Control
+	rerunAs   func(ctx context.Context, run int64, login string) error
 	// rec is the record of the pull request evaluate is deciding about:
 	// the facts the engine decides on. Evaluations run one at a time.
 	rec *rules.Recording
@@ -255,6 +260,7 @@ func New(cfg Config, deps Deps) *Scanner {
 		paused:    deps.Paused,
 		recorder:  recorder,
 		rules:     control,
+		rerunAs:   deps.RerunAs,
 		reactions: conventions.NewReactionInterpreter(deps.GitHub, cfg.GitHubLogin, cfg.AllowlistedBots),
 		state:     newStateStore(deps.Queue),
 	}
@@ -589,7 +595,7 @@ func (s *Scanner) evaluate(ctx context.Context, prIssue *githubv39.Issue) {
 
 	// Reruns a care-ci apply deferred while their run still ran: made once
 	// the run has finished, without another care-ci run.
-	carryOutDeferredReruns(ctx, s.gh, pr, history.comments, append([]string{s.cfg.GitHubLogin}, s.cfg.BotUsers...), time.Now(), s.cfg.DryRun)
+	carryOutDeferredReruns(ctx, s.gh, s.rerunAs, pr, history.comments, append([]string{s.cfg.GitHubLogin}, s.cfg.BotUsers...), time.Now(), s.cfg.DryRun)
 
 	state := s.state.get(num)
 	s.recordHistory(pr, history, headSHA)

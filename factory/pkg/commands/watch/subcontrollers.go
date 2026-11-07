@@ -517,7 +517,23 @@ func (w *Watcher) newPRScanner() *prs.Scanner {
 		Paused:    w.draining,
 		Recorder:  w.rulesRecorder,
 		Rules:     w.rulesControl,
+		RerunAs:   w.rerunAs(),
 	})
+}
+
+// rerunAs reruns a run's failed jobs as login (RerunFailedJobsAs), the
+// watcher's own client for the watcher's own login; nil without
+// RerunFailedJobsAs.
+func (w *Watcher) rerunAs() func(ctx context.Context, run int64, login string) error {
+	if w.RerunFailedJobsAs == nil {
+		return nil
+	}
+	return func(ctx context.Context, run int64, login string) error {
+		if strings.EqualFold(login, w.githubLogin) {
+			return w.repoClient.RerunFailedJobs(ctx, run)
+		}
+		return w.RerunFailedJobsAs(ctx, w.Repo.Owner, w.Repo.Repo, run, login)
+	}
 }
 
 // prScannerConfig is the pull request scanner's configuration.
