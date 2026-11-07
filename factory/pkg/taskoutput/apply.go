@@ -32,6 +32,18 @@ func Apply(ctx context.Context, gh *githubv39.Client, doc *Document, dryRun bool
 	return nil
 }
 
+// SplitActions is a comma-separated list of actions (--action
+// comment,label; a rule's apply: list), in order; empty for "".
+func SplitActions(s string) []string {
+	var out []string
+	for _, v := range strings.Split(s, ",") {
+		if v = strings.TrimSpace(v); v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
 // ApplyAction does one apply action the document offers, or one its offer
 // of another allows (submit-review, by post-review).
 func ApplyAction(ctx context.Context, gh *githubv39.Client, doc *Document, verbName string, dryRun bool, out io.Writer) error {

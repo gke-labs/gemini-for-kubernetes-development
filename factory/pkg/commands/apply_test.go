@@ -219,3 +219,38 @@ func TestSessionLink(t *testing.T) {
 		t.Errorf("--disclose=false: %q, want no link", got)
 	}
 }
+
+// Several actions (--action comment,label; a rule's apply: [comment,
+// label]) are each done, in order: a Triage's assessment commented, then
+// its labels added.
+func TestApplyDocumentSeveralActionsInOrder(t *testing.T) {
+	var calls []string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/o/r/issues/7/comments", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			fmt.Fprint(w, `[]`)
+			return
+		}
+		calls = append(calls, "comment")
+		fmt.Fprint(w, `{"id":1}`)
+	})
+	mux.HandleFunc("/repos/o/r/issues/7/labels", func(w http.ResponseWriter, r *http.Request) {
+		calls = append(calls, "label")
+		fmt.Fprint(w, `[]`)
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	gh := githubv39.NewClient(nil)
+	gh.BaseURL, _ = url.Parse(srv.URL + "/")
+	d, err := taskoutput.Wrap("Triage", "triage:\n  labels: [overseer/stop]\n  assessment: Needs DiscoveryEngineCollection first.\n",
+		taskoutput.Target{URL: "https://github.com/o/r/issues/7"}, taskoutput.Source{Task: "t1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := applyDocument(context.Background(), gh, d, "comment,label", "", false); err != nil {
+		t.Fatal(err)
+	}
+	if fmt.Sprint(calls) != "[comment label]" {
+		t.Errorf("calls = %v, want [comment label]", calls)
+	}
+}

@@ -27,6 +27,10 @@ watch as it was; "As built" is the watch now.
   them, so they were deleted. `when:` says which
   items a rule takes, `run:` the recipe (with `apply:` and `inputs:`) or
   the writes, `policy:` the pacing (cooldown, dedupe, give-up, phase).
+  `apply:` names one action of the recipe's result (`apply: open-pr`) or a
+  list, done in order (`apply: [comment, label]`: a Triage's assessment
+  commented, then its labels added). Each must be an action that writes;
+  the task carries them comma-separated, as `--action comment,label`.
 - **The gates** are code (`rules.Gates`): stop label, closed,
   below-min-number, merge queue. A gated item is decided no further.
 - **The scanners read facts and carry out decisions.** The PR and issue

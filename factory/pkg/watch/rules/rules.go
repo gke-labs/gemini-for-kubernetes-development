@@ -24,6 +24,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/recipe"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/taskoutput"
 
 	"k8s.io/apimachinery/pkg/api/resource"
 )
@@ -241,10 +242,11 @@ func (d Disk) freeBelow() (uint64, error) {
 
 // Run is the action: a recipe run, or GitHub writes.
 type Run struct {
-	// Recipe is a factory recipe to run on the item, Apply the action its
-	// result is applied with when the run ends, Inputs its inputs.
+	// Recipe is a factory recipe to run on the item, Apply the actions its
+	// result is applied with when the run ends (one, or a list in order:
+	// a Triage's [comment, label]), Inputs its inputs.
 	Recipe string            `yaml:"recipe,omitempty" json:"recipe,omitempty"`
-	Apply  string            `yaml:"apply,omitempty" json:"apply,omitempty"`
+	Apply  ApplyActions      `yaml:"apply,omitempty" json:"apply,omitempty"`
 	Inputs map[string]string `yaml:"inputs,omitempty" json:"inputs,omitempty"`
 
 	// Acknowledge feedback (PRs) marks the feedback the recipe's task
@@ -692,6 +694,14 @@ func (r *Rule) Validate() error {
 		// A rule's name names its file, and its task's (a rule task's).
 		return fail("the name is not lowercase letters, digits and dashes, starting with a letter")
 	}
+	for _, a := range r.Run.Apply.List() {
+		if r.Run.Recipe == "" {
+			return fail("run.apply needs a run.recipe whose result it applies")
+		}
+		if class, ok := taskoutput.VerbClass(a); !ok || class != taskoutput.ClassApply {
+			return fail("run.apply: %s is not an action that writes a result (comment, label, open-pr, post-replies, submit-review, ...)", a)
+		}
+	}
 	if _, ok := predicates[r.On]; !ok || r.On == "*" {
 		return fail("on: %q is not one of %s, %s", r.On, OnIssue, OnPR)
 	}
@@ -823,4 +833,50 @@ func (s Set) Ordered() Set {
 		return a.Name < b.Name
 	})
 	return out
+}
+
+// ApplyActions are the actions a rule's recipe result is applied with, in
+// order: one (apply: open-pr) or a list (apply: [comment, label]), each one
+// the result offers. Joined by commas, as a task and the CLI's --action
+// carry them; empty applies nothing.
+type ApplyActions string
+
+// UnmarshalYAML reads one action, or a list of them.
+func (a *ApplyActions) UnmarshalYAML(n *yaml.Node) error {
+	switch n.Kind {
+	case yaml.ScalarNode:
+		*a = ApplyActions(strings.TrimSpace(n.Value))
+		if strings.Contains(string(*a), ",") {
+			return fmt.Errorf("apply: %q: list several actions as a YAML list ([comment, label]), not with commas", n.Value)
+		}
+		return nil
+	case yaml.SequenceNode:
+		var list []string
+		if err := n.Decode(&list); err != nil {
+			return fmt.Errorf("apply: %w", err)
+		}
+		for i, v := range list {
+			v = strings.TrimSpace(v)
+			switch {
+			case v == "":
+				return fmt.Errorf("apply: action %d is empty", i+1)
+			case strings.Contains(v, ","):
+				return fmt.Errorf("apply: action %q has a comma", v)
+			case slices.Contains(list[:i], v):
+				return fmt.Errorf("apply: %s is listed twice", v)
+			}
+			list[i] = v
+		}
+		*a = ApplyActions(strings.Join(list, ","))
+		return nil
+	}
+	return fmt.Errorf("apply: want an action or a list of actions")
+}
+
+// List is the actions, in order.
+func (a ApplyActions) List() []string {
+	if a == "" {
+		return nil
+	}
+	return strings.Split(string(a), ",")
 }

@@ -3,6 +3,7 @@ package taskoutput
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -132,5 +133,13 @@ func TestDocumentText(t *testing.T) {
 	}
 	if got, err := triage.Text(); err != nil || !strings.Contains(got, "priority: high") || !strings.Contains(got, "bug") {
 		t.Errorf("Triage text = %q %v", got, err)
+	}
+}
+
+func TestSplitActions(t *testing.T) {
+	for in, want := range map[string]string{"": "[]", "open-pr": "[open-pr]", "comment,label": "[comment label]", " comment , label ,": "[comment label]"} {
+		if got := fmt.Sprint(SplitActions(in)); got != want {
+			t.Errorf("SplitActions(%q) = %s, want %s", in, got, want)
+		}
 	}
 }
