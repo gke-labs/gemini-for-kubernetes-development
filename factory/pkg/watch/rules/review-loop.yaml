@@ -1,0 +1,34 @@
+# A grouped graph's draft PR that wants a review is reviewed and fixed in
+# its own sandbox before the review rule reviews it (review-loop: a fresh
+# reviewer and the PR's care conversation, up to three rounds, each
+# round's fix pushed; design/review-loop.md). It takes the item before
+# review, so while it runs review waits, and it runs once per head. The
+# head its own last push left is a new one, so it runs once more there:
+# after a clean round that run finds it clean again, pushes nothing and
+# ends on the head it started on, and review reviews it; after a third
+# round's fix it carries on the loop. It does not wait for green checks:
+# CI runs on each round's push while the next round reviews.
+#
+# Off unless the repository turns it on (.agents/watch/review-loop.yaml:
+# name: review-loop, enabled: true).
+name: review-loop
+description: Review and fix a grouped graph's draft PR before its review
+on: pr
+order: 37
+enabled: false
+when:
+  author: pool
+  draft: true
+  feedback: none
+  approved: false
+  reviewed-at-head: false
+  closes: {labels: {all: ["*/review"]}}
+run:
+  recipe: review-loop
+  inputs:
+    instructions: "{{review-instructions}}"
+  on-start:
+    comment: "AI Factory started reviewing and fixing this pull request in its sandbox before its review."
+policy:
+  dedupe: head
+  phase: 1

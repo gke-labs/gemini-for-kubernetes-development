@@ -1,6 +1,6 @@
 # Review loop: review and fix inside one task
 
-Status: phase 1 in progress (steps 1-3 built).
+Status: phase 1 in progress (steps 1-4 built).
 
 ## Why
 
@@ -33,8 +33,8 @@ The automated review that counts (`reviewed-at-head`) is one from a reviewer-rol
 Steps:
 1. An `ask:` can name a session of its own in the task (`session:`): #2226.
 2. A step session has no way to GitHub: #2227.
-3. The `review-loop` recipe.
-4. A watch rule that runs it on a graph group's draft PR (`author: pool`, `draft: true`, `closes: {labels: {all: ["*/review"]}}`), before `review`, once per push of a step: `dedupe: head` records the head a task started on, and the loop's own pushes move it, so the rule needs the head the task ended on (or a marker the loop leaves).
+3. The `review-loop` recipe: #2229.
+4. The `review-loop` watch rule (`pkg/watch/rules/review-loop.yaml`), off unless a repository turns it on (`.agents/watch/review-loop.yaml`: `name: review-loop`, `enabled: true`). It takes a draft PR of the pool's whose closing issue wants a review (`author: pool`, `draft: true`, `closes: {labels: {all: ["*/review"]}}`, no feedback pending, not approved, not reviewed at its head), at order 37: after `ci`, before `review`, so `review` waits while it runs. It does not wait for green checks. It runs once per head (`dedupe: head`), so it runs once more on the head its own last push left: after a clean round that run finds it clean again, pushes nothing and ends on the head it started on, and `review` takes it - one reviewer pass more per step; after a third round's fix it carries on the loop. Telling its own pushes from others' would save that pass, but needs the head a run left carried back to the rules; if the pass shows in the numbers, the loop can instead skip a head it already found clean (a ref it keeps in the sandbox), with no rule change. A reviewer and fixer that keep disagreeing loop on, as `review` and `comments` do today.
 5. Measure (review rounds per step, time from draft PR to next step, against the 2026-11-06 baselines), then turn it on for staging's KCC overseer.
 
 ## Phase 2
