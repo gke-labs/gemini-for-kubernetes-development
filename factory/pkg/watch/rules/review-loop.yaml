@@ -27,8 +27,6 @@ run:
   recipe: review-loop
   inputs:
     instructions: "{{review-instructions}}"
-  on-start:
-    comment: "AI Factory started reviewing and fixing this pull request in its sandbox before its review."
 policy:
   dedupe: head
   # A failed run is no run for the dedupe: it is retried after 20m, and
