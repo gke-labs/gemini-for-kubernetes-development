@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/url"
 	"os"
+	"slices"
 	"strings"
 
 	githubv39 "github.com/google/go-github/v39/github"
@@ -121,7 +122,7 @@ a review that was submitted, nor open a second PR, nor reply twice.`,
 		},
 	}
 	cmd.Flags().StringVarP(&file, "filename", "f", "", "Task output file, or - for stdin")
-	cmd.Flags().StringVar(&action, "action", "", "Do one action the task output offers (label, comment, push-notes, post-review, submit-review, open-pr, post-replies, run[:<follow-up>]) instead of all its writes")
+	cmd.Flags().StringVar(&action, "action", "", "Do these actions the task output offers, comma-separated and in order (label, comment, push-notes, post-review, submit-review, open-pr, post-replies, run[:<follow-up>]), instead of all its writes")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Print what would be written, and write nothing")
 	_ = cmd.MarkFlagRequired("filename")
 	return cmd
@@ -140,12 +141,18 @@ func applyDocument(ctx context.Context, gh *githubv39.Client, d *taskoutput.Docu
 	ctx = taskoutput.WithTriggerLabel(ctx, configuredTriggerLabel())
 	ctx = taskoutput.WithSessionLink(ctx, sessionLink(configuredSessionURL(), d, sandboxName))
 	var err error
-	if verb == "" {
+	verbs := taskoutput.SplitActions(verb)
+	if len(verbs) == 0 {
 		err = taskoutput.Apply(ctx, gh, d, dryRun, os.Stdout)
-	} else {
-		err = taskoutput.ApplyAction(ctx, gh, d, verb, dryRun, os.Stdout)
 	}
-	if err != nil || dryRun || d.Kind != "Change" || (verb != "" && verb != "open-pr") {
+	// Several, in order (a rule's apply: [comment, label]); the first that
+	// fails stops the rest.
+	for _, v := range verbs {
+		if err = taskoutput.ApplyAction(ctx, gh, d, v, dryRun, os.Stdout); err != nil {
+			break
+		}
+	}
+	if err != nil || dryRun || d.Kind != "Change" || (len(verbs) > 0 && !slices.Contains(verbs, "open-pr")) {
 		return err
 	}
 	pr, err := parseGitHubItemURL(d.Target.URL)

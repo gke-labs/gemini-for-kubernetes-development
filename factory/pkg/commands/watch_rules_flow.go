@@ -138,7 +138,7 @@ func flowRun(r *rules.Rule) string {
 	if run.Recipe != "" {
 		s := "run " + run.Recipe
 		if run.Apply != "" {
-			s += " → " + run.Apply
+			s += " → " + strings.Join(run.Apply.List(), "+")
 		}
 		return s
 	}

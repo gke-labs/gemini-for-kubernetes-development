@@ -85,7 +85,7 @@ func (f *recipeRunFlags) add(cmd *cobra.Command) {
 	cmd.Flags().StringVar(&f.runName, "run-name", "", "Names this run: running again with the same name follows that task, or returns or applies its result, instead of starting another; find it with sandbox task status|output|attach --run-name")
 	cmd.Flags().BoolVar(&f.newSession, "new-session", false, "For a recipe in a session (session:): open a new conversation instead of continuing the one its group's last run recorded")
 	cmd.Flags().BoolVar(&f.dryRun, "dry-run", false, "With --apply: print what would be written to GitHub, write nothing, and leave the result to apply")
-	cmd.Flags().StringVar(&f.action, "action", "", "With --apply: do this one action of the result (as factory apply --action) instead of each write it offers")
+	cmd.Flags().StringVar(&f.action, "action", "", "With --apply: do these actions of the result, comma-separated and in order (as factory apply --action), instead of each write it offers")
 	cmd.Flags().BoolVar(&f.prLabels, "pr-labels", false, "For an issue's Change: label the PR open-pr opens as the overseer does, with the trigger label, the factory config's additional labels and the issue's labels (the overseer's)")
 	cmd.Flags().BoolVar(&f.apply, "apply", false, "Wait for the task's result and apply it to GitHub, as factory apply does. Interrupting stops the waiting, not the task; running the same command again waits for that task, or applies its result if it has finished.")
 }
@@ -1304,7 +1304,8 @@ func labelsAsSelf(apply applyMode, rec *recipe.Recipe) bool {
 
 type applyMode struct {
 	on, dryRun bool
-	// verb is the one action to apply; empty, each write offered.
+	// verb is the actions to apply, comma-separated and in order (--action;
+	// a rule's apply: list); empty, each write offered.
 	verb string
 	// asUser applies with the token of the account the task runs as
 	// (--user's secret) rather than the caller's: a watch's review is

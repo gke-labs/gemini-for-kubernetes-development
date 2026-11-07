@@ -295,7 +295,7 @@ func ruleOrder(r *rules.Rule) string {
 func ruleRun(r *rules.Rule) string {
 	if r.Run.Recipe != "" {
 		if r.Run.Apply != "" {
-			return r.Run.Recipe + " → " + r.Run.Apply
+			return r.Run.Recipe + " → " + strings.Join(r.Run.Apply.List(), "+")
 		}
 		return r.Run.Recipe
 	}

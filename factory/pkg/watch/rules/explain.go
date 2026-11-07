@@ -128,7 +128,7 @@ func explainRule(r *Rule, it Item, env Env, st Step) Step {
 	}
 	d := Decision{Rule: r.Name, Kind: it.Kind, Number: it.Number, Outcome: OutcomeRun}
 	if r.Run.Recipe != "" {
-		d.Recipe, d.Apply, d.Phase = r.Run.Recipe, r.Run.Apply, r.Policy.Phase
+		d.Recipe, d.Apply, d.Phase = r.Run.Recipe, string(r.Run.Apply), r.Policy.Phase
 		d.Hooks = Hooks(r, it, env)
 		if len(r.Run.Inputs) > 0 {
 			d.Inputs = map[string]string{}
