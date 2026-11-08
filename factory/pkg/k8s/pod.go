@@ -30,8 +30,11 @@ const PodStartTimeout = "timed out waiting for sandbox pod"
 // A sandbox the idle suspender scaled to zero is woken first, and stamped
 // unpaused-at: without the stamp the suspender, counting from the last
 // task, scales it straight back to zero before the pod is ready. A
-// missing sandbox is an error at once rather than a wait, and so is a
-// pod that has failed with nothing live or pending beside it.
+// missing sandbox is an error at once rather than a wait. A pod that has
+// failed (FailedPod: evicted, or refused by its node's kubelet - OutOfcpu,
+// OutOfmemory, ...) with nothing live or pending beside it is deleted once,
+// so the sandbox controller starts a new one on the same disk; a second
+// failure is an error.
 func SandboxPod(ctx context.Context, namespace, sandboxName string) (string, error) {
 	kube, err := clients.NewKubernetesClient()
 	if err != nil {
@@ -59,14 +62,25 @@ func sandboxPod(ctx context.Context, kube *clients.KubernetesClient, namespace, 
 	}
 
 	deadline := time.Now().Add(sandboxPodWait)
+	recreated := false
 	for {
 		pods, err := kube.Clientset.CoreV1().Pods(namespace).List(ctx, v1.ListOptions{LabelSelector: "sandbox=" + sandboxName})
 		if err == nil {
-			name, failed := readyPod(pods.Items)
+			name, failed, failedPod := readyPod(pods.Items)
 			if name != "" {
 				return name, nil
 			}
-			if failed != "" {
+			if failed != "" && failedPod != "" && !recreated {
+				// A pod refused or evicted by its node never comes back by
+				// itself: without this every task handed to the sandbox
+				// fails at once against the dead pod (KCC #15222, OutOfcpu,
+				// 2026-11-07).
+				recreated = true
+				fmt.Fprintf(os.Stderr, "%s: deleting it so the sandbox controller starts a new one...\n", failed)
+				if err := kube.Clientset.CoreV1().Pods(namespace).Delete(ctx, failedPod, v1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+					return "", fmt.Errorf("%s: cannot connect to terminated pod, and deleting it failed: %w", failed, err)
+				}
+			} else if failed != "" {
 				return "", fmt.Errorf("%s: cannot connect to terminated pod", failed)
 			}
 		}
@@ -81,11 +95,27 @@ func sandboxPod(ctx context.Context, kube *clients.KubernetesClient, namespace, 
 	}
 }
 
+// FailedPod reports whether a pod has ended for good and is not being
+// deleted yet: evicted, or refused by its node's kubelet at admission
+// (OutOfcpu, OutOfmemory, OutOfpods, UnexpectedAdmissionError, ...), all
+// phase Failed. Nothing restarts such a pod; deleted, the sandbox
+// controller starts a new one.
+func FailedPod(pod *corev1.Pod) bool {
+	return pod.DeletionTimestamp == nil && (pod.Status.Phase == corev1.PodFailed || EvictedPod(pod))
+}
+
+// EvictedPod reports whether a pod was evicted (by the kubelet, under
+// node pressure, or through the eviction API).
+func EvictedPod(pod *corev1.Pod) bool {
+	return strings.EqualFold(pod.Status.Reason, "Evicted")
+}
+
 // readyPod is the ready pod among a sandbox's pods, unless one is still
 // terminating (a restart in progress, whose replacement is the one to
 // use). With none live or pending, failed describes the last pod that
-// failed or was evicted.
-func readyPod(pods []corev1.Pod) (name, failed string) {
+// failed, was evicted or exited, and failedPod names it when it is a
+// FailedPod, one to delete for a new one.
+func readyPod(pods []corev1.Pod) (name, failed, failedPod string) {
 	terminating, live := false, false
 	for _, pod := range pods {
 		if pod.DeletionTimestamp != nil {
@@ -102,21 +132,25 @@ func readyPod(pods []corev1.Pod) (name, failed string) {
 			}
 		case pod.Status.Phase == corev1.PodPending:
 			live = true
-		case pod.Status.Phase == corev1.PodFailed || pod.Status.Phase == corev1.PodSucceeded || strings.EqualFold(pod.Status.Reason, "Evicted"):
+		case pod.Status.Phase == corev1.PodFailed || pod.Status.Phase == corev1.PodSucceeded || EvictedPod(&pod):
 			reason := pod.Status.Reason
 			if reason == "" {
 				reason = string(pod.Status.Phase)
 			}
 			failed = fmt.Sprintf("sandbox pod %s is in %s state (reason: %s)", pod.Name, pod.Status.Phase, reason)
+			failedPod = ""
+			if FailedPod(&pod) {
+				failedPod = pod.Name
+			}
 		}
 	}
 	if terminating {
 		name = ""
 	}
 	if live {
-		failed = ""
+		failed, failedPod = "", ""
 	}
-	return name, failed
+	return name, failed, failedPod
 }
 
 // unstructuredInt reads an integer field of an unstructured object,

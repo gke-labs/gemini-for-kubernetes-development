@@ -290,7 +290,8 @@ func (s *Service) RefreshTaskState(ctx context.Context, name string) (bool, erro
 
 // reconcileTerminatedPod detects a sandbox whose pods have all terminated while
 // its annotation still claims a task is running, corrects the annotation, and
-// deletes evicted pods so the controller can recreate them. It reports whether
+// deletes failed pods (k8s.FailedPod: evicted, or refused by their node -
+// OutOfcpu, OutOfmemory, ...) so the controller can recreate them. It reports whether
 // the sandbox was found terminated.
 func (s *Service) reconcileTerminatedPod(ctx context.Context, name string, annotations map[string]string) (bool, error) {
 	if s.kube.Clientset == nil {
@@ -314,7 +315,7 @@ func (s *Service) reconcileTerminatedPod(ctx context.Context, name string, annot
 		}
 		if pod.Status.Phase == corev1.PodRunning || pod.Status.Phase == corev1.PodPending {
 			hasLiveOrPending = true
-		} else if pod.Status.Phase == corev1.PodFailed || pod.Status.Phase == corev1.PodSucceeded || strings.EqualFold(pod.Status.Reason, "Evicted") {
+		} else if pod.Status.Phase == corev1.PodFailed || pod.Status.Phase == corev1.PodSucceeded || k8s.EvictedPod(pod) {
 			lastFailedPod = pod
 		}
 	}
@@ -333,16 +334,16 @@ func (s *Service) reconcileTerminatedPod(ctx context.Context, name string, annot
 	klog.Warningf("Sandbox %s pod is in %s state (reason: %s). Updating sandbox annotation from Running to %s.", name, lastFailedPod.Status.Phase, reason, taskState)
 	_ = factorysandbox.UpdateSandboxTaskAnnotation(ctx, s.kube, s.namespace, name, lastTaskType(annotations), taskState)
 
-	if strings.EqualFold(reason, "Evicted") || (lastFailedPod.Status.Phase == corev1.PodFailed && strings.EqualFold(lastFailedPod.Status.Reason, "Evicted")) {
-		klog.Infof("Deleting evicted pod %s so controller can recreate it.", lastFailedPod.Name)
+	if k8s.FailedPod(lastFailedPod) {
+		klog.Infof("Deleting failed pod %s (reason: %s) so controller can recreate it.", lastFailedPod.Name, reason)
 		// The delete arbitrates the eviction count: the sandbox reconciler sweeps
-		// evicted pods too, so whoever wins the delete is the one that counts the
+		// failed pods too, so whoever wins the delete is the one that counts an
 		// eviction. The loser sees NotFound and leaves the count alone.
 		if err := s.kube.Clientset.CoreV1().Pods(s.namespace).Delete(ctx, lastFailedPod.Name, metav1.DeleteOptions{}); err != nil {
 			if !apierrors.IsNotFound(err) {
-				klog.Warningf("Failed to delete evicted pod %s: %v", lastFailedPod.Name, err)
+				klog.Warningf("Failed to delete failed pod %s: %v", lastFailedPod.Name, err)
 			}
-		} else {
+		} else if k8s.EvictedPod(lastFailedPod) {
 			_ = factorysandbox.IncrementSandboxEvictionCount(ctx, s.kube, s.namespace, name)
 		}
 	}
