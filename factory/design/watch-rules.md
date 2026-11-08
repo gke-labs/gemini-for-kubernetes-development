@@ -106,7 +106,7 @@ The sandbox rules controller (`pkg/commands/watch/sandboxrules`) checks every aw
 | PR scanner | 2m fast or 10m sweep | fast: open PRs assigned to the pool, those changed since last evaluated; sweep: assigned and trigger-labelled, all pages | label inheritance, comments, conflict, CI, review, readiness, inactivity |
 | fan-out | 5m, and woken when a child closes | open `*/fanout` issues | children, checkpoints, the spec proposal |
 | chores | 30s (definitions every 5m) | `.agents/*.md` with `schedule:` | scheduled agents |
-| sandbox reconciler | 30s, GC 5m | the namespace's sandboxes | task state, evicted pods, closed items, age, idle; the linked-issue nudge |
+| sandbox reconciler | 30s, GC 5m | the namespace's sandboxes | task state, failed pods, closed items, age, idle; the linked-issue nudge |
 | warm workspace | 5m | the warm snapshot | the warm cycle |
 | dispatcher | 30s | the queue | what starts, as whom |
 

@@ -16,6 +16,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/concurrency"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/conventions"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/k8s"
 	factorysandbox "github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/sandbox"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/tokenusage"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/usagereport"
@@ -197,7 +198,7 @@ func (r *Reconciler) Run(ctx context.Context) error {
 }
 
 // ReconcileOnce executes a single state reconciliation cycle: it clears out
-// evicted pods and refreshes the recorded task state of sandboxes that still
+// failed pods and refreshes the recorded task state of sandboxes that still
 // claim to be running.
 //
 // It keeps running while the watcher is draining or shutting down. Nothing it
@@ -208,7 +209,7 @@ func (r *Reconciler) ReconcileOnce(ctx context.Context) {
 		return
 	}
 
-	r.deleteEvictedPods(ctx)
+	r.deleteFailedPods(ctx)
 	r.reconcileRunningSandboxes(ctx)
 }
 
@@ -263,14 +264,15 @@ func (r *Reconciler) CollectGarbage(ctx context.Context) {
 	r.suspendIdleSandboxes(ctx, items, collected)
 }
 
-// evictedPodLabelKeys are the label keys that can carry the sandbox name on a
+// sandboxPodLabelKeys are the label keys that can carry the sandbox name on a
 // sandbox pod. A label selector cannot express "has either key", so each is
 // listed in turn and the results are merged.
-var evictedPodLabelKeys = []string{"sandbox", "agents.x-k8s.io/sandbox"}
+var sandboxPodLabelKeys = []string{"sandbox", "agents.x-k8s.io/sandbox"}
 
-// deleteEvictedPods proactively removes evicted sandbox pods so the sandbox
-// controller can recreate them or release their resources.
-func (r *Reconciler) deleteEvictedPods(ctx context.Context) {
+// deleteFailedPods proactively removes failed sandbox pods (k8s.FailedPod:
+// evicted, or refused by their node - OutOfcpu, OutOfmemory, ...) so the
+// sandbox controller can recreate them or release their resources.
+func (r *Reconciler) deleteFailedPods(ctx context.Context) {
 	kube := r.sandboxes.kube
 	if kube.Clientset == nil {
 		return
@@ -278,10 +280,10 @@ func (r *Reconciler) deleteEvictedPods(ctx context.Context) {
 	namespace := r.sandboxes.namespace
 
 	seen := make(map[string]bool)
-	for _, labelKey := range evictedPodLabelKeys {
+	for _, labelKey := range sandboxPodLabelKeys {
 		podList, err := kube.Clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{LabelSelector: labelKey})
 		if err != nil {
-			klog.Warningf("Failed to list sandbox pods by label %q for eviction cleanup: %v", labelKey, err)
+			klog.Warningf("Failed to list sandbox pods by label %q for failed pod cleanup: %v", labelKey, err)
 			continue
 		}
 		for i := range podList.Items {
@@ -290,29 +292,32 @@ func (r *Reconciler) deleteEvictedPods(ctx context.Context) {
 				continue
 			}
 			seen[pod.Name] = true
-			r.deleteEvictedPod(ctx, pod, namespace)
+			r.deleteFailedPod(ctx, pod, namespace)
 		}
 	}
 }
 
-// deleteEvictedPod removes one evicted pod and records the eviction against its
-// sandbox.
+// deleteFailedPod removes one failed pod and, when it was evicted, records
+// the eviction against its sandbox.
 //
 // The delete is what arbitrates the eviction count. Service.IsTaskRunning
-// cleans up evicted pods too, and another watcher may be sweeping the same
+// cleans up failed pods too, and another watcher may be sweeping the same
 // namespace, so the counter is incremented only by whoever wins the delete.
 // Everyone else sees NotFound and leaves the count alone.
-func (r *Reconciler) deleteEvictedPod(ctx context.Context, pod *corev1.Pod, namespace string) {
-	if pod.DeletionTimestamp != nil || pod.Status.Phase != corev1.PodFailed || !strings.EqualFold(pod.Status.Reason, "Evicted") {
+func (r *Reconciler) deleteFailedPod(ctx context.Context, pod *corev1.Pod, namespace string) {
+	if !k8s.FailedPod(pod) {
 		return
 	}
 
-	klog.Infof("Found evicted sandbox pod %s in namespace %s. Deleting pod so controller can recreate or clean up.", pod.Name, namespace)
+	klog.Infof("Found failed sandbox pod %s in namespace %s (reason: %s). Deleting pod so controller can recreate or clean up.", pod.Name, namespace, pod.Status.Reason)
 	kube := r.sandboxes.kube
 	if err := kube.Clientset.CoreV1().Pods(namespace).Delete(ctx, pod.Name, metav1.DeleteOptions{}); err != nil {
 		if !apierrors.IsNotFound(err) {
-			klog.Warningf("Failed to delete evicted sandbox pod %s: %v", pod.Name, err)
+			klog.Warningf("Failed to delete failed sandbox pod %s: %v", pod.Name, err)
 		}
+		return
+	}
+	if !k8s.EvictedPod(pod) {
 		return
 	}
 

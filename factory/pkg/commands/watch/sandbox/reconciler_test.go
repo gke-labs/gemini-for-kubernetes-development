@@ -370,6 +370,46 @@ func TestReconcileOnceDeletesEvictedPods(t *testing.T) {
 	}
 }
 
+// A pod its node's kubelet refused at admission (OutOfcpu, OutOfmemory, ...)
+// is as dead as an evicted one: deleted, so the sandbox controller starts a
+// new one (KCC #15222 retried three times against an OutOfcpu pod). Only
+// an eviction counts as one.
+func TestReconcileOnceDeletesPodsRefusedByTheirNode(t *testing.T) {
+	var objs []runtime.Object
+	for _, reason := range []string{"OutOfcpu", "OutOfmemory", "UnexpectedAdmissionError", ""} {
+		objs = append(objs, &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "fix-" + strings.ToLower(reason) + "-abc",
+				Namespace: testNamespace,
+				Labels:    map[string]string{"sandbox": "fix-" + strings.ToLower(reason)},
+			},
+			Status: corev1.PodStatus{Phase: corev1.PodFailed, Reason: reason},
+		})
+	}
+	pending := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "fix-9-abc", Namespace: testNamespace, Labels: map[string]string{"sandbox": "fix-9"}},
+		Status:     corev1.PodStatus{Phase: corev1.PodPending},
+	}
+	objs = append(objs, pending)
+
+	kube := newFakeKubeClientWithPods(t, objs)
+	r := New(Config{}, Deps{
+		Sandboxes: NewService(ServiceConfig{Namespace: testNamespace, Owner: "test-owner", Repo: "test-repo"}, ServiceDeps{Kube: kube}),
+		Locks:     concurrency.NewSandboxLockRegistry(),
+		Entities:  warmCache(),
+	})
+
+	r.ReconcileOnce(context.Background())
+
+	remaining, err := kube.Clientset.CoreV1().Pods(testNamespace).List(context.Background(), metav1.ListOptions{})
+	if err != nil {
+		t.Fatalf("failed to list pods: %v", err)
+	}
+	if len(remaining.Items) != 1 || remaining.Items[0].Name != pending.Name {
+		t.Errorf("expected only the pending pod to remain, got %v", remaining.Items)
+	}
+}
+
 // A label selector cannot express "has either key", so pods that carry only the
 // namespaced label need their own listing.
 func TestReconcileOnceDeletesEvictedPodsLabeledWithEitherKey(t *testing.T) {
