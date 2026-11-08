@@ -35,6 +35,6 @@ func parseSummary(raw string) (any, error) {
 }
 
 // SummaryComment is the comment a summary is posted as.
-func SummaryComment(s *Summary) string {
-	return "**Summary**\n\n" + strings.TrimSpace(s.Markdown)
+func SummaryComment(s *Summary, c *CommentOptions) string {
+	return withHeading(c.heading("**Summary**"), strings.TrimSpace(s.Markdown))
 }

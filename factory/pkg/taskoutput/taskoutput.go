@@ -92,6 +92,56 @@ type Document struct {
 // (KeyedComment).
 type CommentOptions struct {
 	Key string `yaml:"key,omitempty" json:"key,omitempty"`
+	// Prefix is a line the comment starts with, above its heading: a
+	// directive such as /overseer-ignore, so the overseer does not act on
+	// the comment as on a request.
+	Prefix string `yaml:"prefix,omitempty" json:"prefix,omitempty"`
+	// Heading replaces the kind's heading line (**Triage assessment**,
+	// **Implementation plan**, **Summary**); "" leaves the heading out.
+	// Unset, the kind's.
+	Heading *string `yaml:"heading,omitempty" json:"heading,omitempty"`
+}
+
+// heading is the heading line a comment of a kind whose own is def
+// starts with: c's when it sets one ("" for none).
+func (c *CommentOptions) heading(def string) string {
+	if c != nil && c.Heading != nil {
+		return strings.TrimSpace(*c.Heading)
+	}
+	return def
+}
+
+// withPrefix puts c's prefix line above body.
+func (c *CommentOptions) withPrefix(body string) string {
+	if c == nil || strings.TrimSpace(c.Prefix) == "" {
+		return body
+	}
+	return strings.TrimSpace(c.Prefix) + "\n\n" + body
+}
+
+// ValidateComment checks a recipe's comment options.
+func ValidateComment(c *CommentOptions) error {
+	if c == nil {
+		return nil
+	}
+	if c.Key != "" && !CommentKeyRE.MatchString(c.Key) {
+		return fmt.Errorf("comment key %q is not lowercase letters, digits and dashes, starting with a letter", c.Key)
+	}
+	if strings.Contains(strings.TrimSpace(c.Prefix), "\n") {
+		return fmt.Errorf("comment prefix must be one line")
+	}
+	if c.Heading != nil && strings.Contains(strings.TrimSpace(*c.Heading), "\n") {
+		return fmt.Errorf("comment heading must be one line")
+	}
+	return nil
+}
+
+// withHeading is body under heading, or body alone when heading is "".
+func withHeading(heading, body string) string {
+	if heading == "" {
+		return body
+	}
+	return heading + "\n\n" + body
 }
 
 // CommentKeyRE is what a comment key may be.
