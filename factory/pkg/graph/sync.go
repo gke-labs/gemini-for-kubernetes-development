@@ -133,7 +133,7 @@ func Sync(ctx context.Context, gh GitHub, opts Options) (*Pass, error) {
 		return p, err
 	}
 	p.Status = RenderStatus(p.Start.SourceName(), p.Version, p.Observed.Spec, p.Result)
-	return p, writeStatus(ctx, gh, opts, statusComment, p.Status, string(p.Result.Phase))
+	return p, writeStatus(ctx, gh, opts, statusComment, p.Status, p.Result.Phase)
 }
 
 // writeStatus makes the parent's status comment status: edited when it is
