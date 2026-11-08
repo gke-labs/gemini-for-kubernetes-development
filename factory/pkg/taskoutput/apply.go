@@ -124,19 +124,19 @@ func applyComment(ctx context.Context, gh *githubv39.Client, doc *Document, dryR
 		if t.Assessment == "" {
 			return nil
 		}
-		comment, what = TriageComment(t), "triage"
+		comment, what = TriageComment(t, doc.Comment), "triage"
 	case "Plan":
 		p, err := doc.PlanSpec()
 		if err != nil {
 			return err
 		}
-		comment, what = PlanComment(p), "plan"
+		comment, what = PlanComment(p, doc.Comment), "plan"
 	case "Summary":
 		sum, err := doc.SummarySpec()
 		if err != nil {
 			return err
 		}
-		comment, what = SummaryComment(sum), "summary"
+		comment, what = SummaryComment(sum, doc.Comment), "summary"
 	default:
 		return fmt.Errorf("cannot comment a %s", doc.Kind)
 	}
@@ -167,25 +167,27 @@ func applyComment(ctx context.Context, gh *githubv39.Client, doc *Document, dryR
 	if dryRun {
 		return nil
 	}
-	body := withSessionHint(ctx, comment) + marker(doc)
+	body := doc.Comment.withPrefix(withSessionHint(ctx, comment)) + marker(doc)
 	if _, _, err := gh.Issues.CreateComment(ctx, owner, repo, num, &githubv39.IssueComment{Body: &body}); err != nil {
 		return fmt.Errorf("posting the %s comment: %w", what, err)
 	}
 	return nil
 }
 
-// PlanComment is the comment a plan is published as.
-func PlanComment(p *Plan) string {
-	return "**Implementation plan**\n\n" + strings.TrimSpace(p.Markdown)
+// PlanComment is the comment a plan is published as, under its recipe's
+// heading (c, may be nil).
+func PlanComment(p *Plan, c *CommentOptions) string {
+	return withHeading(c.heading("**Implementation plan**"), strings.TrimSpace(p.Markdown))
 }
 
-// TriageComment is the comment a triage is published as.
-func TriageComment(t *Triage) string {
-	body := fmt.Sprintf("**Triage assessment**\n\n%s", t.Assessment)
+// TriageComment is the comment a triage is published as, under its
+// recipe's heading (c, may be nil).
+func TriageComment(t *Triage, c *CommentOptions) string {
+	body := withHeading(c.heading("**Triage assessment**"), strings.TrimSpace(t.Assessment))
 	if t.Priority != "" {
 		body += fmt.Sprintf("\n\nPriority: %s", t.Priority)
 	}
-	if len(t.Labels) > 0 {
+	if len(t.Labels) > 0 && c.suggestedLabels() {
 		body += "\n\nSuggested labels: `" + strings.Join(t.Labels, "`, `") + "`"
 	}
 	if len(t.Duplicates) > 0 {
@@ -329,7 +331,7 @@ func applyKeyedComment(ctx context.Context, gh *githubv39.Client, doc *Document,
 	if rest != "" {
 		body += "\n" + rest
 	}
-	body = withSessionHint(ctx, body) + keyMarker(key, version) + marker(doc)
+	body = doc.Comment.withPrefix(withSessionHint(ctx, body)) + keyMarker(key, version) + marker(doc)
 	if existing == nil {
 		fmt.Fprintf(out, "%s the %s (v%d) on %s:\n%s\n", doing(dryRun, "Commenting", "comment"), what, version, doc.Target.URL, indent(comment))
 		if dryRun {
