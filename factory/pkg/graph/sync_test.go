@@ -458,3 +458,31 @@ func TestParseStart(t *testing.T) {
 		t.Errorf("round trip: %+v, %v", got, err)
 	}
 }
+
+// An issue labelled to start a graph with no factory-graph block (and no
+// plan to start from) says so in its status comment, once, naming what the
+// block needs, rather than nothing happening with nothing said; one without
+// the label gets no comment.
+func TestSyncLabelledWithoutAStartBlock(t *testing.T) {
+	f := graphtest.New()
+	f.Issues[100] = &graphtest.Issue{Title: "ai:feat: KCC support for Foo", Body: "Implement Foo.", Author: "alice", Assoc: "MEMBER", Open: true, Labels: []string{"overseer/graph", "workflow/greenfield"}}
+	f.Issues[101] = &graphtest.Issue{Title: "unlabelled", Body: "Nothing.", Author: "alice", Assoc: "MEMBER", Open: true}
+	opts := Options{Issue: 100, Trigger: "overseer", BotLogin: f.Login, Pool: []string{"hopper-coder-bot", f.Login}}
+	p := sync(t, f, opts)
+	if !p.NoGraph || !p.Unstarted {
+		t.Fatalf("NoGraph %v, Unstarted %v", p.NoGraph, p.Unstarted)
+	}
+	status := statusComments(f, 100)
+	if len(status) != 1 || !strings.Contains(status[0], "Not started") || !strings.Contains(status[0], "`overseer/graph`") || !strings.Contains(status[0], "```factory-graph") {
+		t.Fatalf("status:\n%s", strings.Join(status, "\n---\n"))
+	}
+	writes := f.Writes
+	sync(t, f, opts)
+	if f.Writes != writes || len(statusComments(f, 100)) != 1 {
+		t.Errorf("a second pass wrote again: %d writes, %d comments", f.Writes-writes, len(statusComments(f, 100)))
+	}
+	opts.Issue = 101
+	if p := sync(t, f, opts); p.Unstarted || len(statusComments(f, 101)) != 0 {
+		t.Errorf("an unlabelled issue: Unstarted %v, comments %v", p.Unstarted, statusComments(f, 101))
+	}
+}

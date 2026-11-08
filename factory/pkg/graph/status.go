@@ -11,6 +11,21 @@ var statusMarker = fmt.Sprintf("<!-- factory:comment key=%s v=1 -->", StatusKey)
 // IsStatusComment is whether body is a graph status comment.
 func IsStatusComment(body string) bool { return strings.Contains(body, statusMarker) }
 
+// NotStartedStatus is the status comment of an issue labelled to start a
+// graph (<trigger>/graph) that has no factory-graph block saying which: it
+// names what the block needs, so a person can add it. The next pass after
+// they do replaces it with the graph's status.
+func NotStartedStatus(trigger string) string {
+	if trigger == "" {
+		trigger = "overseer"
+	}
+	return fmt.Sprintf("### Issue graph - Not started · no `factory-graph` block\n\n"+
+		"This issue is labelled `%s/graph`, but its description has no `factory-graph` block, so no graph runs. "+
+		"Add one naming the graph and its parameters, for example:\n\n"+
+		"````markdown\n```factory-graph\ngraph: <graph name, a file in .agents/graphs>\nparams:\n  <param>: \"<value>\"\n```\n````\n\n"+
+		"or take the label off.\n\n%s", trigger, statusMarker)
+}
+
 // RenderStatus is the parent's status comment: the phase, a row per step,
 // and the state block. It has no timestamps of its own, so it changes only
 // when something real does.

@@ -94,7 +94,12 @@ func (o Options) logf(format string, args ...any) {
 type Pass struct {
 	// NoGraph is that the issue has no start block: it is no graph's parent.
 	NoGraph bool
-	Start   *Start
+	// Unstarted is a NoGraph issue that carries the graph label all the
+	// same: labelled to start a graph, with no factory-graph block to say
+	// which. Its status comment says so (NotStartedStatus), rather than
+	// nothing happening with nothing said.
+	Unstarted bool
+	Start     *Start
 	// Version is the plan's version, for steps from a plan.
 	Version  int
 	Observed Observed
@@ -108,8 +113,15 @@ type Pass struct {
 // the next one reads again and carries on.
 func Sync(ctx context.Context, gh GitHub, opts Options) (*Pass, error) {
 	p, statusComment, err := Observe(ctx, gh, opts)
-	if err != nil || p.NoGraph {
+	if err != nil {
 		return p, err
+	}
+	if p.NoGraph {
+		if !p.Unstarted {
+			return p, nil
+		}
+		p.Status = NotStartedStatus(opts.Trigger)
+		return p, writeStatus(ctx, gh, opts, statusComment, p.Status, "not started: no factory-graph block")
 	}
 	p.Result = Reconcile(p.Observed)
 	if p.Observed.State.Completed {
@@ -121,20 +133,24 @@ func Sync(ctx context.Context, gh GitHub, opts Options) (*Pass, error) {
 		return p, err
 	}
 	p.Status = RenderStatus(p.Start.SourceName(), p.Version, p.Observed.Spec, p.Result)
+	return p, writeStatus(ctx, gh, opts, statusComment, p.Status, p.Result.Phase)
+}
+
+// writeStatus makes the parent's status comment status: edited when it is
+// there and says something else, added when there is none, left as it is
+// when it says status already. what is for a dry run's log.
+func writeStatus(ctx context.Context, gh GitHub, opts Options, statusComment *githubv39.IssueComment, status, what string) error {
 	switch {
-	case statusComment != nil && statusComment.GetBody() == p.Status:
+	case statusComment != nil && statusComment.GetBody() == status:
+		return nil
 	case opts.DryRun:
-		opts.logf("would write the status comment on #%d (%s)", opts.Issue, p.Result.Phase)
+		opts.logf("would write the status comment on #%d (%s)", opts.Issue, what)
+		return nil
 	case statusComment != nil:
-		if err := gh.EditComment(ctx, statusComment.GetID(), p.Status); err != nil {
-			return p, err
-		}
+		return gh.EditComment(ctx, statusComment.GetID(), status)
 	default:
-		if err := gh.AddComment(ctx, opts.Issue, p.Status); err != nil {
-			return p, err
-		}
+		return gh.AddComment(ctx, opts.Issue, status)
 	}
-	return p, nil
 }
 
 // Observe reads what a pass decides on: the parent, its start block, its
@@ -160,6 +176,11 @@ func Observe(ctx context.Context, gh GitHub, opts Options) (*Pass, *githubv39.Is
 	p := &Pass{Start: start}
 	if err == nil && start == nil {
 		p.NoGraph = true
+		labels := labelNames(parent.Labels)
+		if containsFold(labels, opts.Trigger+"/graph") || containsFold(labels, "overseer/graph") {
+			p.Unstarted = true
+			return p, botStatusComment(comments, opts), nil
+		}
 		return p, nil, nil
 	}
 
@@ -177,12 +198,7 @@ func Observe(ctx context.Context, gh GitHub, opts Options) (*Pass, *githubv39.Is
 	if m, ok := ParseChildMarker(parent.GetBody()); ok {
 		o.Parent.Depth = m.Depth
 	}
-	var statusComment *githubv39.IssueComment
-	for _, c := range comments {
-		if IsStatusComment(c.GetBody()) && strings.EqualFold(c.GetUser().GetLogin(), opts.BotLogin) {
-			statusComment = c
-		}
-	}
+	statusComment := botStatusComment(comments, opts)
 	if statusComment != nil {
 		o.State, _ = ParseState(statusComment.GetBody())
 	}
@@ -207,6 +223,18 @@ func Observe(ctx context.Context, gh GitHub, opts Options) (*Pass, *githubv39.Is
 	}
 	p.Observed = o
 	return p, statusComment, nil
+}
+
+// botStatusComment is the parent's status comment, the bot's latest; nil
+// for none.
+func botStatusComment(comments []*githubv39.IssueComment, opts Options) *githubv39.IssueComment {
+	var statusComment *githubv39.IssueComment
+	for _, c := range comments {
+		if IsStatusComment(c.GetBody()) && strings.EqualFold(c.GetUser().GetLogin(), opts.BotLogin) {
+			statusComment = c
+		}
+	}
+	return statusComment
 }
 
 // implicitPlanStart is whether an issue with no start block is a graph
