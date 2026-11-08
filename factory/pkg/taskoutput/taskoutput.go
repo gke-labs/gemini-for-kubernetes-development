@@ -100,9 +100,6 @@ type CommentOptions struct {
 	// **Implementation plan**, **Summary**); "" leaves the heading out.
 	// Unset, the kind's.
 	Heading *string `yaml:"heading,omitempty" json:"heading,omitempty"`
-	// SuggestedLabels false leaves a Triage's "Suggested labels" line out
-	// (the label action applies them anyway). Unset, it is written.
-	SuggestedLabels *bool `yaml:"suggested-labels,omitempty" json:"suggestedLabels,omitempty"`
 }
 
 // heading is the heading line a comment of a kind whose own is def
@@ -112,11 +109,6 @@ func (c *CommentOptions) heading(def string) string {
 		return strings.TrimSpace(*c.Heading)
 	}
 	return def
-}
-
-// suggestedLabels reports whether a Triage's comment lists its labels.
-func (c *CommentOptions) suggestedLabels() bool {
-	return c == nil || c.SuggestedLabels == nil || *c.SuggestedLabels
 }
 
 // withPrefix puts c's prefix line above body.

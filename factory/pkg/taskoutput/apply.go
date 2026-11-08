@@ -187,7 +187,7 @@ func TriageComment(t *Triage, c *CommentOptions) string {
 	if t.Priority != "" {
 		body += fmt.Sprintf("\n\nPriority: %s", t.Priority)
 	}
-	if len(t.Labels) > 0 && c.suggestedLabels() {
+	if len(t.Labels) > 0 {
 		body += "\n\nSuggested labels: `" + strings.Join(t.Labels, "`, `") + "`"
 	}
 	if len(t.Duplicates) > 0 {

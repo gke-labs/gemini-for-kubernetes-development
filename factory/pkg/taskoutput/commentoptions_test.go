@@ -35,13 +35,13 @@ func TestTriageCommentDefault(t *testing.T) {
 }
 
 // A recipe's prefix line comes first - an /overseer-ignore the overseer
-// honours - its heading replaces the kind's ("" drops it), and
-// suggested-labels: false leaves the labels line out.
+// honours - and its heading replaces the kind's ("" drops it); the
+// suggested labels line stays.
 func TestTriageCommentOptions(t *testing.T) {
-	none, no := "", false
+	none := ""
 	f := &fakeComments{}
 	var out bytes.Buffer
-	c := &CommentOptions{Prefix: "/overseer-ignore", Heading: &none, SuggestedLabels: &no}
+	c := &CommentOptions{Prefix: "/overseer-ignore", Heading: &none}
 	if err := ApplyAction(context.Background(), f.client(t), assessDoc(t, "recipe-assess-1", c), "comment", false, &out); err != nil {
 		t.Fatal(err)
 	}
@@ -49,8 +49,8 @@ func TestTriageCommentOptions(t *testing.T) {
 	if !strings.HasPrefix(b, "/overseer-ignore\n\n**Assessment: good** - clean.") {
 		t.Errorf("body = %q", b)
 	}
-	if strings.Contains(b, "Triage assessment") || strings.Contains(b, "Suggested labels") {
-		t.Errorf("heading or labels line left in: %q", b)
+	if strings.Contains(b, "Triage assessment") || !strings.Contains(b, "Suggested labels: `assess/good`") {
+		t.Errorf("heading left in or labels line dropped: %q", b)
 	}
 	if !conventions.HasIgnorePrefix(b, "overseer") {
 		t.Errorf("the overseer would act on %q", b)
