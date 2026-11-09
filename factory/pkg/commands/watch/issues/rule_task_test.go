@@ -77,6 +77,8 @@ func TestQueueTasks_RepositoryRules(t *testing.T) {
 				Number: githubv39.Int(7), UpdatedAt: &updated,
 				Labels: []*githubv39.Label{{Name: githubv39.String("factory")}},
 				User:   &githubv39.User{Login: githubv39.String("someone")},
+				// A maintainer's: the built-in fix admits it.
+				AuthorAssociation: githubv39.String("MEMBER"),
 			}}, map[int]bool{})
 			if _, got := queue.enqueued["task-issue-7-rule-fix.yaml"]; got != tc.fixed {
 				t.Errorf("fix queued %v, want %v", got, tc.fixed)

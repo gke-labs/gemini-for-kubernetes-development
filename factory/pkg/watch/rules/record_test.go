@@ -77,7 +77,7 @@ func TestReplayListsDifferences(t *testing.T) {
 		b, _ := json.Marshal(rec)
 		return string(b)
 	}
-	labelled := Item{Kind: OnIssue, Number: 1, Labels: []string{"overseer"}, UpdatedAt: now}
+	labelled := Item{Kind: OnIssue, Number: 1, Labels: []string{"overseer"}, AuthorAssociation: "MEMBER", UpdatedAt: now}
 	in := strings.Join([]string{
 		line(Record{At: now, Env: testEnv, Item: labelled, Decided: []string{"fix run"}}),
 		line(Record{At: now, Env: testEnv, Item: labelled}),

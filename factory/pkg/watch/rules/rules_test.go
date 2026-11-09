@@ -379,7 +379,7 @@ func TestNeedsAndUnknownFacts(t *testing.T) {
 	}
 	now := time.Now()
 	env := Env{Trigger: "overseer", Prefixes: []string{"overseer"}, Now: now}
-	issue := Item{Kind: OnIssue, Number: 7, Labels: []string{"overseer"}, UpdatedAt: now.Add(-time.Hour),
+	issue := Item{Kind: OnIssue, Number: 7, Labels: []string{"overseer"}, AuthorAssociation: "MEMBER", UpdatedAt: now.Add(-time.Hour),
 		Unknown: []string{FactConnectedPR}}
 	if got := strings.Join(set.Needs(issue, env), ","); got != FactConnectedPR {
 		t.Errorf("fix needs %q, want %s", got, FactConnectedPR)
@@ -407,7 +407,7 @@ func TestNeedsAndUnknownFacts(t *testing.T) {
 	// the workflow rule alone (its handler is its own).
 	set = slices.DeleteFunc(slices.Clone(set), func(r *Rule) bool { return r.Name == "workflow-missing" })
 	ended := now.Add(-54 * time.Minute)
-	wf := Item{Kind: OnIssue, Number: 8, Labels: []string{"overseer"}, UpdatedAt: now.Add(-time.Hour), Workflow: "greenfield",
+	wf := Item{Kind: OnIssue, Number: 8, Labels: []string{"overseer"}, AuthorAssociation: "MEMBER", UpdatedAt: now.Add(-time.Hour), Workflow: "greenfield",
 		Runs:    []PastRun{{Rule: "workflow", StartedAt: ended.Add(-time.Minute), EndedAt: ended}},
 		Unknown: []string{FactWorkflowCooldown, FactWorkflowDefinition, FactConnectedPR}}
 	if got := strings.Join(set.Needs(wf, env), ","); got != FactWorkflowCooldown+","+FactWorkflowDefinition {

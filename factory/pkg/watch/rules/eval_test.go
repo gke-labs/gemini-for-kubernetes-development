@@ -35,7 +35,7 @@ func decisions(t *testing.T, it Item, env Env) []string {
 }
 
 func issue(mod func(*Item)) Item {
-	it := Item{Kind: OnIssue, Number: 13173, Labels: []string{"overseer", "priority/high"}, Author: "someone", UpdatedAt: ago(time.Hour)}
+	it := Item{Kind: OnIssue, Number: 13173, Labels: []string{"overseer", "priority/high"}, Author: "someone", AuthorAssociation: "MEMBER", UpdatedAt: ago(time.Hour)}
 	if mod != nil {
 		mod(&it)
 	}
@@ -67,6 +67,21 @@ func TestDecideIssues(t *testing.T) {
 		{"labelled", issue(nil), "fix run"},
 		{"opened by the watcher, unlabelled (adoption)", issue(func(it *Item) { it.Labels, it.Author = nil, "argus-watcher-bot" }), "fix run"},
 		{"assigned to the pool, unlabelled", issue(func(it *Item) { it.Labels, it.Assignees = nil, []string{"lovelace-coder-bot"} }), "fix run"},
+		// The body goes into the agent's prompt: an outsider's issue is
+		// not fixed, however the overseer is pointed at it.
+		{"labelled, opened by an outsider", issue(func(it *Item) { it.AuthorAssociation = "CONTRIBUTOR" }), ""},
+		{"labelled, opened by a first-time contributor", issue(func(it *Item) { it.AuthorAssociation = "FIRST_TIME_CONTRIBUTOR" }), ""},
+		{"labelled, opened by someone GitHub knows nothing of", issue(func(it *Item) { it.AuthorAssociation = "NONE" }), ""},
+		{"labelled, no association", issue(func(it *Item) { it.AuthorAssociation = "" }), ""},
+		{"assigned to the pool, opened by an outsider", issue(func(it *Item) {
+			it.Labels, it.Assignees, it.AuthorAssociation = nil, []string{"lovelace-coder-bot"}, "NONE"
+		}), ""},
+		{"labelled, opened by the owner", issue(func(it *Item) { it.AuthorAssociation = "OWNER" }), "fix run"},
+		{"labelled, opened by a collaborator", issue(func(it *Item) { it.AuthorAssociation = "COLLABORATOR" }), "fix run"},
+		{"labelled, opened by a pool bot", issue(func(it *Item) { it.Author, it.AuthorAssociation = "ada-coder-bot", "NONE" }), "fix run"},
+		{"opened by the watcher, whatever GitHub says of it", issue(func(it *Item) {
+			it.Labels, it.Author, it.AuthorAssociation = nil, "argus-watcher-bot", "NONE"
+		}), "fix run"},
 		{"an open PR closes it (13173 after #14055)", issue(func(it *Item) { it.LinkedPR = "open" }), ""},
 		{"stopped", issue(func(it *Item) { it.Labels = append(it.Labels, "overseer/stop") }), ""},
 		{"names a workflow it cannot load: stopped, not stepped or fixed", issue(func(it *Item) { it.Workflow, it.WorkflowMissing = "gone", true }), "workflow-missing run"},
@@ -127,6 +142,21 @@ func TestDecideFixInputs(t *testing.T) {
 	}
 	if ds[0].Inputs["draft"] != "false" {
 		t.Errorf("inputs = %v", ds[0].Inputs)
+	}
+}
+
+func TestDecideFixTrustsAllowlistedAuthors(t *testing.T) {
+	// GitHub reports a private organization member as a contributor to a
+	// token that cannot see the membership: an allowlisted login is
+	// trusted whatever GitHub says.
+	it := issue(func(it *Item) { it.Author, it.AuthorAssociation = "private-member", "CONTRIBUTOR" })
+	if got := strings.Join(decisions(t, it, testEnv), ", "); got != "" {
+		t.Errorf("not allowlisted: decisions = %q, want none", got)
+	}
+	env := testEnv
+	env.Members = []string{"Private-Member"}
+	if got := strings.Join(decisions(t, it, env), ", "); got != "fix run" {
+		t.Errorf("allowlisted: decisions = %q, want fix run", got)
 	}
 }
 

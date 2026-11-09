@@ -47,7 +47,7 @@ func TestDecidedTaskRunsItsRulesRecipe(t *testing.T) {
 			[]string{"care-ci", "ci", "--apply", "--action", "post-replies"}},
 		{"review", api.TypePRRule, "https://github.com/o/r/pull/7", pr(func(*rules.Item) {}),
 			[]string{"review", "review", "--apply", "--action", "submit-review"}},
-		{"fix", api.TypeIssueRule, "https://github.com/o/r/issues/12", rules.Item{Kind: rules.OnIssue, Number: 12, Labels: []string{"overseer"}, UpdatedAt: now},
+		{"fix", api.TypeIssueRule, "https://github.com/o/r/issues/12", rules.Item{Kind: rules.OnIssue, Number: 12, Labels: []string{"overseer"}, AuthorAssociation: "MEMBER", UpdatedAt: now},
 			[]string{"fix", "fix", "--apply", "--action", "open-pr", "--pr-labels", "--input", "draft=false"}},
 	} {
 		t.Run(tc.rule, func(t *testing.T) {
