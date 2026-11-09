@@ -1,6 +1,15 @@
 # Per-PR retro
 
-Status: proposed. Builds on the weekly retro ([retro.md](retro.md)).
+Status: built, but for one defence (below). Builds on the weekly retro ([retro.md](retro.md)).
+
+What was built, and where:
+
+- **The watch's part:** `pkg/commands/watch/prretros`, on with `spec.retro.perPR` (`--pr-retro`, `WATCH_PR_RETRO`), using conservative defaults (`10m` poll interval, `10m` settle, `2h` record wait, max `3` concurrent). Its record of each label application (the `labeled` event) is `pr_retro_state.json` in the queue directory. The labeller is a maintainer when they are the watcher, a trusted login, or one of the repository's collaborators (GitHub's collaborator check, which includes its members with access).
+- **The staging:** `retro.StagePR` (`pkg/retro/pr.go`), whose layout is the recipe's input.
+- **The run:** `watchPRRetro` (`pkg/commands/retro_pr.go`) runs the `retro-pr` recipe in a sandbox of its own (prefix `retropr`, keyed by the PR and the label application), opens its Change with `open-pr` as a ready PR, and deletes the sandbox. A Change on a repository that changed nothing opens nothing; its comment is what the watch posts.
+- **Notes:** `retro.IsNote`; the care rules skip them through `conventions.HasIgnorePrefix`.
+
+Not built yet: the GitHub token still reaches every step of the retro's sandbox (`credentials: full`), as for the weekly retro; see [Security](#security). Keeping it to the push step needs a credentials mode of its own, for both retros.
 
 ## Summary
 
@@ -173,13 +182,9 @@ Opening retros to PRs overseer didn't open would let anyone's text, including ou
 
 ### Configuration
 
-Per overseer, off unless enabled:
+Per overseer (`spec.retro.perPR`), off unless enabled.
 
-- whether per-PR retros run;
-- how often overseer looks for labelled PRs;
-- the settling time, and how long to wait for the agent record before falling back.
-
-Without the trace archive that the weekly retro uses, retros run on feedback and the change alone.
+Timing and concurrency use conservative defaults: a `10m` poll interval, a `10m` trace settling window, a `2h` wait for the agent record after close, and at most `3` concurrent per-PR retros. Without the trace archive that the weekly retro uses, retros run on feedback and the change alone.
 
 ## Measuring success
 

@@ -8,6 +8,8 @@ import (
 
 	githubv39 "github.com/google/go-github/v39/github"
 	"k8s.io/klog/v2"
+
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/retro"
 )
 
 // HasIgnorePrefix reports whether a comment opts itself out of being acted on.
@@ -15,7 +17,14 @@ import (
 // The prefix is "/" + triggerLabel + "-ignore" on any line of the body. The
 // '/overseer-ignore' spelling is always accepted, so the directive keeps
 // working across deployments that renamed their trigger label.
+//
+// A /retro note (retro.IsNote: the comment starts with /retro) is opted
+// out too: it is for the PR's retro (design/retro-per-pr.md), not a
+// request to change the PR.
 func HasIgnorePrefix(body string, triggerLabel string) bool {
+	if retro.IsNote(body) {
+		return true
+	}
 	for _, line := range strings.Split(body, "\n") {
 		trimmed := strings.ToLower(strings.TrimSpace(line))
 		if strings.HasPrefix(trimmed, "/"+defaultPrefix+"-ignore") {

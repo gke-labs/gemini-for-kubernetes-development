@@ -49,6 +49,10 @@ func (w *Watcher) Run(ctx context.Context) error {
 				w.retro.SyncOnce(github.WithComponent(ctx, "retro"))
 				w.retro.Wait()
 			}
+			if w.prRetro != nil {
+				w.prRetro.SyncOnce(github.WithComponent(ctx, "pr-retro"))
+				w.prRetro.Wait()
+			}
 		}
 		fmt.Println("Running in once mode. Waiting for active tasks to complete...")
 		w.Wait()
@@ -125,6 +129,13 @@ func (w *Watcher) Run(ctx context.Context) error {
 			go func() {
 				defer wg.Done()
 				_ = w.retro.Run(github.WithComponent(daemonCtx, "retro"))
+			}()
+		}
+		if w.prRetro != nil {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				_ = w.prRetro.Run(github.WithComponent(daemonCtx, "pr-retro"))
 			}()
 		}
 	}
