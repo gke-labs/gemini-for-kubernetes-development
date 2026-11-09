@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	githubv39 "github.com/google/go-github/v39/github"
 )
@@ -167,11 +168,72 @@ func applyComment(ctx context.Context, gh *githubv39.Client, doc *Document, dryR
 	if dryRun {
 		return nil
 	}
-	body := doc.Comment.withPrefix(withSessionHint(ctx, comment)) + marker(doc)
+	body := doc.Comment.withPrefix(withSessionHint(ctx, withAttachments(comment, doc))) + marker(doc)
 	if _, _, err := gh.Issues.CreateComment(ctx, owner, repo, num, &githubv39.IssueComment{Body: &body}); err != nil {
 		return fmt.Errorf("posting the %s comment: %w", what, err)
 	}
 	return nil
+}
+
+// CommentLimit is the most characters GitHub takes in a comment body.
+const CommentLimit = 65536
+
+// commentReserve is what a comment keeps free for what is added around
+// the result and its attachments: the prefix line, the session hint, the
+// markers.
+const commentReserve = 2048
+
+// withAttachments is body with doc's attachments after it, each in a
+// collapsed block naming the file, its size and sha256 - verbatim, a file
+// that is not markdown fenced. What does not fit in CommentLimit is cut
+// at a line end, and the block says so.
+func withAttachments(body string, doc *Document) string {
+	if len(doc.Attachments) == 0 {
+		return body
+	}
+	var b strings.Builder
+	b.WriteString(strings.TrimRight(body, "\n"))
+	room := CommentLimit - commentReserve - utf8.RuneCountInString(body)
+	for _, a := range doc.Attachments {
+		head := fmt.Sprintf("\n\n<details>\n<summary>📎 <code>%s</code> · %d bytes · sha256 <code>%s</code></summary>\n\n", a.Name, a.Size, a.SHA256)
+		fence, end := "", "\n\n</details>"
+		if !strings.HasSuffix(strings.ToLower(a.Name), ".md") {
+			fence = "````"
+		}
+		overhead := utf8.RuneCountInString(head) + utf8.RuneCountInString(end) + 2*len(fence) + 2 + 200
+		content := strings.TrimRight(a.Content, "\n")
+		shown := len(content)
+		if n := room - overhead; utf8.RuneCountInString(content) > n {
+			if n < 0 {
+				n = 0
+			}
+			content = strings.TrimRight(cutAtLine(content, runePrefixBytes(content, n)), "\n")
+		}
+		cut := len(content) < shown || len(a.Content) < a.Size
+		b.WriteString(head)
+		if fence != "" {
+			b.WriteString(fence + "\n" + content + "\n" + fence)
+		} else {
+			b.WriteString(content)
+		}
+		if cut {
+			fmt.Fprintf(&b, "\n\n_Cut to fit the comment: %d of %d bytes shown. The whole file is in the task's archived files (sha256 above)._", len(content), a.Size)
+		}
+		b.WriteString(end)
+		room -= overhead + utf8.RuneCountInString(content)
+	}
+	return b.String()
+}
+
+// runePrefixBytes is the byte length of s's first n runes.
+func runePrefixBytes(s string, n int) int {
+	i := 0
+	for n > 0 && i < len(s) {
+		_, size := utf8.DecodeRuneInString(s[i:])
+		i += size
+		n--
+	}
+	return i
 }
 
 // PlanComment is the comment a plan is published as, under its recipe's
@@ -331,7 +393,7 @@ func applyKeyedComment(ctx context.Context, gh *githubv39.Client, doc *Document,
 	if rest != "" {
 		body += "\n" + rest
 	}
-	body = doc.Comment.withPrefix(withSessionHint(ctx, body)) + keyMarker(key, version) + marker(doc)
+	body = doc.Comment.withPrefix(withSessionHint(ctx, withAttachments(body, doc))) + keyMarker(key, version) + marker(doc)
 	if existing == nil {
 		fmt.Fprintf(out, "%s the %s (v%d) on %s:\n%s\n", doing(dryRun, "Commenting", "comment"), what, version, doc.Target.URL, indent(comment))
 		if dryRun {
