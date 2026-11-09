@@ -82,6 +82,10 @@ func (s *Server) RegisterRoutes(router *gin.Engine) {
 		// A factory task's agent session (plan, triage, research): watched
 		// while the task runs, continued once it has ended.
 		api.GET("/task-sessions/:sandbox/:task", s.getTaskSession)
+		// The task's side sessions (a recipe step's own conversation, such
+		// as fix's review) and the step it is at; a side session's events.
+		api.GET("/task-sessions/:sandbox/:task/streams", s.getTaskSessionStreams)
+		api.GET("/task-sessions/:sandbox/:task/streams/:name", s.getTaskSessionStream)
 		api.POST("/task-sessions/:sandbox/:task/prompt", s.promptTaskSession)
 		api.POST("/task-sessions/:sandbox/:task/permission", s.resolveTaskSessionPermission)
 		api.POST("/task-sessions/:sandbox/:task/cancel", s.cancelTaskSession)
@@ -124,6 +128,8 @@ func (s *Server) RegisterRoutes(router *gin.Engine) {
 			// writes.
 			scoped := overseer.Group("/:name", s.overseerScope())
 			scoped.GET("/task-sessions/:sandbox/:task", s.getTaskSession)
+			scoped.GET("/task-sessions/:sandbox/:task/streams", s.getTaskSessionStreams)
+			scoped.GET("/task-sessions/:sandbox/:task/streams/:name", s.getTaskSessionStream)
 			scoped.POST("/task-sessions/:sandbox/:task/prompt", s.promptTaskSession)
 			scoped.POST("/task-sessions/:sandbox/:task/permission", s.resolveTaskSessionPermission)
 			scoped.POST("/task-sessions/:sandbox/:task/cancel", s.cancelTaskSession)

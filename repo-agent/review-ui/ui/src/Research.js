@@ -766,6 +766,23 @@ export const DRAFT_VERBS = {
   },
 };
 
+// stepText is the step a task is at, as the streams route reports the
+// runner's last "::step" line ("10:ask (ask)", "unchanged (run)"), for
+// the line above the transcript: "step 10 · ask".
+export function stepText(step) {
+  if (!step) return '';
+  const m = /^(\S+?)(?::(\S+))?\s*\((\w+)\)\s*$/.exec(step);
+  if (!m) return `step ${step}`;
+  const [, id, kind, how] = m;
+  return /^\d+$/.test(id) ? `step ${id} · ${kind || how}` : `step ${id} · ${how}`;
+}
+
+// lastSeq is the newest seq of a side session's events, -1 for none: what
+// the next poll asks after.
+export function lastSeq(events) {
+  return events.reduce((n, e) => (typeof e.seq === 'number' && e.seq > n ? e.seq : n), -1);
+}
+
 // apiBase is where a task's session routes are: /api, the member's, by
 // default; /api/overseers/<name> for an overseer's sandboxes.
 export function ResearchConversation({
@@ -930,6 +947,44 @@ export function ResearchConversation({
   // frame's session.busy is the live answer; the fold only takes over
   // once something new has actually happened.
   const busy = caughtUp ? transcript.busy : openBusy;
+  // A task's side sessions - a recipe step's own conversation, such as
+  // fix's review - and the step the task is at, so that a quiet
+  // conversation reads as "the reviewer is working", not as a stall. Side
+  // sessions are read-only: shown from their transcripts, polled while
+  // their tab is open.
+  const [streams, setStreams] = useState({ streams: [], step: '' });
+  const [side, setSide] = useState('');
+  const [sideEvents, setSideEvents] = useState([]);
+  useEffect(() => {
+    if (!api) return undefined;
+    let stopped = false;
+    const load = () => fetch(`${api}/streams`)
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => { if (!stopped && d) setStreams({ streams: d.streams || [], step: d.step || '' }); })
+      .catch(() => {});
+    load();
+    const t = setInterval(load, 10000);
+    return () => { stopped = true; clearInterval(t); };
+  }, [api]);
+  useEffect(() => {
+    setSideEvents([]);
+    if (!api || !side) return undefined;
+    let stopped = false;
+    let seen = [];
+    const load = () => fetch(`${api}/streams/${encodeURIComponent(side)}?after=${lastSeq(seen)}`)
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => {
+        if (stopped || !d || !(d.events || []).length) return;
+        seen = seen.concat(d.events);
+        setSideEvents(seen);
+        if (d.more) load();
+      })
+      .catch(() => {});
+    load();
+    const t = setInterval(load, 5000);
+    return () => { stopped = true; clearInterval(t); };
+  }, [api, side]);
+  const sideTranscript = useMemo(() => buildResearchTranscript(sideEvents), [sideEvents]);
   useEffect(() => {
     if (!busy) { setStopAsked(false); setForceable(false); }
   }, [busy]);
@@ -1921,6 +1976,25 @@ export function ResearchConversation({
         <div className="research-terminal" style={{
           flex: '1 1 auto', display: 'flex', flexDirection: 'column', minHeight: 0,
         }}>
+          {task && (streams.streams.length > 0 || streams.step) && (
+            <div className="term-sessions" role="tablist" aria-label="Conversations of this task" style={{
+              display: 'flex', alignItems: 'center', gap: '6px', padding: '4px 14px',
+              fontSize: 'x-small', borderBottom: '1px solid var(--term-rule)',
+            }}>
+              {streams.streams.length > 0 && ['', ...streams.streams].map(n => (
+                <button key={n || 'agent'} role="tab" aria-selected={side === n}
+                  className="term-views" onClick={() => setSide(n)}
+                  title={n ? `The ${n} conversation: a step of this task with its own agent, read-only here` : 'The task\'s own conversation'}
+                  style={{ fontWeight: side === n ? 'bold' : 'normal' }}>
+                  {n || 'agent'}
+                </button>
+              ))}
+              <span style={{ flex: 1 }} />
+              {streams.step && (
+                <span className="term-dim" title="The step the task is at, from its execution log">{stepText(streams.step)}</span>
+              )}
+            </div>
+          )}
           <div ref={scrollRef}
             onScroll={e => {
               const el = e.currentTarget;
@@ -2003,10 +2077,17 @@ export function ResearchConversation({
                 checkout in front of it.
               </p>
             )}
-            {transcript.items.map(item => (
-              <TerminalItem key={item.key} item={item} rendered={view === 'rendered'}
-                onResolve={resolve} resolving={resolving} />
-            ))}
+            {side && !sideTranscript.items.length && (
+              <p style={{ color: 'var(--term-dim)', fontStyle: 'italic' }}>Loading the {side} conversation…</p>
+            )}
+            {side
+              ? sideTranscript.items.map(item => (
+                <TerminalItem key={item.key} item={item} rendered={view === 'rendered'} />
+              ))
+              : transcript.items.map(item => (
+                <TerminalItem key={item.key} item={item} rendered={view === 'rendered'}
+                  onResolve={resolve} resolving={resolving} />
+              ))}
             {busy && !waiting && (
               <div className="term-line term-dim" style={{ margin: '8px 0' }}>working…</div>
             )}
