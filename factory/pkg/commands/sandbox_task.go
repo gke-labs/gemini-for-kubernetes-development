@@ -387,6 +387,16 @@ func readTaskOutput(ctx context.Context, sb taskapi.Sandbox, e spool.Entry) ([]b
 	doc.Actions = decl.Actions
 	doc.Preview = decl.Preview
 	doc.Comment = decl.Comment
+	if decl.Comment != nil {
+		for _, name := range decl.Comment.Attach {
+			if !taskoutput.AttachName(name) {
+				continue
+			}
+			if data, err := sb.ReadFile(ctx, e.ID, name); err == nil {
+				doc.Attachments = append(doc.Attachments, taskoutput.NewAttachment(name, data))
+			}
+		}
+	}
 	return taskoutput.Marshal(doc)
 }
 

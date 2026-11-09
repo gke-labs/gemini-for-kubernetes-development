@@ -9,6 +9,8 @@ package taskoutput
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,6 +21,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"gopkg.in/yaml.v3"
 
@@ -84,6 +87,9 @@ type Document struct {
 	Preview string `yaml:"preview,omitempty" json:"preview,omitempty"`
 	// Comment is its recipe's Decl.Comment.
 	Comment *CommentOptions `yaml:"comment,omitempty" json:"comment,omitempty"`
+	// Attachments are the files Comment.Attach names, as they were when
+	// the result was wrapped.
+	Attachments []Attachment `yaml:"attachments,omitempty" json:"attachments,omitempty"`
 }
 
 // CommentOptions say how the comment action writes a result. With a Key,
@@ -100,6 +106,82 @@ type CommentOptions struct {
 	// **Implementation plan**, **Summary**); "" leaves the heading out.
 	// Unset, the kind's.
 	Heading *string `yaml:"heading,omitempty" json:"heading,omitempty"`
+	// Attach names task files whose content the comment carries, each
+	// verbatim in a collapsed block after the result - evidence a step
+	// produced (a capture a script wrote), not the agent's words. They are
+	// read into the result when it is wrapped (Attachments), so apply has
+	// them wherever it runs. A file the task did not write is left out.
+	Attach []string `yaml:"attach,omitempty" json:"attach,omitempty"`
+}
+
+// Attachment is a task file a recipe attaches to its comment
+// (CommentOptions.Attach), read when the result is wrapped: its content -
+// at most MaxAttachment bytes of it - and the size and sha256 of the whole
+// file, so whoever reads the comment can match it against the task's
+// archived copy.
+type Attachment struct {
+	Name    string `yaml:"name" json:"name"`
+	Size    int    `yaml:"size" json:"size"`
+	SHA256  string `yaml:"sha256" json:"sha256"`
+	Content string `yaml:"content" json:"content"`
+}
+
+// MaxAttachment is the most of an attached file a result carries: a
+// comment holds at most CommentLimit characters, all attachments and the
+// result together.
+const MaxAttachment = 60000
+
+// ReadAttachments reads c's attached files from taskDir. A file that is
+// not there, or not a plain file name, is left out.
+func ReadAttachments(taskDir string, c *CommentOptions) []Attachment {
+	if c == nil {
+		return nil
+	}
+	var out []Attachment
+	for _, name := range c.Attach {
+		if !AttachName(name) {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(taskDir, name))
+		if err != nil {
+			continue
+		}
+		out = append(out, NewAttachment(name, data))
+	}
+	return out
+}
+
+// NewAttachment is the attachment of a file named name holding data.
+func NewAttachment(name string, data []byte) Attachment {
+	sum := sha256.Sum256(data)
+	content := string(data)
+	if len(content) > MaxAttachment {
+		content = cutAtLine(content, MaxAttachment)
+	}
+	return Attachment{Name: name, Size: len(data), SHA256: hex.EncodeToString(sum[:]), Content: content}
+}
+
+// AttachName reports whether name may be attached: a plain file name of
+// the task directory.
+func AttachName(name string) bool {
+	return name != "" && name == filepath.Base(name) && !strings.HasPrefix(name, ".")
+}
+
+// cutAtLine is the longest prefix of s, at most n bytes, that ends at a
+// line end (or at n when the first line is longer), never in a UTF-8
+// sequence.
+func cutAtLine(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	cut := s[:n]
+	if i := strings.LastIndexByte(cut, '\n'); i > 0 {
+		return cut[:i+1]
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n]
 }
 
 // heading is the heading line a comment of a kind whose own is def
@@ -465,6 +547,7 @@ func Refresh(taskDir, from string) (bool, error) {
 		return false, err
 	}
 	doc.Actions, doc.Preview, doc.Comment = frame.Actions, frame.Preview, frame.Comment
+	doc.Attachments = ReadAttachments(taskDir, frame.Comment)
 	out, err := Marshal(doc)
 	if err != nil {
 		return false, err

@@ -617,6 +617,13 @@ func (r *Recipe) validate(sandbox bool) error {
 		if err := taskoutput.ValidateComment(to.Comment); err != nil {
 			return fmt.Errorf("task-output: %w", err)
 		}
+		if to.Comment != nil {
+			for _, f := range to.Comment.Attach {
+				if !safeFileName(f) {
+					return fmt.Errorf("task-output: comment attach %q must be a plain file name", f)
+				}
+			}
+		}
 		for _, a := range to.Actions {
 			if a.Verb == "run" && !takesFrom(r, a.Run, to.Kind) {
 				return fmt.Errorf("task-output: action run %s: recipe %s has no input from a %s", a.Run, a.Run, to.Kind)
