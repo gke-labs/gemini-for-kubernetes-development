@@ -246,6 +246,63 @@ func TestDecideGiveUpWrites(t *testing.T) {
 	}
 }
 
+// The built-in rules that pause a PR hand it to the closing issues' humans
+// with their stop - ci's and comments' give-ups (give-up.assign), and
+// inactive's stop (run.assign): they are assigned, not the pool's bots or
+// the watcher, nor one assigned already. A give-up that does not say
+// assign assigns nobody.
+func TestDecideStopAssignsClosingIssueHumans(t *testing.T) {
+	set, _ := Builtin()
+	closes := []Closing{{Number: 1, Assignees: []string{"maintainer", "ada-coder-bot", "argus-watcher-bot", "reviewer"}}, {Number: 2, Assignees: []string{"Maintainer"}}}
+	withRuns := func(rule string, failed bool, f func(it *Item)) Item {
+		return pr(func(it *Item) {
+			it.Assignees = append(it.Assignees, "reviewer")
+			it.Closes = closes
+			for i := range 3 {
+				start := time.Duration(150-50*i) * time.Minute
+				it.Runs = append(it.Runs, PastRun{Rule: rule, StartedAt: ago(start), EndedAt: ago(start - time.Minute), Head: "h2", Failed: failed})
+			}
+			f(it)
+		})
+	}
+	ci := withRuns("ci", false, func(it *Item) { it.Checks = "failing" })
+	comments := withRuns("comments", true, func(it *Item) { it.NewTrustedFeedback = true })
+	for name, it := range map[string]Item{"ci": ci, "comments": comments} {
+		ds := set.Decide(it, testEnv)
+		if len(ds) != 1 || ds[0].Rule != name || ds[0].Outcome != OutcomeGiveUp || !ds[0].Writes.Stop || strings.Join(ds[0].Writes.Assign, ",") != "maintainer" {
+			t.Errorf("%s give-up: decisions = %+v", name, ds)
+		}
+	}
+
+	env := testEnv
+	env.PRInactivityTimeout = 168 * time.Hour
+	stale := pr(func(it *Item) {
+		it.LastTrustedActivity = ago(200 * time.Hour)
+		it.Checks = "pending"
+		it.Closes = closes
+	})
+	ds := set.Decide(stale, env)
+	if len(ds) != 1 || ds[0].Rule != "inactive" || !ds[0].Writes.Stop || strings.Join(ds[0].Writes.Assign, ",") != "maintainer,reviewer" {
+		t.Errorf("inactive: decisions = %+v", ds)
+	}
+
+	// ci without give-up.assign: the stop and its comment, nobody assigned.
+	bare := append(Set(nil), set...)
+	for i, r := range bare {
+		if r.Name == "ci" {
+			c := *r
+			g := *c.Policy.GiveUp
+			g.Assign = ""
+			c.Policy.GiveUp = &g
+			bare[i] = &c
+		}
+	}
+	ds = bare.Decide(ci, testEnv)
+	if len(ds) != 1 || ds[0].Rule != "ci" || ds[0].Outcome != OutcomeGiveUp || !ds[0].Writes.Stop || len(ds[0].Writes.Assign) != 0 {
+		t.Errorf("ci give-up without assign: decisions = %+v", ds)
+	}
+}
+
 // inactive is on but needs the overseer's timeout: without one it decides
 // nothing; with one, it pauses a PR nobody touched for that long. Turned
 // off by a repository, it decides nothing either way.
