@@ -322,6 +322,24 @@ func TestBuildSandboxManifest_RetroSchedule(t *testing.T) {
 	}
 }
 
+// spec.retro.perPR reaches the watcher as WATCH_PR_RETRO, and only when set.
+func TestBuildSandboxManifest_PRRetro(t *testing.T) {
+	o := &overseerv1alpha1.Overseer{Spec: overseerv1alpha1.OverseerSpec{RepoURL: "https://github.com/owner/repo"}}
+	if _, ok := overseerEnv(t, o)["WATCH_PR_RETRO"]; ok {
+		t.Error("WATCH_PR_RETRO is set with perPR off")
+	}
+	o.Spec.Retro.PerPR = true
+	env := overseerEnv(t, o)
+	if env["WATCH_PR_RETRO"] != "true" {
+		t.Errorf("WATCH_PR_RETRO = %v, want true", env["WATCH_PR_RETRO"])
+	}
+	for _, gone := range []string{"WATCH_PR_RETRO_INTERVAL", "WATCH_PR_RETRO_SETTLE", "WATCH_PR_RETRO_RECORD_WAIT"} {
+		if _, ok := env[gone]; ok {
+			t.Errorf("%s is set: %v", gone, env)
+		}
+	}
+}
+
 // spec.graphqlPRDetails reaches the watcher as WATCH_GRAPHQL_PR_DETAILS, and
 // only when set.
 func TestBuildSandboxManifest_GraphQLPRDetails(t *testing.T) {

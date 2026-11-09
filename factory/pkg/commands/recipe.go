@@ -395,6 +395,17 @@ type recipeRunOpts struct {
 	// [sandbox]) runs in: its target, in place of an item URL. The run
 	// makes no sandbox; it wakes this one.
 	sandbox string
+	// started is told the sandbox and the task of the run once its task
+	// has started - or, a run name picked up, of the task it names -
+	// before the run follows it: the per-PR retro's start comment.
+	started func(sandboxName, taskID string)
+	// sandboxReady is told the run's sandbox once it is made or found,
+	// before any task is started or picked up in it.
+	sandboxReady func(sandboxName string)
+	// abortOnCancel asks spoolRecipe to cancel the task if attaching to
+	// it is interrupted; set per run instead of mutating rootFlags so
+	// concurrent runs do not race.
+	abortOnCancel bool
 }
 
 // runRecipeIn is runRecipe with opts.
@@ -647,6 +658,9 @@ func runRecipeIn(ctx context.Context, opts recipeRunOpts, recipeArg, itemURL, ru
 	if err != nil {
 		return fmt.Errorf("ensuring the sandbox: %w", err)
 	}
+	if opts.sandboxReady != nil {
+		opts.sandboxReady(sandboxName)
+	}
 
 	fmt.Printf("Connecting to sandbox %s...\n", sandboxName)
 	sb, err := taskapi.Connect(ctx, rootFlags.Namespace, sandboxName)
@@ -673,6 +687,9 @@ func runRecipeIn(ctx context.Context, opts recipeRunOpts, recipeArg, itemURL, ru
 			return err
 		}
 		if ok {
+			if opts.started != nil {
+				opts.started(sandboxName, e.ID)
+			}
 			return resumeNamedRun(ctx, sb, ghClient, rec, sandboxName, e, apply)
 		}
 	}
@@ -688,11 +705,10 @@ func runRecipeIn(ctx context.Context, opts recipeRunOpts, recipeArg, itemURL, ru
 			return awaitAndApply(ctx, sb, ghClient, rec, sandboxName, e.ID, apply.verb, apply.dryRun)
 		}
 	}
-	if apply.on {
-		// Interrupting stops the waiting; the task runs on, for the
-		// next run to pick up.
-		rootFlags.AbortOnCancel = false
-	}
+	// Interrupting an --apply run stops the waiting; the task runs on, for
+	// the next run to pick up. Kept on opts rather than mutating rootFlags
+	// so concurrent callers (watch's per-PR retros) do not race.
+	opts.abortOnCancel = rootFlags.AbortOnCancel && !apply.on
 	if err := refuseIfBusy(ctx, sb, sandboxName); err != nil {
 		return err
 	}
@@ -1103,18 +1119,31 @@ func startRecipeTask(ctx context.Context, kubeClient *clients.KubernetesClient, 
 		update = factorysandbox.UpdateSandboxSideTaskAnnotation
 	}
 	_ = factorysandbox.MarkSandboxRunStarted(ctx, kubeClient, rootFlags.Namespace, sandboxName, taskType, rootFlags.Engine, side, recordedRun(task, rec, time.Now().UTC()))
-	if err := spoolRecipe(ctx, sb, task, recipeBytes, inputs, envMap, secrets, opts.files); err != nil {
-		_ = update(ctx, kubeClient, rootFlags.Namespace, sandboxName, taskType, "Failed")
-		return false, fmt.Errorf("running recipe: %w", err)
-	}
-	if it.IsRepo() {
-		// A repository's sandbox is the session's (the run's) from here:
-		// the receipt that keeps EnsureRepoSandbox from taking it for an
-		// interrupted launch's and replacing it. Harmless on warm's and an
-		// agent's, which nothing replaces.
-		if err := factorysandbox.MarkReady(ctx, kubeClient, rootFlags.Namespace, sandboxName, rootFlags.Engine); err != nil {
-			return false, err
+	var readyErr error
+	onStart := func(sbName, id string) error {
+		if opts.started != nil {
+			opts.started(sbName, id)
 		}
+		if it.IsRepo() {
+			// A repository's sandbox is the session's (the run's) once
+			// its task is accepted, before attaching to it for what may
+			// take hours: the receipt that keeps EnsureRepoSandbox from
+			// replacing it as an interrupted launch's husk if watching
+			// stops mid-run. Harmless on warm's and an agent's, which
+			// nothing replaces.
+			readyErr = factorysandbox.MarkReady(ctx, kubeClient, rootFlags.Namespace, sandboxName, rootFlags.Engine)
+			return readyErr
+		}
+		return nil
+	}
+	if err := spoolRecipe(ctx, sb, task, recipeBytes, inputs, envMap, secrets, opts.files, opts.abortOnCancel, onStart); err != nil {
+		if readyErr == nil && (ctx.Err() == nil || opts.abortOnCancel) {
+			_ = update(ctx, kubeClient, rootFlags.Namespace, sandboxName, taskType, "Failed")
+		}
+		if readyErr != nil {
+			return false, readyErr
+		}
+		return false, fmt.Errorf("running recipe: %w", err)
 	}
 	if rootFlags.Detached {
 		return false, nil
@@ -1171,7 +1200,7 @@ func newSpoolTask(recipeName, runName, itemURL string) spool.Task {
 
 // spoolRecipe hands a recipe to the sandbox and follows it, or, with
 // --detached, returns once the sandbox has started it.
-func spoolRecipe(ctx context.Context, sb taskapi.Sandbox, task spool.Task, recipeBytes []byte, inputs, envMap, secrets map[string]string, files *taskapi.Files) error {
+func spoolRecipe(ctx context.Context, sb taskapi.Sandbox, task spool.Task, recipeBytes []byte, inputs, envMap, secrets map[string]string, files *taskapi.Files, abortOnCancel bool, started func(sandboxName, taskID string) error) error {
 	stripped, err := recipe.ForSandbox(recipeBytes)
 	if err != nil {
 		return err
@@ -1181,11 +1210,16 @@ func spoolRecipe(ctx context.Context, sb taskapi.Sandbox, task spool.Task, recip
 	if err := sb.Start(ctx, task, stripped, recipeBytes, inputs, envMap, secrets, files); err != nil {
 		return err
 	}
+	if started != nil {
+		if err := started(sb.Name(), task.ID); err != nil {
+			return err
+		}
+	}
 	if rootFlags.Detached {
 		printDetachedHint(sb.Name(), task.ID)
 		return nil
 	}
-	return sb.Attach(ctx, task.ID, envMap, rootFlags.AbortOnCancel)
+	return sb.Attach(ctx, task.ID, envMap, abortOnCancel)
 }
 
 // taskRecipe is the recipe task e ran, or nil for a task that ran none:

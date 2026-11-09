@@ -1,9 +1,10 @@
-// Package retro is the weekly retro's staging (design/retro.md §6): the
-// week's outcome records, rollups, and the picked PRs' feedback and
-// archived tasks, read from the token-usage collector into a directory -
-// the layout the retro recipe reads from its task's staged/.
+// Package retro is the retros' staging: the weekly retro's (design/retro.md
+// §6) - the week's outcome records, rollups, and the picked PRs' feedback
+// and archived tasks, read from the token-usage collector into a
+// directory, the layout the retro recipe reads from its task's staged/ -
+// and the per-PR retro's (design/retro-per-pr.md, pr.go), one PR's.
 //
-// The layout, the recipe's input contract:
+// The weekly layout, the retro recipe's input contract:
 //
 //	staged.json                        the repository, the window, the picks and why
 //	outcomes.jsonl                     the window's outcome records, one per line
@@ -172,46 +173,63 @@ func Stage(ctx context.Context, cfg Config) (*Staged, error) {
 			pick.Skipped = append(pick.Skipped, "feedback.jsonl: "+err.Error())
 		}
 
-		var tasks struct {
-			Tasks []tokenusage.TaskRecord `json:"tasks"`
+		tasks, skipped, err := c.stageTasks(ctx, repo, o.PR, filepath.Join(prDir, "tasks"), maxBytes, false)
+		if err != nil {
+			return nil, err
 		}
-		q := url.Values{"repo": {repo}, "pr": {strconv.Itoa(o.PR)}}
-		if err := c.getJSON(ctx, "/v1/tasks?"+q.Encode(), &tasks); err != nil {
-			pick.Skipped = append(pick.Skipped, "tasks: "+err.Error())
-		}
-		for _, t := range tasks.Tasks {
-			id := t.Sandbox + "/" + t.Task
-			dir, err := within(filepath.Join(prDir, "tasks"), t.Sandbox, t.Task)
-			if err != nil {
-				pick.Skipped = append(pick.Skipped, id+": "+err.Error())
-				continue
-			}
-			if err := writeJSON(filepath.Join(dir, "manifest.json"), t); err != nil {
-				return nil, err
-			}
-			pick.Tasks = append(pick.Tasks, id)
-			for _, f := range t.Files {
-				dest, err := within(dir, f.Name)
-				switch {
-				case err != nil:
-					pick.Skipped = append(pick.Skipped, id+"/"+f.Name+": "+err.Error())
-					continue
-				case f.Bytes > maxBytes:
-					pick.Skipped = append(pick.Skipped, fmt.Sprintf("%s/%s: %d bytes, over %d", id, f.Name, f.Bytes, maxBytes))
-					continue
-				}
-				p := fmt.Sprintf("/v1/tasks/%s/%s/files/%s", url.PathEscape(t.Sandbox), url.PathEscape(t.Task), escapePath(f.Name))
-				if err := c.download(ctx, p, dest, maxBytes); err != nil {
-					pick.Skipped = append(pick.Skipped, id+"/"+f.Name+": "+err.Error())
-				}
-			}
-		}
+		pick.Tasks, pick.Skipped = tasks, append(pick.Skipped, skipped...)
 		st.PRs = append(st.PRs, pick)
 	}
 	if err := writeJSON(filepath.Join(cfg.Dir, StagedFile), st); err != nil {
 		return nil, err
 	}
 	return st, nil
+}
+
+// stageTasks writes PR pr's archived tasks under dir, each as
+// <sandbox>/<task>/ with its manifest.json (its index record) and its
+// files, and returns them (<sandbox>/<task>) and what was not staged,
+// with why. Unless failOnList is true, listing errors are recorded in
+// skipped alongside unreadable files.
+func (c client) stageTasks(ctx context.Context, repo string, pr int, dir string, maxBytes int64, failOnList bool) (ids, skipped []string, err error) {
+	var tasks struct {
+		Tasks []tokenusage.TaskRecord `json:"tasks"`
+	}
+	q := url.Values{"repo": {repo}, "pr": {strconv.Itoa(pr)}}
+	if err := c.getJSON(ctx, "/v1/tasks?"+q.Encode(), &tasks); err != nil {
+		if failOnList {
+			return nil, nil, fmt.Errorf("listing tasks: %w", err)
+		}
+		skipped = append(skipped, "tasks: "+err.Error())
+	}
+	for _, t := range tasks.Tasks {
+		id := t.Sandbox + "/" + t.Task
+		taskDir, err := within(dir, t.Sandbox, t.Task)
+		if err != nil {
+			skipped = append(skipped, id+": "+err.Error())
+			continue
+		}
+		if err := writeJSON(filepath.Join(taskDir, "manifest.json"), t); err != nil {
+			return nil, nil, err
+		}
+		ids = append(ids, id)
+		for _, f := range t.Files {
+			dest, err := within(taskDir, f.Name)
+			switch {
+			case err != nil:
+				skipped = append(skipped, id+"/"+f.Name+": "+err.Error())
+				continue
+			case f.Bytes > maxBytes:
+				skipped = append(skipped, fmt.Sprintf("%s/%s: %d bytes, over %d", id, f.Name, f.Bytes, maxBytes))
+				continue
+			}
+			p := fmt.Sprintf("/v1/tasks/%s/%s/files/%s", url.PathEscape(t.Sandbox), url.PathEscape(t.Task), escapePath(f.Name))
+			if err := c.download(ctx, p, dest, maxBytes); err != nil {
+				skipped = append(skipped, id+"/"+f.Name+": "+err.Error())
+			}
+		}
+	}
+	return ids, skipped, nil
 }
 
 var errNotFound = errors.New("not found")

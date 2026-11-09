@@ -22,6 +22,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/fanouts"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/graphs"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/issues"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/prretros"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/prs"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/retros"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/sandbox"
@@ -35,6 +36,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/graph"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/k8s"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/recipe"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/retro"
 	factorysandbox "github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/sandbox"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/taskapi"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/watch/rules"
@@ -338,6 +340,50 @@ func (w *Watcher) newRetroController() *retros.Controller {
 	})
 }
 
+// newPRRetroController constructs the per-PR retro, or nil when it is off
+// (design/retro-per-pr.md). It writes on the PRs as the watcher; each
+// retro runs as the account a coder recipe on the repository runs as, in
+// a sandbox of its own. Without a collector (COLLECTOR_URL), a closed
+// PR's retro runs at once, on what GitHub has.
+func (w *Watcher) newPRRetroController() *prretros.Controller {
+	if !w.PRRetro || w.RunPRRetro == nil || w.QueueDir == "" {
+		return nil
+	}
+	repoURL := fmt.Sprintf("https://github.com/%s/%s", w.Repo.Owner, w.Repo.Repo)
+	var outcome func(ctx context.Context, pr int) (bool, error)
+	if collector := os.Getenv("COLLECTOR_URL"); collector != "" {
+		outcome = func(ctx context.Context, pr int) (bool, error) {
+			rec, err := retro.PROutcome(ctx, collector, nil, w.Repo.Owner, w.Repo.Repo, pr)
+			return rec != nil, err
+		}
+	}
+	return prretros.New(prretros.Config{
+		TriggerLabel:  w.triggerLabel,
+		GitHubLogin:   w.githubLogin,
+		Pool:          w.allBotUsers,
+		TrustedLogins: w.cfg.TrustedLogins(),
+		StateDir:      w.QueueDir,
+		DryRun:        w.loopDryRun(w.PRMode),
+	}, prretros.Deps{
+		GitHub:   w.repoClient,
+		Outcome:  outcome,
+		Paused:   w.draining,
+		CanStart: w.belowMaxPending,
+		Run: func(ctx context.Context, run retro.PRRun) (retro.PRResult, error) {
+			user := run.User
+			if user == "" {
+				var err error
+				user, err = w.selectUserForTask(ctx, api.TypeIssueRule, "retro-pr", 0)
+				if err != nil {
+					return retro.PRResult{}, retro.TryAgain(fmt.Errorf("choosing the account for the retro: %w", err))
+				}
+			}
+			run.Owner, run.Repo = w.Repo.Owner, w.Repo.Repo
+			return w.RunPRRetro(ctx, repoURL, user, run)
+		},
+	})
+}
+
 // belowMaxPending reports whether fewer sandbox tasks run than --max-pending.
 func (w *Watcher) belowMaxPending(ctx context.Context) bool {
 	if w.sandboxes == nil || w.MaxPending <= 0 {
@@ -623,6 +669,9 @@ func (w *Watcher) newCLIRunner() *dispatcher.CLIRunner {
 // The watcher's sandbox service satisfies the dispatcher's interface directly,
 // so no adapter is needed.
 var _ dispatcher.SandboxService = (*sandbox.Service)(nil)
+
+// The repository-bound GitHub client is the per-PR retro's.
+var _ prretros.GitHub = (*github.Client)(nil)
 
 // The watcher's queue manager satisfies the chore scheduler's interface directly.
 var _ chores.Queue = (*concurrency.TaskQueueManager)(nil)
