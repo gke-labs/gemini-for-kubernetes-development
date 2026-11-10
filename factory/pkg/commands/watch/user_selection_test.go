@@ -117,3 +117,36 @@ func TestSelectUser_AuthorRecipeRunsAsTheAuthor(t *testing.T) {
 		}
 	}
 }
+
+// A merger recipe (the built-in merge) runs as a merger or not at all:
+// with no merger account it never falls back to the default account, nor
+// to the bot a PR is assigned to.
+func TestSelectUser_MergerNeverFallsBack(t *testing.T) {
+	w := newTestWatcher(t, t.TempDir())
+	coordinator := &watcherTaskCoordinator{w: w}
+	merge := func(assignee string) (string, error) {
+		return coordinator.SelectUser(context.Background(), &api.QueueTask{Type: api.TypePRRule, Recipe: "merge", Assignee: assignee, Number: 7})
+	}
+	for name, cfg := range map[string]*config.FactoryConfig{
+		"no config":   nil,
+		"no roles":    {},
+		"no mergers":  {Roles: map[string]config.RoleConfig{"coder": {Users: []string{"ada-coder-bot"}}}},
+		"empty merge": {Roles: map[string]config.RoleConfig{"coder": {Users: []string{"ada-coder-bot"}}, "merger": {}}},
+	} {
+		w.cfg = cfg
+		for _, assignee := range []string{"", "ada-coder-bot"} {
+			if user, err := merge(assignee); err == nil || user != "" {
+				t.Errorf("%s, assignee %q: %q, %v; want an error and no account", name, assignee, user, err)
+			}
+		}
+	}
+	w.cfg = &config.FactoryConfig{Roles: map[string]config.RoleConfig{
+		"coder":  {Users: []string{"ada-coder-bot"}},
+		"merger": {Users: []string{"merge-bot"}},
+	}}
+	for _, assignee := range []string{"", "ada-coder-bot"} {
+		if user, err := merge(assignee); err != nil || user != "merge-bot" {
+			t.Errorf("assignee %q: %q, %v; want merge-bot", assignee, user, err)
+		}
+	}
+}

@@ -25,6 +25,17 @@ import (
 // already exists is pinned to the account that sandbox belongs to, so that a
 // resumed task keeps the credentials and the workspace it started with.
 func (w *Watcher) selectUserForTask(ctx context.Context, taskType api.TaskType, recipeName string, prNum int) (string, error) {
+	// A merger recipe runs as a merger or not at all: never as the
+	// default account, which may hold rights nobody meant to merge with.
+	if w.recipeAs(recipeName) == recipe.AsMerger {
+		var mergers []string
+		if w.cfg != nil {
+			mergers = w.cfg.Roles[recipe.AsMerger].Users
+		}
+		if len(mergers) == 0 {
+			return "", fmt.Errorf("recipe %s runs as merger, and the overseer has no merger account (spec.roles.merger): not running it", recipeName)
+		}
+	}
 	if w.cfg == nil || len(w.cfg.Roles) == 0 {
 		return "", nil // default fallback to factory-user
 	}
@@ -130,8 +141,8 @@ func (w *Watcher) selectUserForTask(ctx context.Context, taskType api.TaskType, 
 	}
 
 	// A reviewer is any of the pool: a different identity from the PR's,
-	// whoever wrote it.
-	if role == "reviewer" {
+	// whoever wrote it. So is a merger.
+	if role == "reviewer" || role == recipe.AsMerger {
 		idx := time.Now().UnixNano() % int64(len(roleCfg.Users))
 		return roleCfg.Users[idx], nil
 	}

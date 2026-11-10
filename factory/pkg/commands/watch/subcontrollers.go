@@ -703,6 +703,11 @@ func (c *watcherTaskCoordinator) SelectUser(ctx context.Context, task *api.Queue
 		// author, never the bot the PR is assigned to (a reviewer can be).
 		return w.selectUserForTask(ctx, task.Type, task.Recipe, task.Number)
 	}
+	if w.recipeAs(task.Recipe) == recipe.AsMerger {
+		// It merges: a merger from its pool or nobody, never the bot the PR
+		// is assigned to (selectUserForTask refuses an empty pool).
+		return w.selectUserForTask(ctx, task.Type, task.Recipe, task.Number)
+	}
 	selectedUser := task.Assignee
 	if selectedUser == "" || (api.IsPRTask(task.Type) && strings.EqualFold(selectedUser, w.targetAssignee)) || !w.inPool(w.recipeAs(task.Recipe), selectedUser) {
 		return w.selectUserForTask(ctx, task.Type, task.Recipe, task.Number)
