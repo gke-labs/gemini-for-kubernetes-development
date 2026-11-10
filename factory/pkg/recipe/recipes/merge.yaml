@@ -1,0 +1,72 @@
+# merge: merges a pull request a watch rule found ready (a rule on its
+# labels - its step, its assessment, the hand-over to people - runs it; the
+# recipe decides nothing about whether it should be merged, only whether it
+# still can be). The merger pool runs it: an identity of its own, with the
+# repository's merge rights. It asks nothing - no agent runs with a token
+# that merges - and runs in a sandbox of its own, merge-<repo>-<n>
+# (recipe.OwnSandbox).
+#
+# This is GitHub's generic way: an approving review, then auto-merge, which
+# a repository with a merge queue takes as "enqueue when the checks pass".
+# A repository that merges otherwise - prow's /lgtm and /approve, say -
+# replaces it with .agents/recipes/merge.yaml (an overseer's
+# spec.repoRecipe.mode: replace), as merger too.
+name: merge
+label: Merge
+on: [pr]
+as: merger
+timeout: 15m
+
+inputs:
+  method:
+    description: How GitHub merges it when the repository has no merge queue - merge, squash or rebase
+    default: squash
+  message:
+    description: The approving review's text
+    default: "Approved for merge by the overseer: the watch rule that runs this found the pull request ready, and it is still open, not a draft, unblocked and mergeable."
+
+start:
+  steps:
+    - uses: setup-git
+    - uses: setup-repo   # run: steps run in the checkout; the merge itself needs none
+
+    # Still mergeable, as the PR is now: open, not a draft, nothing holding
+    # it (a stop or hold label, changes requested, a conflict). The head it
+    # was checked at is the one approved and merged: a push since fails the
+    # merge rather than merging what nobody looked at.
+    - run: |
+        R="${INPUT_REPO_OWNER}/${INPUT_REPO_NAME}"
+        N="${INPUT_PR_NUMBER}"
+        gh pr view "$N" -R "$R" --json state,isDraft,mergeable,reviewDecision,headRefOid,labels > "$TASK_DIR/pr.json"
+        state=$(jq -r .state "$TASK_DIR/pr.json")
+        test "$state" = OPEN || { echo "PR #$N is $state, not open: not merging" >&2; exit 1; }
+        test "$(jq -r .isDraft "$TASK_DIR/pr.json")" = false || { echo "PR #$N is a draft: not merging" >&2; exit 1; }
+        held=$(jq -r '[.labels[].name | select(test("(^|/)(stop|hold)$|^do-not-merge"; "i"))] | join(", ")' "$TASK_DIR/pr.json")
+        test -z "$held" || { echo "PR #$N is held ($held): not merging" >&2; exit 1; }
+        test "$(jq -r .reviewDecision "$TASK_DIR/pr.json")" != CHANGES_REQUESTED || { echo "PR #$N has changes requested: not merging" >&2; exit 1; }
+        test "$(jq -r .mergeable "$TASK_DIR/pr.json")" != CONFLICTING || { echo "PR #$N conflicts with its base: not merging" >&2; exit 1; }
+        jq -r .headRefOid "$TASK_DIR/pr.json" > "$TASK_DIR/head"
+        echo "PR #$N at $(cat "$TASK_DIR/head") can be merged"
+
+    # The approving review, once per head: a rerun that finds its own
+    # approval of this head already there adds none.
+    - run: |
+        R="${INPUT_REPO_OWNER}/${INPUT_REPO_NAME}"
+        N="${INPUT_PR_NUMBER}"
+        head=$(cat "$TASK_DIR/head")
+        me=$(gh api user --jq .login)
+        mine=$(gh api "repos/$R/pulls/$N/reviews?per_page=100" --jq "[.[] | select(.user.login == \"$me\" and .state == \"APPROVED\" and .commit_id == \"$head\")] | length")
+        if [ "$mine" -gt 0 ]; then
+          echo "$me approved $head already"
+        else
+          gh pr review "$N" -R "$R" --approve --body "$INPUT_MESSAGE"
+        fi
+
+    # Auto-merge at the checked head: GitHub merges once the required
+    # checks and reviews pass, or a merge queue takes it then.
+    - run: |
+        R="${INPUT_REPO_OWNER}/${INPUT_REPO_NAME}"
+        N="${INPUT_PR_NUMBER}"
+        case "$INPUT_METHOD" in merge|squash|rebase) ;; *) echo "method $INPUT_METHOD is not merge, squash or rebase" >&2; exit 1;; esac
+        gh pr merge "$N" -R "$R" --auto "--$INPUT_METHOD" --match-head-commit "$(cat "$TASK_DIR/head")"
+        echo "PR #$N: auto-merge set at $(cat "$TASK_DIR/head")"
