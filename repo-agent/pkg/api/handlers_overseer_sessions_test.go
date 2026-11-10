@@ -143,6 +143,8 @@ func overseerSessionServer(t *testing.T, daemon *fakeSessions) *gin.Engine {
 	scoped := overseer.Group("/:name", server.overseerScope())
 	scoped.GET("/task-sessions/:sandbox/:task", server.getTaskSession)
 	scoped.POST("/task-sessions/:sandbox/:task/prompt", server.promptTaskSession)
+	scoped.GET("/task-sessions/:sandbox/:task/streams", server.getTaskSessionStreams)
+	scoped.GET("/task-sessions/:sandbox/:task/streams/:stream", server.getTaskSessionStream)
 	scoped.GET("/sandbox-card/:sandbox", server.getSandboxCard)
 	scoped.POST("/sandbox-card/:sandbox/lifecycle", server.sandboxLifecycle)
 	return r
@@ -238,6 +240,22 @@ func TestAnOverseerSessionIsReadOnly(t *testing.T) {
 	}
 }
 
+// An overseer's side session is read by its own name, not the overseer's:
+// the routes under /overseers/:name have a :name of their own.
+func TestAnOverseerSideSessionIsReadByItsName(t *testing.T) {
+	daemon := &fakeSessions{files: map[string]string{
+		"recipe-fix-1/session-review/stream.ndjson": `{"seq":1,"kind":"user_prompt","data":{"text":"Review it"}}` + "\n",
+	}}
+	r := overseerSessionServer(t, daemon)
+	w := doAs(t, r, "root", http.MethodGet, overseerSessionAt+"/streams/review", "")
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"name":"review"`) || !strings.Contains(w.Body.String(), "Review it") {
+		t.Errorf("status %d: %s", w.Code, w.Body.String())
+	}
+	if w := doAs(t, r, "root", http.MethodGet, overseerSessionAt+"/streams", ""); !strings.Contains(w.Body.String(), `"streams":["review"]`) {
+		t.Errorf("streams: %s", w.Body.String())
+	}
+}
+
 // Continuing an overseer's run opens its conversation with the key of the
 // bot it ran as, not the namespace's factory-user.
 func TestAnOverseerSessionOpensWithItsBotsKey(t *testing.T) {
@@ -276,6 +294,8 @@ func TestOverseerSessionRoutesAreRegistered(t *testing.T) {
 		"GET /api/overseers/:name/work",
 		"GET /api/overseers/:name/task-sessions/:sandbox/:task",
 		"POST /api/overseers/:name/task-sessions/:sandbox/:task/prompt",
+		"GET /api/overseers/:name/task-sessions/:sandbox/:task/streams",
+		"GET /api/overseers/:name/task-sessions/:sandbox/:task/streams/:stream",
 		"GET /api/overseers/:name/task-session-events/:sandbox/:task",
 		"GET /api/overseers/:name/sandbox-card/:sandbox",
 		"GET /api/overseers/:name/sandbox-card/:sandbox/terminal",
