@@ -12,6 +12,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/acpd"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/spool"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/taskfiles"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/termd"
 )
 
 // EnvTaskToken carries a task's token into its process: what the task
@@ -103,6 +104,12 @@ func (t *Tokens) get(task string) string {
 func (s *Server) HostSessions(sessions *acpd.Server, tokens *Tokens) {
 	s.sessions, s.tokens = sessions, tokens
 	sessions.SetTasks(taskSessions{s})
+}
+
+// HostTerminals serves terminals's sessions under /v1/terminals
+// (termd.Manager.Handler).
+func (s *Server) HostTerminals(terminals *termd.Manager) {
+	s.terminals = terminals
 }
 
 // taskSessions is what acpd asks about the server's tasks.

@@ -177,3 +177,27 @@ func TestSessionsAreOnlyOnADaemonThatHostsThem(t *testing.T) {
 		t.Error("a nil Dialer has sessions")
 	}
 }
+
+// Terminals are offered only by a daemon that says it serves them, over
+// the same forward as its sessions.
+func TestTerminalsAreOnlyOnADaemonThatServesThem(t *testing.T) {
+	for _, tc := range []struct {
+		version string
+		want    bool
+	}{
+		{`{"api":1,"sessions":1,"terminals":1}`, true},
+		{`{"api":1,"sessions":1}`, false},
+		{`{"api":1}`, false},
+	} {
+		srv := taskServer(t, tc.version)
+		f := newFixture(t, func() (string, error) { return srv.URL, nil })
+		base, ok := f.d.Terminals(context.Background(), pod)
+		if ok != tc.want || (ok && base != srv.URL) {
+			t.Errorf("%s: Terminals = %q, %v; want %v", tc.version, base, ok, tc.want)
+		}
+		f.d.Sessions(context.Background(), pod)
+		if f.opens != 1 {
+			t.Errorf("%s: opened %d forwards, want 1", tc.version, f.opens)
+		}
+	}
+}

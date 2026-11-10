@@ -22,6 +22,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/spool"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/taskfiles"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/taskoutput"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/termd"
 	"k8s.io/klog/v2"
 )
 
@@ -49,6 +50,10 @@ type Server struct {
 	sessions *acpd.Server
 	tokens   *Tokens
 
+	// terminals, when set, serves the daemon's terminal sessions under
+	// /v1/terminals.
+	terminals *termd.Manager
+
 	// mu makes finding a task by id or run name and starting it one step,
 	// so the same task posted twice starts once.
 	mu sync.Mutex
@@ -67,6 +72,9 @@ func (s *Server) Handler() http.Handler {
 		if s.sessions != nil {
 			v.Sessions = SessionsVersion
 		}
+		if s.terminals != nil {
+			v.Terminals = TerminalsVersion
+		}
 		writeJSON(w, http.StatusOK, v)
 	})
 	mux.HandleFunc("GET /v1/disk", s.handleDisk)
@@ -83,6 +91,11 @@ func (s *Server) Handler() http.Handler {
 	if s.sessions != nil {
 		mux.Handle("/v1/sessions", s.sessionsHandler())
 		mux.Handle("/v1/sessions/", s.sessionsHandler())
+	}
+	if s.terminals != nil {
+		h := http.StripPrefix("/v1", s.terminals.Handler())
+		mux.Handle("/v1/terminals", h)
+		mux.Handle("/v1/terminals/", h)
 	}
 	return mux
 }

@@ -254,7 +254,8 @@ func (s *Server) streamSandboxTerminal(c *gin.Context, namespace, name string) {
 	// A pod mid-boot (ContainerCreating, image pull) accepts no exec:
 	// say so instead of a bare "connection ended" loop — the frontend's
 	// backoff reconnect converges the moment the container is ready.
-	if pod, perr := s.K8sManager.Clientset.CoreV1().Pods(podID.Namespace).Get(c.Request.Context(), podID.Name, v1.GetOptions{}); perr == nil {
+	pod, perr := s.K8sManager.Clientset.CoreV1().Pods(podID.Namespace).Get(c.Request.Context(), podID.Name, v1.GetOptions{})
+	if perr == nil {
 		ready := false
 		for _, cond := range pod.Status.Conditions {
 			if cond.Type == "Ready" && cond.Status == "True" {
@@ -271,6 +272,16 @@ func (s *Server) streamSandboxTerminal(c *gin.Context, namespace, name string) {
 	// the websocket, and only as long.
 	ctx, cancel := context.WithCancel(context.WithoutCancel(c.Request.Context()))
 	defer cancel()
+
+	// A daemon that serves terminal sessions owns the program: proxy to
+	// it (handlers_sandbox_terminal_daemon.go). Older images get tmux over
+	// exec, below.
+	if perr == nil && s.ACPD != nil {
+		if base, ok := s.ACPD.Terminals(ctx, pod); ok {
+			s.daemonTerminal(ctx, ws, base, namespace, name, chatTask, c.Query("offset"))
+			return
+		}
+	}
 
 	stdinR, stdinW := io.Pipe()
 	sizeQueue := &wsSizeQueue{ch: make(chan remotecommand.TerminalSize, 4)}

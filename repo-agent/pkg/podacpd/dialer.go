@@ -66,6 +66,9 @@ type podState struct {
 	// legacy says the pod's daemon hosts no sessions: an image does not
 	// change under a pod, so it is asked once.
 	legacy bool
+	// terminals says the pod's daemon serves terminal sessions
+	// (/v1/terminals), asked with legacy.
+	terminals bool
 	// failedAt is when a forward last could not be opened.
 	failedAt time.Time
 	// usedAt is guarded by Dialer.mu, the rest by mu.
@@ -95,18 +98,30 @@ func (d *Dialer) Sessions(ctx context.Context, pod *corev1.Pod) (*acpd.Client, b
 	if d == nil {
 		return nil, false
 	}
-	base, ok := d.forwarded(ctx, pod)
+	base, _, ok := d.forwarded(ctx, pod)
 	if !ok {
 		return nil, false
 	}
 	return acpd.New(base + "/v1"), true
 }
 
-// forwarded is the base URL of a live forward to a pod that hosts
-// sessions, opening and probing one when there is none.
-func (d *Dialer) forwarded(ctx context.Context, pod *corev1.Pod) (string, bool) {
-	if d.open == nil {
+// Terminals is the base URL (http://127.0.0.1:<port>) of a forward to
+// the pod's daemon when it serves terminal sessions under /v1/terminals,
+// false when it does not or cannot be forwarded to.
+func (d *Dialer) Terminals(ctx context.Context, pod *corev1.Pod) (string, bool) {
+	if d == nil {
 		return "", false
+	}
+	base, terminals, ok := d.forwarded(ctx, pod)
+	return base, ok && terminals
+}
+
+// forwarded is the base URL of a live forward to a pod that hosts
+// sessions, and whether it serves terminals too, opening and probing one
+// when there is none.
+func (d *Dialer) forwarded(ctx context.Context, pod *corev1.Pod) (string, bool, bool) {
+	if d.open == nil {
+		return "", false, false
 	}
 	d.mu.Lock()
 	now := d.clock()
@@ -126,11 +141,11 @@ func (d *Dialer) forwarded(ctx context.Context, pod *corev1.Pod) (string, bool) 
 	defer st.mu.Unlock()
 	switch {
 	case st.legacy:
-		return "", false
+		return "", false, false
 	case st.fwd != nil && st.fwd.alive():
-		return st.fwd.base, true
+		return st.fwd.base, st.terminals, true
 	case !st.failedAt.IsZero() && now.Sub(st.failedAt) < retryAfter:
-		return "", false
+		return "", false, false
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
@@ -138,21 +153,21 @@ func (d *Dialer) forwarded(ctx context.Context, pod *corev1.Pod) (string, bool) 
 	fwd, err := d.open(ctx, pod)
 	if err != nil {
 		st.failedAt = now
-		return "", false
+		return "", false, false
 	}
-	sessions, err := probe(ctx, fwd.base)
+	v, err := probe(ctx, fwd.base)
 	switch {
 	case err != nil:
 		fwd.close()
 		st.failedAt = now
-		return "", false
-	case !sessions:
+		return "", false, false
+	case v.Sessions < 1:
 		fwd.close()
 		st.legacy = true
-		return "", false
+		return "", false, false
 	}
-	st.fwd, st.failedAt = fwd, time.Time{}
-	return fwd.base, true
+	st.fwd, st.failedAt, st.terminals = fwd, time.Time{}, v.Terminals >= 1
+	return fwd.base, st.terminals, true
 }
 
 // sweep forgets pods unused for idleAfter, closing their forwards. A pod
@@ -188,29 +203,31 @@ func (st *podState) closeForward() {
 	}
 }
 
-// probe asks the task server whether it hosts sessions. A task server
-// from before sessions answers without the field; a pod with no task
+// version is what of the task server's GET /v1/version repo-agent reads.
+type version struct {
+	Sessions  int `json:"sessions"`
+	Terminals int `json:"terminals"`
+}
+
+// probe asks the task server what it hosts. A task server from before
+// sessions (or terminals) answers without the field; a pod with no task
 // server at all fails the request.
-func probe(ctx context.Context, base string) (bool, error) {
+func probe(ctx context.Context, base string) (version, error) {
+	var v version
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/v1/version", nil)
 	if err != nil {
-		return false, err
+		return v, err
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return false, err
+		return v, err
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		return false, fmt.Errorf("task server version: %s", resp.Status)
+		return v, fmt.Errorf("task server version: %s", resp.Status)
 	}
-	var v struct {
-		Sessions int `json:"sessions"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&v); err != nil {
-		return false, err
-	}
-	return v.Sessions >= 1, nil
+	err = json.NewDecoder(resp.Body).Decode(&v)
+	return v, err
 }
 
 // forward is a port-forward to a pod's task server, on a local port.
