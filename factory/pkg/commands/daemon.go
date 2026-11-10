@@ -13,6 +13,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/spool"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/taskapi"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/taskfiles"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/termd"
 	"github.com/spf13/cobra"
 	"k8s.io/klog/v2"
 )
@@ -93,6 +94,16 @@ func runDaemon(ctx context.Context) error {
 	// API server authorises.
 	server := taskapi.NewServer(spool.IncomingDir, taskfiles.DefaultTasksDir, launch)
 	server.HostSessions(sessions, tokens)
+	// Terminal sessions: programs on PTYs the daemon owns, outliving every
+	// client that attaches to them (the web terminal, factory sandbox
+	// attach), in place of tmux over an exec stream.
+	terminals := termd.NewManager(sandbox.WorkspacesPath)
+	go terminals.Reap(time.Minute, ctx.Done())
+	go func() {
+		<-ctx.Done()
+		terminals.Close()
+	}()
+	server.HostTerminals(terminals)
 	go func() {
 		if err := taskapi.Serve(ctx, fmt.Sprintf("127.0.0.1:%d", taskapi.Port), server); err != nil {
 			log.Error(err, "task server exited")

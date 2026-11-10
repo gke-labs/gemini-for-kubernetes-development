@@ -58,14 +58,14 @@ Once opened, the terminal panel will expand immediately below the card header. Y
 
 ### Persistent Sessions & Gemini CLI
 
-*   **Persistent Sessions with `tmux`**:
-    To keep your terminal session active even if the browser connection drops, use `tmux`:
-    ```bash
-    tmux new -s work
-    # ... do your work ...
-    # Press Ctrl+b then d to detach
-    tmux attach -t work
-    ```
+*   **Persistent sessions**:
+    The shell runs on a terminal the sandbox's daemon owns, not inside your
+    connection. Close the tab, lose the network, or open the same terminal in
+    a second tab: the program keeps running, and the terminal picks up exactly
+    where it left off. If it has been away for a long time (more than 4 MiB of
+    output), it redraws the screen as it is now instead. No `tmux` needed.
+    (Sandboxes on an image from before this attach `tmux` instead, with the
+    same effect.)
 
 *   **AI Assistance with `gemini-cli`**:
     Interact with the Gemini model directly from the command line to ask questions or generate code:
@@ -80,10 +80,10 @@ If you need more vertical space, simply click and drag the **bottom-right corner
 
 ## Troubleshooting
 
-*   **Connection Closed**: If the connection drops (e.g., network interruption), the terminal will display a "Connection closed" message. Refresh the page or close and reopen the terminal to reconnect.
+*   **Connection Closed**: If the connection drops (e.g., network interruption), the terminal reconnects on its own and resumes the session.
 *   **Garbled Text**: If you see strange characters, it might be due to an encoding mismatch. The terminal is configured for UTF-8. Ensure your browser supports it.
 *   **Scaling Down**: If the sandbox scales down (status turns yellow/grey) due to inactivity, the terminal session will be terminated. You will need to "Scale Up" the sandbox before accessing the terminal again.
 
 ---
 
-*This feature is powered by a WebSocket connection to a custom SSH server running within the sandbox pod, proxied securely through the Repo Agent API.*
+*The terminal is a WebSocket to the Repo Agent API, which proxies it to the sandbox daemon's terminal sessions over a Kubernetes port-forward (design: `factory/design/daemon-terminal-sessions.md`).*

@@ -3,13 +3,15 @@ import { Terminal } from 'xterm';
 import { FitAddon } from 'xterm-addon-fit';
 import 'xterm/css/xterm.css';
 
-// The Overseer tab's terminal, on the tmux-backed transport the sandbox
-// card uses: the session lives in tmux inside the pod, so a dropped
-// socket loses nothing — this component reconnects with backoff into the
-// same session instead of dying with a "connection closed" epitaph.
-// chat: a factory task type ("plan", …) — instead of a shell, the server
-// drops the terminal into `gemini --resume latest` under that task's HOME,
-// continuing the conversation the task left behind in the sandbox.
+// A sandbox's terminal. On a daemon that serves terminal sessions
+// (factory's termd) the program runs on a PTY the daemon owns: this
+// component counts the output bytes it has written and, reconnecting
+// after a drop, asks for the stream from that offset - nothing lost,
+// nothing repeated (a client too far behind gets a snapshot of the
+// screen). On an older sandbox the server attaches tmux over exec, and
+// the stream is plain output.
+// chat: a factory task type ("plan", …) — instead of a shell, the
+// engine's CLI continuing its conversation in the sandbox.
 // terminalPath is the socket a sandbox's terminal is on: an overseer's
 // sandbox (namespace overseer-<name>) under that overseer's admin routes,
 // any other the sandbox card's, in the member's own namespace.
@@ -21,6 +23,48 @@ export function terminalPath(namespace, sandboxName) {
     return `/api/sandbox-card/${sb}/terminal`;
 }
 
+// applyFrame is what one websocket message does to the terminal, and to
+// stream - {offset}, the byte the next output starts at, null until a
+// daemon has said (an older sandbox never does). Text frames from a
+// daemon are JSON control: attached {offset, reset}, snapshot {data},
+// exit {code}; binary frames are output. Anything else is output too.
+// It returns {reset, write, exited}: clear the terminal first, what to
+// write, and the program's exit code when it ended.
+export function applyFrame(stream, data) {
+    if (typeof data !== 'string') {
+        const bytes = new Uint8Array(data);
+        if (stream.offset !== null) stream.offset += bytes.byteLength;
+        return { reset: false, write: bytes, exited: null };
+    }
+    let frame = null;
+    try { frame = JSON.parse(data); } catch (e) { /* plain text output */ }
+    if (!frame || typeof frame.type !== 'string') {
+        return { reset: false, write: data, exited: null };
+    }
+    switch (frame.type) {
+        case 'attached':
+            stream.offset = frame.offset || 0;
+            return { reset: !!frame.reset, write: null, exited: null };
+        case 'snapshot':
+            return { reset: false, write: frame.data || '', exited: null };
+        case 'exit':
+            // The next connection starts a new program, from its first byte.
+            stream.offset = null;
+            return { reset: false, write: `\r\n[exited with code ${frame.code || 0}]\r\n`, exited: frame.code || 0 };
+        default:
+            return { reset: false, write: null, exited: null };
+    }
+}
+
+// terminalURL is the socket to connect to: the chat, and where to resume.
+export function terminalURL(namespace, sandboxName, chat, offset) {
+    const params = new URLSearchParams();
+    if (chat) params.set('chat', chat);
+    if (offset !== null && offset !== undefined) params.set('offset', String(offset));
+    const q = params.toString();
+    return `${terminalPath(namespace, sandboxName)}${q ? `?${q}` : ''}`;
+}
+
 const SandboxTerminal = ({ namespace, sandboxName, fill, chat }) => {
     const terminalRef = useRef(null);
     const [status, setStatus] = useState('');
@@ -29,6 +73,8 @@ const SandboxTerminal = ({ namespace, sandboxName, fill, chat }) => {
         if (!namespace || !sandboxName) return undefined;
 
         const state = { closed: false, retry: 0, ws: null };
+        // Where the daemon's stream is up to; survives reconnects.
+        const stream = { offset: null };
         const term = new Terminal({
             cursorBlink: true,
             theme: { background: '#1e1e1e' },
@@ -48,27 +94,28 @@ const SandboxTerminal = ({ namespace, sandboxName, fill, chat }) => {
             if (state.closed) return;
             setStatus(state.retry ? `reconnecting (try ${state.retry})…` : 'connecting…');
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-            const chatQuery = chat ? `?chat=${encodeURIComponent(chat)}` : '';
-            const socket = new WebSocket(`${protocol}//${window.location.host}${terminalPath(namespace, sandboxName)}${chatQuery}`);
+            const socket = new WebSocket(`${protocol}//${window.location.host}${terminalURL(namespace, sandboxName, chat, stream.offset)}`);
             socket.binaryType = 'arraybuffer';
             state.ws = socket;
 
             socket.onopen = () => {
                 state.retry = 0;
                 setStatus(chat
-                    ? `connected — continuing the ${chat} conversation (tmux-backed, survives disconnects)`
-                    : 'connected — session lives in tmux and survives disconnects');
+                    ? `connected — continuing the ${chat} conversation (survives disconnects)`
+                    : 'connected — the session survives disconnects');
                 fitAddon.fit();
                 sendResize();
             };
             socket.onmessage = (event) => {
-                term.write(typeof event.data === 'string' ? event.data : new Uint8Array(event.data));
+                const { reset, write } = applyFrame(stream, event.data);
+                if (reset) term.reset();
+                if (write !== null && write !== '') term.write(write);
             };
             socket.onclose = () => {
                 if (state.closed) return;
                 state.retry += 1;
                 const delay = Math.min(1000 * Math.pow(1.6, state.retry), 10000);
-                setStatus(`disconnected — reconnecting in ${Math.round(delay / 1000)}s (session survives in tmux)`);
+                setStatus(`disconnected — reconnecting in ${Math.round(delay / 1000)}s (the session survives)`);
                 setTimeout(connect, delay);
             };
         };

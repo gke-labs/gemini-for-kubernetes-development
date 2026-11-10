@@ -14,6 +14,7 @@
 //	PUT  /v1/tasks/{id}/files/{name}     the applied marker, the only file a client writes
 //	POST /v1/tasks/{id}/cancel           end the task's process group
 //	     /v1/sessions[/...]              acpd's agent sessions, when the daemon hosts them
+//	     /v1/terminals[/...]             terminal sessions on PTYs the daemon owns (termd), when it hosts them
 //
 // The task directories are plain files (taskfiles.TaskFiles), which the
 // daemon, the server and the spool all read alike.
@@ -46,7 +47,14 @@ type Version struct {
 	// Disk is the version of GET /v1/disk this server serves
 	// (DiskVersion), 0 when it does not.
 	Disk int `json:"disk,omitempty"`
+	// Terminals is the version of the terminal sessions served under
+	// /v1/terminals (TerminalsVersion), 0 when they are not.
+	Terminals int `json:"terminals,omitempty"`
 }
+
+// TerminalsVersion is /v1/terminals: termd's sessions, attach with
+// offset resume.
+const TerminalsVersion = 1
 
 // DiskVersion is GET /v1/disk: the workspace's space (diskcare.Usage).
 const DiskVersion = 1
