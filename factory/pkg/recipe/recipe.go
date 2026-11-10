@@ -104,7 +104,7 @@ type Recipe struct {
 	// (config roles, an overseer's spec.roles): AsAuthor, the PR's own bot
 	// (the pool bot assigned to it, else its author: a recipe that pushes
 	// to the PR's branch, in that bot's fork); or a pool - coder, agent,
-	// reviewer - pinned to the item. What it does decides it, not the rule
+	// reviewer, merger - pinned to the item. What it does decides it, not the rule
 	// that runs it. Every built-in declares it, and so must a repository's
 	// recipe (which may say only author or coder). A runner without pools
 	// (the board, which runs as its member) does not read it. Like
@@ -457,6 +457,12 @@ const (
 	AsCoder    = "coder"
 	AsAgent    = "agent"
 	AsReviewer = "reviewer"
+	// AsMerger is the pool that merges: an identity of its own, with the
+	// repository's merge rights and nothing else to do. A merger recipe
+	// asks nothing (validateMerger) and runs in a sandbox of its own, so
+	// its token never reaches an agent or shares a disk with another
+	// identity's.
+	AsMerger = "merger"
 )
 
 // validateAs holds a recipe's as: one of the roles, author only for a
@@ -465,6 +471,8 @@ func (r *Recipe) validateAs() error {
 	switch r.As {
 	case "", AsCoder, AsAgent, AsReviewer:
 		return nil
+	case AsMerger:
+		return r.validateMerger()
 	case AsAuthor:
 		for _, on := range r.On {
 			if on != OnPR && on != OnMyPR {
@@ -476,8 +484,40 @@ func (r *Recipe) validateAs() error {
 		}
 		return nil
 	default:
-		return fmt.Errorf("recipe %s: as %q is not one of: %s, %s, %s, %s", r.Name, r.As, AsAuthor, AsCoder, AsAgent, AsReviewer)
+		return fmt.Errorf("recipe %s: as %q is not one of: %s, %s, %s, %s, %s", r.Name, r.As, AsAuthor, AsCoder, AsAgent, AsReviewer, AsMerger)
 	}
+}
+
+// validateMerger holds a merger recipe to what keeps its merge rights to
+// itself: on pull requests alone, with the full token its steps write with
+// (not clone, which gives it to one step), and no ask - no agent runs with
+// a token that merges.
+func (r *Recipe) validateMerger() error {
+	if len(r.On) == 0 {
+		return fmt.Errorf("recipe %s: as merger is for a recipe on pull requests (on: [pr])", r.Name)
+	}
+	for _, on := range r.On {
+		if on != OnPR && on != OnMyPR {
+			return fmt.Errorf("recipe %s: as merger is for a recipe on pull requests, not on %s", r.Name, on)
+		}
+	}
+	if r.Credentials == CredentialsClone {
+		return fmt.Errorf("recipe %s: as merger writes with its token: credentials full, not clone", r.Name)
+	}
+	for i, st := range r.Start.Steps {
+		if st.Ask != "" {
+			return fmt.Errorf("recipe %s: step %d asks, and as merger asks nothing: no agent runs with a token that merges", r.Name, i+1)
+		}
+	}
+	return nil
+}
+
+// OwnSandbox reports whether the recipe runs on a PR in a sandbox of its
+// own (<recipe>-<repo>-<n>) rather than the PR's fix sandbox: a recipe
+// whose token must not meet the agent there (credentials clone), or a
+// merger, whose token must not meet another identity's.
+func (r *Recipe) OwnSandbox() bool {
+	return r.Credentials == CredentialsClone || r.As == AsMerger
 }
 
 // validateSandbox holds a recipe's sandbox: required for a recipe on a

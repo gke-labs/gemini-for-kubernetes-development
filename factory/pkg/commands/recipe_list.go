@@ -32,6 +32,10 @@ type RecipeInfo struct {
 	// sandbox.
 	TaskType    string `json:"taskType"`
 	Credentials string `json:"credentials,omitempty"`
+	// OwnSandbox is whether its runs on a PR are in a sandbox of their own
+	// (RecipeSandboxName) rather than the PR's fix sandbox: credentials
+	// clone, or a merger (recipe.OwnSandbox).
+	OwnSandbox bool `json:"ownSandbox,omitempty"`
 	// Session is its session tag (recipe.Session), if it has one: the
 	// group a board shows as one, whose runs share one conversation and
 	// TaskType.
@@ -81,6 +85,7 @@ func recipeInfo(rec *recipe.Recipe) RecipeInfo {
 	if info.TaskType == "" {
 		info.TaskType = "recipe-" + rec.SessionName()
 	}
+	info.OwnSandbox = rec.OwnSandbox()
 	if rec.Credentials != recipe.CredentialsFull {
 		info.Credentials = rec.Credentials
 	}

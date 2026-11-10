@@ -58,6 +58,7 @@ For PRs written by its bot pool that carry the trigger label or are assigned to 
   - `coder`: issue fixes, and PR tasks on PRs written by someone outside the agent pool.
   - `agent`: chores, and PR tasks on PRs the agent pool wrote. Falls back to `coder` when the pool is empty.
   - `reviewer`: reviews.
+  - `merger`: merges (the `merge` recipe, `as: merger`). An identity of its own, with the repository's merge rights: it approves the PR and sets auto-merge. A merger recipe asks nothing, so no agent runs with its token, and it runs in a sandbox of its own (`merge-<repo>-<n>`). A repository that merges another way, such as prow's `/lgtm` and `/approve`, replaces the recipe with `.agents/recipes/merge.yaml` (with `repoRecipe.mode: replace`). A watch rule decides when a PR is merged; the recipe only checks that it still can be (open, not a draft, not held, no changes requested, no conflict) and merges at the head it checked.
 
   A task on an issue that already has a sandbox stays on that sandbox's account.
 - **Gemini key pool**: if a `tokenscript` secret exists, its script is run to pick a Gemini API key, skipping keys marked over quota or suspended. Quota exhaustion is tracked per key and per model, so tasks fall back to models that still have quota. Without the script, the key comes from `geminiAPIKeySecretName`.
@@ -101,7 +102,7 @@ The full schema is in [`pkg/api/v1alpha1/overseer_types.go`](pkg/api/v1alpha1/ov
 | Field | Purpose |
 |---|---|
 | `repoURL` | Repository to watch (required). |
-| `roles` | Bot account pools: `watcher`, `coder`, `agent`, `reviewer`. |
+| `roles` | Bot account pools: `watcher`, `coder`, `agent`, `reviewer`, `merger`. |
 | `allowlistedUsers` | GitHub logins trusted as feedback authors although GitHub does not report them as owner, member or collaborator (e.g. private org members). |
 | `sessionURL` | Links PR descriptions and follow-up comments to the agent conversation that wrote them: a URL with `{sandbox}` and `{task}`, e.g. a dashboard's session page. Unset, nothing is linked. |
 | `robotAccount`, `geminiAPIKeySecretName` | Secrets (in `overseer-system`) that hold the default GitHub identity and the Gemini key. |
