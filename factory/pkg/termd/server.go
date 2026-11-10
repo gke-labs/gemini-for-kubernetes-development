@@ -30,6 +30,9 @@ const maxLive = 16
 // see how it ended, while nobody is attached.
 const exitedKeep = time.Hour
 
+// stateInterval is how often an attached client's state is looked at.
+var stateInterval = time.Second
+
 const (
 	pingInterval = 25 * time.Second
 	readTimeout  = 75 * time.Second
@@ -58,8 +61,9 @@ type CreateRequest struct {
 // frame; output is in binary frames.
 //
 // Daemon to client: attached {offset, reset} first, then snapshot {data}
-// when the client's bytes are no longer kept, and exit {code} when the
-// program ends. Client to daemon: input {data} and resize {cols, rows};
+// when the client's bytes are no longer kept, state {state, message,
+// title} first and whenever what the program is doing changes (activity.go),
+// and exit {code} when the program ends. Client to daemon: input {data} and resize {cols, rows};
 // a binary frame is input too.
 type Frame struct {
 	Type   string `json:"type"`
@@ -69,6 +73,10 @@ type Frame struct {
 	Code   int    `json:"code,omitempty"`
 	Cols   int    `json:"cols,omitempty"`
 	Rows   int    `json:"rows,omitempty"`
+	// State, Message and Title are a state frame's (Info's).
+	State   string `json:"state,omitempty"`
+	Message string `json:"message,omitempty"`
+	Title   string `json:"title,omitempty"`
 }
 
 // Manager is the daemon's terminal sessions.
@@ -393,12 +401,37 @@ func serveAttach(ws *websocket.Conn, s *Session, want int64) {
 	end := func() { once.Do(func() { close(stop); s.wake() }) }
 	defer end()
 
+	// What the program is doing, whenever it changes; started once the
+	// client has its attached frame, which comes first.
+	watchState := func() {
+		t := time.NewTicker(stateInterval)
+		defer t.Stop()
+		var last Frame
+		for {
+			in := s.Info()
+			f := Frame{Type: "state", State: in.State, Message: in.Message, Title: in.Title}
+			if f != last {
+				if sendFrame(f) != nil {
+					end()
+					return
+				}
+				last = f
+			}
+			select {
+			case <-stop:
+				return
+			case <-t.C:
+			}
+		}
+	}
+
 	// Output.
 	go func() {
 		defer end()
 		if err := announce(att); err != nil {
 			return
 		}
+		go watchState()
 		off := att.Offset
 		for {
 			p, err := s.read(off, stop)

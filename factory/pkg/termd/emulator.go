@@ -23,7 +23,8 @@ type emulator interface {
 }
 
 // newEmulator makes a session's emulator, calling reply with its answers
-// to the program's queries. A build with the libghostty tag uses
+// to the program's queries and sig with what it hears of the program's
+// activity (activity.go). A build with the libghostty tag uses
 // libghostty-vt (emulator_ghostty.go); others charmbracelet/x/vt.
 var newEmulator = newVTEmulator
 
@@ -40,8 +41,13 @@ type vtEmulator struct {
 	once sync.Once
 }
 
-func newVTEmulator(cols, rows int, reply func([]byte)) (emulator, error) {
+func newVTEmulator(cols, rows int, reply func([]byte), sig signals) (emulator, error) {
 	e := &vtEmulator{emu: vt.NewSafeEmulator(cols, rows), done: make(chan struct{})}
+	// The bell and the title; vt knows neither OSC 7501 nor 9;4.
+	e.emu.SetCallbacks(vt.Callbacks{
+		Bell:  func() { sig.attention("bell") },
+		Title: sig.title,
+	})
 	go func() {
 		buf := make([]byte, 4096)
 		for {

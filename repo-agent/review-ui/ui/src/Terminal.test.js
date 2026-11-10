@@ -53,3 +53,12 @@ test('terminalHash and terminalRoute', () => {
   expect(terminalRoute('#/terminal/ns/sb')).toEqual({ namespace: 'ns', name: 'sb', chat: '', program: '' });
   expect(terminalURL('ns', 'sb', '', 40, 'gemini')).toBe('/api/sandbox-card/sb/terminal?program=gemini&offset=40');
 });
+
+// A state frame is what the program is doing, for the status line.
+test('applyFrame state', () => {
+  const stream = { offset: 5 };
+  const out = applyFrame(stream, JSON.stringify({ type: 'state', state: 'needs-you', message: 'Allow edit?', title: 'claude' }));
+  expect(out.state).toEqual({ state: 'needs-you', message: 'Allow edit?', title: 'claude' });
+  expect(out.write).toBe(null);
+  expect(stream.offset).toBe(5);
+});

@@ -74,6 +74,15 @@ type SessionRow struct {
 	State string `json:"state"`
 	// UpdatedAt is when the newest run started or ended, RFC3339.
 	UpdatedAt string `json:"updatedAt,omitempty"`
+	// Terminal is an engine CLI's terminal session in the sandbox's
+	// daemon (termd) - a row of its own, no recipe run behind it - with
+	// Program (gemini, claude, agy) and Chat (the task whose conversation
+	// it continues, for ?chat=) to open it by; Doing is what its terminal
+	// last heard from the program (termd's message), untrusted text.
+	Terminal string `json:"terminal,omitempty"`
+	Program  string `json:"program,omitempty"`
+	Chat     string `json:"chat,omitempty"`
+	Doing    string `json:"doing,omitempty"`
 }
 
 // getSessions lists every agent conversation in the member's namespace,
@@ -149,6 +158,7 @@ func (s *Server) getSessions(c *gin.Context) {
 		row.State = sessionState(row)
 		rows = append(rows, row)
 	}
+	rows = append(rows, s.terminalSessionRows(ctx, namespace, running)...)
 	slices.SortStableFunc(rows, func(a, b SessionRow) int {
 		return cmp.Or(strings.Compare(b.UpdatedAt, a.UpdatedAt), strings.Compare(a.Sandbox, b.Sandbox), strings.Compare(a.Task, b.Task))
 	})

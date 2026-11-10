@@ -69,6 +69,29 @@ Text frames are JSON control (`termd.Frame`), binary frames output.
 repo-agent passes the frames through unchanged, so the browser speaks
 the daemon's protocol.
 
+## What the program is doing
+
+Each session reports a state (`Info.State`, and a `state` frame to
+attached clients when it changes): `working`, `needs-you`, `idle`,
+`done`, `error`, `exited`. It comes from what the terminal hears, so it
+needs no engine hooks and is the same for gemini, claude, agy or a shell
+(`pkg/termd/activity.go`). Most exact first:
+
+1. **OSC 7501**, the program status protocol (libghostty-vt only):
+   working, blocked on the user (permission, question, auth), done,
+   error, idle, with a message. Blocked is `needs-you`.
+2. **OSC 9;4** progress: `working` while a report is up.
+3. A **bell** or a **desktop notification** (OSC 9 / 777): `needs-you`,
+   until someone next types in the terminal.
+4. Otherwise output in the last 5 seconds is `working`, none `idle`.
+
+The window title is kept for display only. The message and title come
+from the program, so they are shown as text, never as markup.
+
+repo-agent lists the engine terminals (not shells) of running sandboxes
+as rows on the Sessions page with that state, and opens one there as its
+live terminal.
+
 ## The emulator
 
 Two, behind one interface (`emulator`, `pkg/termd/emulator.go`):
@@ -106,7 +129,6 @@ with Ghostty's defaults.
 
 ## Not yet
 
-- Agent state on the rail (busy / needs you) from the engines' hooks.
 - Switching a conversation between the research view (ACP) and its
   engine's CLI here: a handoff of the same session id between two
   processes.

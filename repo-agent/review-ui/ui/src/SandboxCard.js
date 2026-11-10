@@ -65,7 +65,8 @@ export default function SandboxCard({ name, namespace, onClose, apiBase = '/api'
       state.ws = ws;
       ws.onopen = () => { state.retry = 0; setTermStatus('connected'); fit.fit(); sendResize(); };
       ws.onmessage = (ev) => {
-        const { reset, write } = applyFrame(state.stream, ev.data);
+        const { reset, write, state: activity } = applyFrame(state.stream, ev.data);
+        if (activity) setTermStatus(`connected — ${activity.state.replace('-', ' ')}${activity.message ? `: ${activity.message}` : ''}`);
         if (reset) term.reset();
         if (write !== null && write !== '') term.write(write);
       };

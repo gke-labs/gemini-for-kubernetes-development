@@ -28,8 +28,10 @@ export function terminalPath(namespace, sandboxName) {
 // daemon has said (an older sandbox never does). Text frames from a
 // daemon are JSON control: attached {offset, reset}, snapshot {data},
 // exit {code}; binary frames are output. Anything else is output too.
-// It returns {reset, write, exited}: clear the terminal first, what to
-// write, and the program's exit code when it ended.
+// A state frame says what the program is doing (termd's activity: working,
+// needs-you, idle, done, error) and is returned as state.
+// It returns {reset, write, exited, state}: clear the terminal first, what
+// to write, the program's exit code when it ended, and its state.
 export function applyFrame(stream, data) {
     if (typeof data !== 'string') {
         const bytes = new Uint8Array(data);
@@ -47,6 +49,8 @@ export function applyFrame(stream, data) {
             return { reset: !!frame.reset, write: null, exited: null };
         case 'snapshot':
             return { reset: false, write: frame.data || '', exited: null };
+        case 'state':
+            return { reset: false, write: null, exited: null, state: { state: frame.state || 'idle', message: frame.message || '', title: frame.title || '' } };
         case 'exit':
             // The next connection starts a new program, from its first byte.
             stream.offset = null;
@@ -93,9 +97,32 @@ export function terminalURL(namespace, sandboxName, chat, offset, program) {
     return `${terminalPath(namespace, sandboxName)}${q ? `?${q}` : ''}`;
 }
 
+// ACTIVITY is a state frame's dot and word, in the Sessions page's colours.
+const ACTIVITY = {
+    'needs-you': { color: '#d73a49', word: 'needs you' },
+    error: { color: '#d73a49', word: 'error' },
+    working: { color: '#0969da', word: 'working' },
+    idle: { color: '#22863a', word: 'idle' },
+    done: { color: '#8b949e', word: 'done' },
+};
+
+// ActivityMark shows what the program is doing; its message and title are
+// the program's own text, shown as text.
+export function ActivityMark({ activity }) {
+    const a = ACTIVITY[activity.state] || ACTIVITY.idle;
+    const detail = [activity.message, activity.title].filter(Boolean).join(' · ');
+    return (
+        <span title={detail || a.word} style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', color: a.color, fontWeight: 600 }}>
+            <span aria-hidden="true">●</span>{a.word}{activity.message ? <span style={{ color: '#8b949e', fontWeight: 400 }}>: {activity.message}</span> : null}
+        </span>
+    );
+}
+
 const SandboxTerminal = ({ namespace, sandboxName, fill, chat, program }) => {
     const terminalRef = useRef(null);
     const [status, setStatus] = useState('');
+    // What the program is doing, from the daemon's state frames.
+    const [activity, setActivity] = useState(null);
 
     useEffect(() => {
         if (!namespace || !sandboxName) return undefined;
@@ -137,7 +164,8 @@ const SandboxTerminal = ({ namespace, sandboxName, fill, chat, program }) => {
                 sendResize();
             };
             socket.onmessage = (event) => {
-                const { reset, write } = applyFrame(stream, event.data);
+                const { reset, write, state } = applyFrame(stream, event.data);
+                if (state) setActivity(state);
                 if (reset) term.reset();
                 if (write !== null && write !== '') term.write(write);
             };
@@ -178,7 +206,10 @@ const SandboxTerminal = ({ namespace, sandboxName, fill, chat, program }) => {
         <div style={fill
             ? { width: '100%', height: '100%', display: 'flex', flexDirection: 'column', minHeight: 0 }
             : { width: '100%' }}>
-            <div style={{ fontSize: 'x-small', color: '#8b949e', textAlign: 'left', padding: '2px 4px', flex: '0 0 auto' }}>{status}</div>
+            <div style={{ fontSize: 'x-small', color: '#8b949e', textAlign: 'left', padding: '2px 4px', flex: '0 0 auto', display: 'flex', gap: '8px' }}>
+                {activity && <ActivityMark activity={activity} />}
+                <span>{status}</span>
+            </div>
             <div
                 ref={terminalRef}
                 style={{
