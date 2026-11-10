@@ -66,7 +66,9 @@ func (s *Server) getTaskSessionStreams(c *gin.Context) {
 // ?after (all of them without), at most maxSideEvents; "more" says there
 // are others to ask for.
 func (s *Server) getTaskSessionStream(c *gin.Context) {
-	name := c.Param("name")
+	// :stream, not :name: an overseer's routes are under
+	// /overseers/:name, whose value a :name here would read.
+	name := c.Param("stream")
 	if !sideSessionRE.MatchString(name) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid session name"})
 		return

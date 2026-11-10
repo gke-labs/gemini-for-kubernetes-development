@@ -403,7 +403,7 @@ func researchTestServer(t *testing.T, daemon *fakeSessions, sandboxes []*unstruc
 	r.DELETE("/api/research/:session", server.deleteResearchSession)
 	r.GET("/api/task-sessions/:sandbox/:task", server.getTaskSession)
 	r.GET("/api/task-sessions/:sandbox/:task/streams", server.getTaskSessionStreams)
-	r.GET("/api/task-sessions/:sandbox/:task/streams/:name", server.getTaskSessionStream)
+	r.GET("/api/task-sessions/:sandbox/:task/streams/:stream", server.getTaskSessionStream)
 	r.POST("/api/task-sessions/:sandbox/:task/prompt", server.promptTaskSession)
 	r.POST("/api/task-sessions/:sandbox/:task/permission", server.resolveTaskSessionPermission)
 	r.POST("/api/task-sessions/:sandbox/:task/cancel", server.cancelTaskSession)
