@@ -761,7 +761,10 @@ describe('ResearchConversation', () => {
             await act(async () => { jest.advanceTimersByTime(6000); });
             await flush();
 
-            expect(global.fetch).toHaveBeenCalledTimes(2);
+            // The probes, not the task's side-session list (/streams),
+            // which the session view polls on its own.
+            const probes = global.fetch.mock.calls.filter(([url]) => !String(url).includes('/streams'));
+            expect(probes).toHaveLength(2);
             expect(container.textContent).toContain('auto-approving');
             expect(container.textContent).not.toContain('asks first');
         } finally {
