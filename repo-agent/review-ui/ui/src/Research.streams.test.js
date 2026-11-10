@@ -1,5 +1,8 @@
 import { stepText, lastSeq, buildResearchTranscript } from './Research';
 
+jest.mock('react-markdown', () => () => null);
+jest.mock('remark-gfm', () => () => {});
+
 describe('stepText', () => {
   it('names a numbered step and its kind', () => {
     expect(stepText('10:ask (ask)')).toBe('step 10 · ask');
