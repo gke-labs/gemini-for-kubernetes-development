@@ -1,4 +1,4 @@
-import { terminalPath, applyFrame, terminalURL } from './Terminal';
+import { terminalPath, applyFrame, terminalURL, terminalHash, terminalRoute } from './Terminal';
 
 // An overseer's sandbox's terminal is under that overseer's admin routes;
 // any other is the sandbox card's, in the member's own namespace.
@@ -41,4 +41,15 @@ test('terminalURL', () => {
   expect(terminalURL('barney-s', 'sb', 'plan', null)).toBe('/api/sandbox-card/sb/terminal?chat=plan');
   expect(terminalURL('overseer-kcc', 'sb', '', 0)).toBe('/api/overseers/kcc/sandbox-card/sb/terminal?offset=0');
   expect(terminalURL('barney-s', 'sb', 'fix', 512)).toBe('/api/sandbox-card/sb/terminal?chat=fix&offset=512');
+});
+
+// The launcher's links, and the page that reads them back.
+test('terminalHash and terminalRoute', () => {
+  expect(terminalHash('ns', 'sb')).toBe('#/terminal/ns/sb');
+  expect(terminalHash('ns', 'sb', { program: 'claude' })).toBe('#/terminal/ns/sb?program=claude');
+  expect(terminalHash('ns', 'sb', { chat: 'plan' })).toBe('#/terminal/ns/sb?chat=plan');
+  expect(terminalRoute('#/terminal/ns/sb?program=agy')).toEqual({ namespace: 'ns', name: 'sb', chat: '', program: 'agy' });
+  expect(terminalRoute('#/terminal/ns/sb?chat=plan')).toEqual({ namespace: 'ns', name: 'sb', chat: 'plan', program: '' });
+  expect(terminalRoute('#/terminal/ns/sb')).toEqual({ namespace: 'ns', name: 'sb', chat: '', program: '' });
+  expect(terminalURL('ns', 'sb', '', 40, 'gemini')).toBe('/api/sandbox-card/sb/terminal?program=gemini&offset=40');
 });

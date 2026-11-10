@@ -4,6 +4,7 @@ import { FitAddon } from 'xterm-addon-fit';
 import 'xterm/css/xterm.css';
 import Chip from './Chip';
 import DiskBar from './DiskBar';
+import { applyFrame, terminalHash, TERMINAL_PROGRAMS } from './Terminal';
 
 // apiBase is where the card's routes are: /api, the member's (the
 // board's), by default; /api/overseers/<name> for an overseer's
@@ -30,7 +31,7 @@ export default function SandboxCard({ name, namespace, onClose, apiBase = '/api'
   // is closed.
   useEffect(() => {
     if (!showTerminal || !termHostRef.current) return undefined;
-    const state = { closed: false, retry: 0, ws: null };
+    const state = { closed: false, retry: 0, ws: null, stream: { offset: null } };
     termRef.current = state;
     const term = new XTerm({ fontSize: 12, cursorBlink: true, theme: { background: '#0d1117' } });
     const fit = new FitAddon();
@@ -56,18 +57,23 @@ export default function SandboxCard({ name, namespace, onClose, apiBase = '/api'
       if (state.closed) return;
       setTermStatus(state.retry ? `reconnecting (try ${state.retry})…` : 'connecting…');
       const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
-      const ws = new WebSocket(`${proto}://${window.location.host}${apiBase}/sandbox-card/${name}/terminal`);
+      // Resume where the daemon's stream left off (applyFrame keeps it); an
+      // older sandbox's tmux stream never sets it.
+      const q = state.stream.offset !== null ? `?offset=${state.stream.offset}` : '';
+      const ws = new WebSocket(`${proto}://${window.location.host}${apiBase}/sandbox-card/${name}/terminal${q}`);
       ws.binaryType = 'arraybuffer';
       state.ws = ws;
       ws.onopen = () => { state.retry = 0; setTermStatus('connected'); fit.fit(); sendResize(); };
       ws.onmessage = (ev) => {
-        term.write(typeof ev.data === 'string' ? ev.data : new Uint8Array(ev.data));
+        const { reset, write } = applyFrame(state.stream, ev.data);
+        if (reset) term.reset();
+        if (write !== null && write !== '') term.write(write);
       };
       ws.onclose = () => {
         if (state.closed) return;
         state.retry += 1;
         const delay = Math.min(1000 * Math.pow(1.6, state.retry), 10000);
-        setTermStatus(`disconnected — reconnecting in ${Math.round(delay / 1000)}s (session survives in tmux)`);
+        setTermStatus(`disconnected — reconnecting in ${Math.round(delay / 1000)}s (the session survives)`);
         setTimeout(connect, delay);
       };
     };
@@ -210,9 +216,16 @@ export default function SandboxCard({ name, namespace, onClose, apiBase = '/api'
             <div style={{ display: 'flex', alignItems: 'center', marginBottom: '4px' }}>
               <span style={{ fontSize: 'small', fontWeight: 700, letterSpacing: '0.04em', color: 'var(--text-secondary)' }}>TERMINAL</span>
               <span style={{ marginLeft: '8px', fontSize: 'x-small', color: 'var(--text-secondary)' }}>{termStatus}</span>
-              <a href={`#/terminal/${namespace}/${name}`} target="_blank" rel="noopener noreferrer"
-                className="btn btn-sm" style={{ marginLeft: 'auto', textDecoration: 'none' }}
-                title="Pop out into its own window — same tmux session, real window management">↗ pop out</a>
+              <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: '4px' }}>
+                {TERMINAL_PROGRAMS.map(p => (
+                  <a key={p.program} href={terminalHash(namespace, name, { program: p.program })} target="_blank" rel="noopener noreferrer"
+                    className="btn btn-sm" style={{ textDecoration: 'none' }}
+                    title={`Open ${p.label} in ${name}, continuing its latest conversation, in its own window`}>{p.program} ↗</a>
+                ))}
+                <a href={terminalHash(namespace, name)} target="_blank" rel="noopener noreferrer"
+                  className="btn btn-sm" style={{ textDecoration: 'none' }}
+                  title="Pop the shell out into its own window — the same session">↗ pop out</a>
+              </span>
             </div>
             <div ref={termHostRef} style={{ height: 'calc(100vh - 300px)', minHeight: '260px', backgroundColor: '#0d1117', borderRadius: '6px', padding: '4px' }} />
           </div>

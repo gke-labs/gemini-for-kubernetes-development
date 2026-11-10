@@ -67,6 +67,13 @@ Once opened, the terminal panel will expand immediately below the card header. Y
     (Sandboxes on an image from before this attach `tmux` instead, with the
     same effect.)
 
+*   **Agent CLIs (gemini, claude, agy)**:
+    The sandbox card's terminal header and the session view's ⋯ menu open
+    `gemini`, `claude` or `agy` in their own window, each continuing its
+    latest conversation in the repository checkout, with the engine's key from
+    the namespace's `factory-user` secret. Like the shell, each one keeps running
+    when the window closes and picks up where it was when reopened.
+
 *   **AI Assistance with `gemini-cli`**:
     Interact with the Gemini model directly from the command line to ask questions or generate code:
     ```bash

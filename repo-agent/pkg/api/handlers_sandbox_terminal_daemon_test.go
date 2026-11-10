@@ -71,7 +71,7 @@ func TestDaemonTerminalProxiesFramesAndOffset(t *testing.T) {
 			return
 		}
 		defer ws.Close()
-		s.daemonTerminal(context.Background(), ws, daemon.URL, "ns", "sb", "", r.URL.Query().Get("offset"))
+		s.daemonTerminal(context.Background(), ws, daemon.URL, "ns", "sb", "", "", r.URL.Query().Get("offset"))
 	}))
 	t.Cleanup(front.Close)
 
@@ -117,6 +117,14 @@ func TestTerminalProgram(t *testing.T) {
 	for engine, want := range map[string]string{"gemini": "gemini", "claude": "claude", "antigravity": "agy", "": "gemini"} {
 		if got := terminalProgram(engine); got != want {
 			t.Errorf("terminalProgram(%q) = %q, want %q", engine, got, want)
+		}
+	}
+}
+
+func TestProgramEngine(t *testing.T) {
+	for program, want := range map[string]string{"gemini": "gemini", "claude": "claude", "agy": "antigravity", "shell": "", "": "", "vim": ""} {
+		if got := programEngine(program); got != want {
+			t.Errorf("programEngine(%q) = %q, want %q", program, got, want)
 		}
 	}
 }

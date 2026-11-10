@@ -56,16 +56,44 @@ export function applyFrame(stream, data) {
     }
 }
 
-// terminalURL is the socket to connect to: the chat, and where to resume.
-export function terminalURL(namespace, sandboxName, chat, offset) {
+// TERMINAL_PROGRAMS are the engine CLIs the launcher opens in a sandbox,
+// each continuing its latest conversation in the checkout.
+export const TERMINAL_PROGRAMS = [
+    { program: 'gemini', label: 'gemini' },
+    { program: 'claude', label: 'claude' },
+    { program: 'agy', label: 'agy (antigravity)' },
+];
+
+// terminalHash is the full-window terminal page: a shell, a task's chat,
+// or a launcher program's CLI.
+export function terminalHash(namespace, sandboxName, { chat = '', program = '' } = {}) {
+    const q = chat ? `?chat=${encodeURIComponent(chat)}` : program ? `?program=${encodeURIComponent(program)}` : '';
+    return `#/terminal/${namespace}/${sandboxName}${q}`;
+}
+
+// terminalRoute reads the full-window terminal page's hash (terminalHash):
+// #/terminal/<ns>/<name>, with
+// `?chat=<taskType>` in the hash resumes that task's agent conversation
+// instead of opening a shell (e.g. continue a plan session);
+// `?program=gemini|claude|agy` opens that engine's CLI (the launcher).
+export function terminalRoute(hash = window.location.hash) {
+  const m = hash.match(/^#\/terminal\/([A-Za-z0-9._-]+)\/([A-Za-z0-9._-]+)(?:\?(chat|program)=([a-z]+))?$/);
+  if (!m) return null;
+  return { namespace: m[1], name: m[2], chat: m[3] === 'chat' ? m[4] : '', program: m[3] === 'program' ? m[4] : '' };
+}
+
+// terminalURL is the socket to connect to: the chat or program, and where
+// to resume.
+export function terminalURL(namespace, sandboxName, chat, offset, program) {
     const params = new URLSearchParams();
     if (chat) params.set('chat', chat);
+    if (program) params.set('program', program);
     if (offset !== null && offset !== undefined) params.set('offset', String(offset));
     const q = params.toString();
     return `${terminalPath(namespace, sandboxName)}${q ? `?${q}` : ''}`;
 }
 
-const SandboxTerminal = ({ namespace, sandboxName, fill, chat }) => {
+const SandboxTerminal = ({ namespace, sandboxName, fill, chat, program }) => {
     const terminalRef = useRef(null);
     const [status, setStatus] = useState('');
 
@@ -94,7 +122,7 @@ const SandboxTerminal = ({ namespace, sandboxName, fill, chat }) => {
             if (state.closed) return;
             setStatus(state.retry ? `reconnecting (try ${state.retry})…` : 'connecting…');
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-            const socket = new WebSocket(`${protocol}//${window.location.host}${terminalURL(namespace, sandboxName, chat, stream.offset)}`);
+            const socket = new WebSocket(`${protocol}//${window.location.host}${terminalURL(namespace, sandboxName, chat, stream.offset, program)}`);
             socket.binaryType = 'arraybuffer';
             state.ws = socket;
 
@@ -102,7 +130,9 @@ const SandboxTerminal = ({ namespace, sandboxName, fill, chat }) => {
                 state.retry = 0;
                 setStatus(chat
                     ? `connected — continuing the ${chat} conversation (survives disconnects)`
-                    : 'connected — the session survives disconnects');
+                    : program
+                        ? `connected — ${program} (survives disconnects)`
+                        : 'connected — the session survives disconnects');
                 fitAddon.fit();
                 sendResize();
             };
@@ -142,7 +172,7 @@ const SandboxTerminal = ({ namespace, sandboxName, fill, chat }) => {
             window.removeEventListener('resize', handleResize);
             resizeObserver.disconnect();
         };
-    }, [namespace, sandboxName, chat]);
+    }, [namespace, sandboxName, chat, program]);
 
     return (
         <div style={fill
