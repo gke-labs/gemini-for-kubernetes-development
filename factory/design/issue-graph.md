@@ -159,6 +159,7 @@ spec:
 | `checkpoint` | `stop`, `replan` or both: when the step is done, the reconciler stops the graph, has the plan revised, or both (§4.8). |
 | `no-change` | `ok`: the step's fix may rightly need no PR (its work already done, say). A fix that commits nothing and says why closes the step's issue as completed, and the graph goes on; the issue's marker carries `nochange=ok`. Unset, such a fix's issue stays open for a person: an unexpected no-op may be a wrong conclusion. Fix steps only. |
 | `group-gate` | With the parent's `grouped: true`, the group's PR ends with this step and must merge before any step after it starts (§4.9). Without `grouped` it changes nothing. |
+| `requires` | Optional `labels: {all: [...], any: [...]}`: beyond its `after` steps being done (or in its group's PR), the step starts only once the PR carrying each `after` step's work has every `all` label and, when `any` is given, one of `any` (§4.10). Needs `after`; not on `finally`. |
 
 A child closed as not planned or as a duplicate is treated as done: its step is `Skipped` and the graph moves on (§5.5). To stop a graph instead, add the stop label to the parent or close it.
 
@@ -280,6 +281,24 @@ Not given, the graph's `group-gate` steps gate. Given, the list replaces them: e
 - **A `no-change: ok` step that closes without a PR** is passed over: the next step continues the PR of the nearest earlier step in its group that has one, or opens the group's PR if none has yet (a group whose first step needed no change). If it was the group's last step and an earlier step's work is in an open draft PR, the reconciler marks that PR ready for review, as the last push would have. The same holds for a last step a person closes, which is how a step that is not `no-change: ok` ends when it needed nothing. The reconciler marks the PR ready **as the PR's author**, with its user secret (`user-<login>`): the watcher may not change a PR whose head is on a bot's fork (KCC #15013).
 - **Grouping a graph already running.** Markers are written when a child is created, so a step created before `grouped: true` was added has none of the above, and its PR opens as a normal one, possibly handed to people already (`<trigger>/ready-for-human`). The group still finds it (the PR fixes the step's child). The step check counts a `ready-for-human` PR as one the ready rule would run on, so the next step starts. That step's `open-pr`, run as the PR's author, makes the PR a draft again and takes the label off; the group's last step marks it ready as usual (KCC #15000, #15068).
 - **When the PR merges**, every step child it fixes closes, and the graph goes on as usual.
+
+### 4.10 Label prerequisites (`requires`)
+
+A step can wait on a judgement of the work before it, made outside the graph - an assessment rule, a person - by naming labels that work's PR must carry:
+
+```yaml
+- id: mockgcp
+  after: [controller]
+  requires:
+    labels:
+      any: [overseer/assessment/good, overseer/assessment/fair]
+```
+
+- **Which PR.** For each `after` step, the PR carrying its work: in a grouped graph, the group's open PR (the same PR the step would continue); otherwise the bot PR that merged for it. The reconciler reads a closed step's merged PR only when a step after it has `requires`, so graphs without it cost no extra calls.
+- **When it is checked.** Only once the step is otherwise ready: its `after` steps done, or its group predecessor `InGroup`. Until the labels are there the step stays `Pending`, and the status table says what it waits for (`waiting: #600 needs one of ...`). Labels match ignoring case.
+- **Once started, not taken back.** A label taken off after the step's child exists does not stop it.
+- **No PR, nothing to check.** An `after` step that closed without a PR - skipped, closed needing no change, or closed by a person - has no labels to check, and does not hold the step.
+- **The graph does not know what makes the labels.** A watch rule (or a person) adds them; the rule's predicates decide when - for instance the ready rule's (`checks: green`, `feedback: none`, `reviewed-at-head: true`) without `draft: false`, so it also runs on a grouped draft - and a companion rule can take a stale label off when the head moves on (`reviewed-at-head: false`).
 
 ---
 

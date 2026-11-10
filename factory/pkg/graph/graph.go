@@ -124,6 +124,68 @@ type Step struct {
 	// issue stays open for a person, since an unexpected no-op may be a
 	// wrong conclusion.
 	NoChange string `yaml:"no-change,omitempty"`
+	// Requires are conditions beyond After for the step to start: labels
+	// the PR carrying each After step's work must have (Requires).
+	Requires Requires `yaml:"requires,omitempty"`
+}
+
+// Requires is what a step needs, beyond its After steps being done (or in
+// its group's PR), to start.
+type Requires struct {
+	// Labels the PR carrying each After step's work must have: the
+	// group's open PR, in a grouped graph, or the step's merged PR. A
+	// rule or a person adds them, so a step can wait on a judgement made
+	// of the work before it (an assessment, say) without the graph knowing
+	// what makes it.
+	Labels LabelMatch `yaml:"labels,omitempty"`
+}
+
+// IsZero is whether nothing is required (yaml's omitempty).
+func (r Requires) IsZero() bool { return r.Labels.IsZero() }
+
+// LabelMatch is a condition on a set of labels: every one of All, and at
+// least one of Any (when Any is given).
+type LabelMatch struct {
+	All []string `yaml:"all,omitempty"`
+	Any []string `yaml:"any,omitempty"`
+}
+
+// IsZero is whether the match has no condition (yaml's omitempty).
+func (m LabelMatch) IsZero() bool { return len(m.All) == 0 && len(m.Any) == 0 }
+
+// Match is whether labels satisfy m, ignoring case as GitHub does.
+func (m LabelMatch) Match(labels []string) bool {
+	has := func(want string) bool {
+		return slices.ContainsFunc(labels, func(l string) bool { return strings.EqualFold(l, want) })
+	}
+	for _, l := range m.All {
+		if !has(l) {
+			return false
+		}
+	}
+	return len(m.Any) == 0 || slices.ContainsFunc(m.Any, has)
+}
+
+// String describes m for a person: "`a` and `b`, and one of `c`, `d`".
+func (m LabelMatch) String() string {
+	quote := func(ls []string) []string {
+		out := make([]string, len(ls))
+		for i, l := range ls {
+			out[i] = "`" + l + "`"
+		}
+		return out
+	}
+	var parts []string
+	if len(m.All) > 0 {
+		parts = append(parts, strings.Join(quote(m.All), " and "))
+	}
+	switch {
+	case len(m.Any) == 1:
+		parts = append(parts, quote(m.Any)[0])
+	case len(m.Any) > 1:
+		parts = append(parts, "one of "+strings.Join(quote(m.Any), ", "))
+	}
+	return strings.Join(parts, ", and ")
 }
 
 // NoChangeOK is Step.NoChange's one value.
@@ -228,6 +290,15 @@ func (s Spec) GroupNext(id string) string {
 		}
 	}
 	return ""
+}
+
+// RequiresLabelsAfter is whether a step after the step of id requires
+// labels (Step.Requires): the PR carrying id's work is then read for them,
+// even once id's child has closed.
+func (s Spec) RequiresLabelsAfter(id string) bool {
+	return slices.ContainsFunc(s.Steps, func(t Step) bool {
+		return !t.Requires.IsZero() && slices.Contains(t.After, id)
+	})
 }
 
 // ParseTemplate reads a template file strictly: an unknown field is an

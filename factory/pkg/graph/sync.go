@@ -374,19 +374,35 @@ func observeChildren(ctx context.Context, gh GitHub, opts Options, o *Observed) 
 			Labels:     ref.Labels,
 			Assignees:  ref.Assignees,
 		}
-		if c.Open {
+		isBot := func(login string) bool {
+			return slices.ContainsFunc(opts.Pool, func(b string) bool { return strings.EqualFold(b, login) })
+		}
+		switch {
+		case c.Open:
 			refs, err := gh.ListCrossReferences(ctx, n)
 			if err != nil {
 				return err
 			}
 			for _, r := range refs {
-				if r.IsPR && r.Merged && slices.ContainsFunc(opts.Pool, func(b string) bool { return strings.EqualFold(b, r.Author) }) {
-					c.MergedBotPR = r.Number
+				if r.IsPR && r.Merged && isBot(r.Author) {
+					c.MergedBotPR, c.MergedPRLabels = r.Number, r.Labels
 				}
 			}
 			if o.Grouped && o.Spec != nil && o.Spec.GroupNext(m.Step) != "" && c.MergedBotPR == 0 {
 				if c.GroupPR, err = groupPR(ctx, gh, opts, n, refs); err != nil {
 					return err
+				}
+			}
+		case !c.NotPlanned && o.Spec != nil && o.Spec.RequiresLabelsAfter(m.Step):
+			// A step after this one waits on labels of the PR that carried
+			// its work: find the newest bot PR referencing it that merged.
+			refs, err := gh.ListCrossReferences(ctx, n)
+			if err != nil {
+				return err
+			}
+			for _, r := range refs {
+				if r.IsPR && r.Merged && isBot(r.Author) && r.Number > c.MergedPR {
+					c.MergedPR, c.MergedPRLabels = r.Number, r.Labels
 				}
 			}
 		}
@@ -447,7 +463,7 @@ func groupPR(ctx context.Context, gh GitHub, opts Options, n int, refs []github.
 		ready, err := opts.StepReady(ctx, found.Number)
 		switch {
 		case err == nil:
-			return &GroupPR{Number: found.Number, Author: found.Author, Ready: ready}, nil
+			return &GroupPR{Number: found.Number, Author: found.Author, Labels: found.Labels, Ready: ready}, nil
 		case !errors.Is(err, ErrNoStepReady):
 			return nil, err
 		}
@@ -460,7 +476,7 @@ func groupPR(ctx context.Context, gh GitHub, opts Options, n int, refs []github.
 	if err != nil {
 		return nil, err
 	}
-	return &GroupPR{Number: found.Number, Author: found.Author, Ready: green}, nil
+	return &GroupPR{Number: found.Number, Author: found.Author, Labels: found.Labels, Ready: green}, nil
 }
 
 // checksGreen is whether a commit's checks all passed: at least one check

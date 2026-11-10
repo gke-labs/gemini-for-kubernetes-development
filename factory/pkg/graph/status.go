@@ -62,7 +62,11 @@ func RenderStatus(source string, version int, s *Spec, r Result) string {
 			if st.Child > 0 {
 				issue = fmt.Sprintf("#%d", st.Child)
 			}
-			fmt.Fprintf(&b, "| %s | %s | %s | %s | %s |\n", st.ID, after, then, issue, stateIcon(st.State))
+			state := stateIcon(st.State)
+			if st.Waiting != "" {
+				state += " · waiting: " + st.Waiting
+			}
+			fmt.Fprintf(&b, "| %s | %s | %s | %s | %s |\n", st.ID, after, then, issue, state)
 		}
 		b.WriteString("\n</details>\n\n")
 	}
