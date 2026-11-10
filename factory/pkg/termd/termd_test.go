@@ -252,18 +252,6 @@ func contains(xs []string, x string) bool {
 
 func itoa(n int64) string { b, _ := json.Marshal(n); return string(b) }
 
-// waitOffset waits until s has written at least n bytes.
-func waitOffset(t *testing.T, s *Session, n int64) {
-	t.Helper()
-	deadline := time.Now().Add(10 * time.Second)
-	for s.Info().Offset < n {
-		if time.Now().After(deadline) {
-			t.Fatalf("session wrote %d bytes, want %d", s.Info().Offset, n)
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-}
-
 // A program that asks its terminal something while no client is attached
 // gets its answer from the emulator: it does not hang waiting for one.
 func TestQueriesAnsweredWithNoClient(t *testing.T) {

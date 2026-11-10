@@ -34,3 +34,15 @@ func TestSnapshotRestoresModes(t *testing.T) {
 		}
 	}
 }
+
+// waitOffset waits until s has written at least n bytes.
+func waitOffset(t *testing.T, s *Session, n int64) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for s.Info().Offset < n {
+		if time.Now().After(deadline) {
+			t.Fatalf("session wrote %d bytes, want %d", s.Info().Offset, n)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
