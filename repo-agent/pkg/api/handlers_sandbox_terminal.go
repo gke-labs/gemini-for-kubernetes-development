@@ -16,7 +16,6 @@ import (
 	"k8s.io/client-go/tools/remotecommand"
 	"k8s.io/klog/v2"
 
-	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/k8s"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/sandbox"
 )
 
@@ -233,6 +232,14 @@ func (s *Server) streamSandboxTerminal(c *gin.Context, namespace, name string) {
 			return
 		}
 	}
+	// ?program=gemini|claude|agy: that engine's CLI, continuing its latest
+	// conversation in the checkout - the launcher's, whatever engine the
+	// sandbox's tasks ran with.
+	program := c.Query("program")
+	if program != "" && (chatTask != "" || programEngine(program) == "") {
+		c.JSON(400, gin.H{"error": "program is one of gemini, claude, agy, and not with chat"})
+		return
+	}
 
 	ws, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
@@ -278,7 +285,7 @@ func (s *Server) streamSandboxTerminal(c *gin.Context, namespace, name string) {
 	// exec, below.
 	if perr == nil && s.ACPD != nil {
 		if base, ok := s.ACPD.Terminals(ctx, pod); ok {
-			s.daemonTerminal(ctx, ws, base, namespace, name, chatTask, c.Query("offset"))
+			s.daemonTerminal(ctx, ws, base, namespace, name, chatTask, program, c.Query("offset"))
 			return
 		}
 	}
@@ -342,28 +349,19 @@ func (s *Server) streamSandboxTerminal(c *gin.Context, namespace, name string) {
 	}()
 
 	command := "TERM=xterm-256color exec tmux new-session -A -s " + terminalSession
-	if chatTask != "" {
+	if chatTask != "" || program != "" {
 		// Sessions are engine-private, so the chat must attach with the
-		// engine that ran in this sandbox; pre-stamp sandboxes default
-		// to gemini.
-		engine := "gemini"
-		if sb, serr := s.K8sManager.Client.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, name, v1.GetOptions{}); serr == nil {
-			engine = sandboxEngine(sb.GetAnnotations(), engine)
+		// engine that ran in this sandbox (pre-stamp sandboxes ran
+		// gemini) - or the one the launcher asked for, as the "agent"
+		// chat.
+		task, engine := chatTask, programEngine(program)
+		if program == "" {
+			engine = s.sandboxTaskEngine(ctx, namespace, name)
+		} else {
+			task = "agent"
 		}
-		// The engine's key rides in from the factory-user secret (the
-		// same identity the task ran under) — never stored on the pod.
-		keyName := "GEMINI_API_KEY" // gemini and antigravity
-		if engine == "claude" {
-			keyName = "ANTHROPIC_API_KEY"
-		}
-		apiKey := ""
-		if secret, serr := s.K8sManager.Clientset.CoreV1().Secrets(namespace).Get(ctx, "factory-user", v1.GetOptions{}); serr == nil {
-			apiKey = string(secret.Data[keyName])
-		}
-		if apiKey == "" {
-			writeText(fmt.Sprintf("\r\n(no %s in this namespace's factory-user secret — the agent will ask you to authenticate)\r\n", keyName))
-		}
-		command = chatCommand(chatTask, chatHomeByTask[chatTask], engine, apiKey, chatOrientation(chatTask, name))
+		apiKey := s.engineAPIKey(ctx, namespace, engine, writeText)
+		command = chatCommand(task, chatHomeByTask[task], engine, apiKey, chatOrientation(task, name))
 	}
 
 	// The session lives in tmux: this exec merely attaches, so a dropped

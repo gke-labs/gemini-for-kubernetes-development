@@ -71,7 +71,7 @@ func TestDaemonTerminalProxiesFramesAndOffset(t *testing.T) {
 			return
 		}
 		defer ws.Close()
-		s.daemonTerminal(context.Background(), ws, daemon.URL, "ns", "sb", "", r.URL.Query().Get("offset"))
+		s.daemonTerminal(context.Background(), ws, daemon.URL, "ns", "sb", "", "", r.URL.Query().Get("offset"))
 	}))
 	t.Cleanup(front.Close)
 
@@ -118,5 +118,32 @@ func TestTerminalProgram(t *testing.T) {
 		if got := terminalProgram(engine); got != want {
 			t.Errorf("terminalProgram(%q) = %q, want %q", engine, got, want)
 		}
+	}
+}
+
+func TestProgramEngine(t *testing.T) {
+	for program, want := range map[string]string{"gemini": "gemini", "claude": "claude", "agy": "antigravity", "shell": "", "": "", "vim": ""} {
+		if got := programEngine(program); got != want {
+			t.Errorf("programEngine(%q) = %q, want %q", program, got, want)
+		}
+	}
+}
+
+// An engine CLI's terminal is a Sessions row with its state; a shell's,
+// or one whose program has ended, is not. An overseer's names its
+// overseer; a task's chat names the task it continues.
+func TestTerminalRow(t *testing.T) {
+	if _, ok := terminalRow("me", "me", "sb", terminalInfo{ID: "board", Program: "shell", State: "idle"}); ok {
+		t.Error("a shell became a row")
+	}
+	if _, ok := terminalRow("me", "me", "sb", terminalInfo{ID: "agent-gemini", Program: "gemini", State: "exited"}); ok {
+		t.Error("an ended program became a row")
+	}
+	row, ok := terminalRow("me", "overseer-kcc", "fix-1", terminalInfo{ID: "chat-plan", Program: "claude", State: "needs-you", Message: "Allow edit?", Title: "✳ plan"})
+	if !ok || row.Overseer != "kcc" || row.Chat != "plan" || row.State != "needs-you" || row.Engine != "claude" || row.Doing != "Allow edit?" || row.Terminal != "chat-plan" {
+		t.Errorf("row %+v", row)
+	}
+	if got := terminalRowState("error"); got != "failed" {
+		t.Errorf("error state is %q, want failed", got)
 	}
 }

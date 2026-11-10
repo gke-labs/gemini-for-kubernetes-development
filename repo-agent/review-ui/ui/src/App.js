@@ -5,7 +5,7 @@ import Overseer, { overseerRoute } from './Overseer';
 import TokenUsage from './TokenUsage';
 import Work from './Work';
 import Sessions, { sessionsRoute } from './Sessions';
-import SandboxTerminal from './Terminal';
+import SandboxTerminal, { terminalRoute } from './Terminal';
 import { ResearchConversation } from './Research';
 
 // Repo Agent shell: the Work board is home (docs/design/repoboard.md §8).
@@ -18,12 +18,7 @@ import { ResearchConversation } from './Research';
 // window management (pop out of the sandbox card, multi-monitor, share the
 // link). Hash-based so any static hosting serves it; tmux means every
 // window attached to the same sandbox shares one live session.
-// `?chat=<taskType>` in the hash resumes that task's agent conversation
-// instead of opening a shell (e.g. continue a plan session).
-function terminalRoute() {
-  const m = window.location.hash.match(/^#\/terminal\/([A-Za-z0-9._-]+)\/([A-Za-z0-9._-]+)(?:\?chat=([a-z]+))?$/);
-  return m ? { namespace: m[1], name: m[2], chat: m[3] || '' } : null;
-}
+// (terminalRoute, Terminal.js, reads it.)
 
 // Hash route #/task-session/<sandbox>/<task>: a recipe's agent session
 // (research, plan, triage) in its own window, watched while the task
@@ -57,7 +52,7 @@ function TaskSessionPage({ route }) {
 
 function TerminalPage({ route }) {
   useEffect(() => {
-    document.title = route.chat ? `${route.name} — ${route.chat} chat` : `${route.name} — terminal`;
+    document.title = route.chat ? `${route.name} — ${route.chat} chat` : route.program ? `${route.name} — ${route.program}` : `${route.name} — terminal`;
   }, [route]);
   return (
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', backgroundColor: '#1e1e1e' }}>
@@ -65,7 +60,7 @@ function TerminalPage({ route }) {
         {route.namespace}/{route.name}
       </div>
       <div style={{ flex: 1, minHeight: 0 }}>
-        <SandboxTerminal namespace={route.namespace} sandboxName={route.name} chat={route.chat} fill />
+        <SandboxTerminal namespace={route.namespace} sandboxName={route.name} chat={route.chat} program={route.program} fill />
       </div>
     </div>
   );

@@ -50,31 +50,64 @@ func terminalProgram(engine string) string {
 	}
 }
 
+// programEngine is the engine whose CLI a launcher program is, "" for
+// none.
+func programEngine(program string) string {
+	switch program {
+	case "gemini", "claude":
+		return program
+	case "agy":
+		return "antigravity"
+	}
+	return ""
+}
+
+// sandboxTaskEngine is the engine the sandbox's tasks ran with; a sandbox
+// stamped with none ran gemini.
+func (s *Server) sandboxTaskEngine(ctx context.Context, namespace, name string) string {
+	if sb, err := s.K8sManager.Client.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, name, v1.GetOptions{}); err == nil {
+		return sandboxEngine(sb.GetAnnotations(), "gemini")
+	}
+	return "gemini"
+}
+
+// engineAPIKey is the engine's key from the namespace's factory-user
+// secret - the identity the tasks run under - handed to the engine at
+// launch, never stored on the pod. Without one, say tells the user the
+// engine will ask them to sign in.
+func (s *Server) engineAPIKey(ctx context.Context, namespace, engine string, say func(string)) string {
+	keyName := "GEMINI_API_KEY" // gemini and antigravity
+	if engine == "claude" {
+		keyName = "ANTHROPIC_API_KEY"
+	}
+	key := ""
+	if secret, err := s.K8sManager.Clientset.CoreV1().Secrets(namespace).Get(ctx, "factory-user", v1.GetOptions{}); err == nil {
+		key = string(secret.Data[keyName])
+	}
+	if key == "" {
+		say(fmt.Sprintf("\r\n(no %s in this namespace's factory-user secret — the agent will ask you to authenticate)\r\n", keyName))
+	}
+	return key
+}
+
 // daemonTerminal serves ws from the daemon at base (http://127.0.0.1:<port>,
-// a port-forward): the board shell, or with chatTask the engine's CLI
-// continuing its conversation. offset is where the browser left off ("" for
-// a new terminal).
-func (s *Server) daemonTerminal(ctx context.Context, ws *websocket.Conn, base, namespace, name, chatTask, offset string) {
+// a port-forward): the board shell; with chatTask the CLI of the engine the
+// sandbox's tasks ran, continuing its conversation; with program (gemini,
+// claude, agy) that engine's CLI, the launcher's. offset is where the
+// browser left off ("" for a new terminal).
+func (s *Server) daemonTerminal(ctx context.Context, ws *websocket.Conn, base, namespace, name, chatTask, program, offset string) {
 	writeText := func(msg string) {
 		_ = ws.WriteMessage(websocket.BinaryMessage, []byte(msg))
 	}
 	req := terminalCreate{ID: terminalSession, Program: "shell"}
 	apiKey := ""
-	if chatTask != "" {
-		engine := "gemini"
-		if sb, err := s.K8sManager.Client.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, name, v1.GetOptions{}); err == nil {
-			engine = sandboxEngine(sb.GetAnnotations(), engine)
-		}
-		keyName := "GEMINI_API_KEY"
-		if engine == "claude" {
-			keyName = "ANTHROPIC_API_KEY"
-		}
-		if secret, err := s.K8sManager.Clientset.CoreV1().Secrets(namespace).Get(ctx, "factory-user", v1.GetOptions{}); err == nil {
-			apiKey = string(secret.Data[keyName])
-		}
-		if apiKey == "" {
-			writeText(fmt.Sprintf("\r\n(no %s in this namespace's factory-user secret — the agent will ask you to authenticate)\r\n", keyName))
-		}
+	switch {
+	case program != "":
+		apiKey = s.engineAPIKey(ctx, namespace, programEngine(program), writeText)
+		req = terminalCreate{ID: "agent-" + program, Program: program, Resume: true}
+	case chatTask != "":
+		engine := s.sandboxTaskEngine(ctx, namespace, name)
+		apiKey = s.engineAPIKey(ctx, namespace, engine, writeText)
 		req = terminalCreate{ID: "chat-" + chatTask, Program: terminalProgram(engine), Resume: true}
 	}
 	if err := createTerminal(ctx, base, req, apiKey); err != nil {

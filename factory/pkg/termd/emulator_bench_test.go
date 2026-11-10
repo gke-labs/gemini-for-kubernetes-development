@@ -28,7 +28,7 @@ func benchStreams() map[string][]byte {
 func BenchmarkEmulatorWrite(b *testing.B) {
 	for name, data := range benchStreams() {
 		b.Run(name, func(b *testing.B) {
-			e, err := newEmulator(120, 40, func([]byte) {})
+			e, err := newEmulator(120, 40, func([]byte) {}, (&activity{}).signals())
 			if err != nil {
 				b.Fatal(err)
 			}
@@ -46,7 +46,7 @@ func BenchmarkEmulatorWrite(b *testing.B) {
 
 func BenchmarkEmulatorSnapshot(b *testing.B) {
 	data := benchStreams()["log"]
-	e, err := newEmulator(120, 40, func([]byte) {})
+	e, err := newEmulator(120, 40, func([]byte) {}, (&activity{}).signals())
 	if err != nil {
 		b.Fatal(err)
 	}

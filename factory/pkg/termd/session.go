@@ -45,6 +45,12 @@ type Info struct {
 	Exited   bool       `json:"exited,omitempty"`
 	ExitCode int        `json:"exitCode,omitempty"`
 	Ended    *time.Time `json:"ended,omitempty"`
+	// State is what the program is doing (activity.go): working,
+	// needs-you, idle, done, error, exited; Message says more, from the
+	// program (untrusted text); Title is its window title.
+	State   string `json:"state"`
+	Message string `json:"message,omitempty"`
+	Title   string `json:"title,omitempty"`
 }
 
 // Session is one program on a PTY.
@@ -73,6 +79,9 @@ type Session struct {
 	// clients is how many clients are attached; atomic, because reply
 	// reads it from inside the emulator's write.
 	clients atomic.Int32
+
+	// act is what the terminal has heard of the program's activity.
+	act activity
 }
 
 // Spec is what a session runs.
@@ -106,7 +115,7 @@ func start(id string, spec Spec) (*Session, error) {
 		replies: make(chan []byte, 64),
 	}
 	s.cond = sync.NewCond(&s.mu)
-	emu, err := newEmulator(cols, rows, s.reply)
+	emu, err := newEmulator(cols, rows, s.reply, s.act.signals())
 	if err != nil {
 		_ = cmd.Process.Kill()
 		_ = f.Close()
@@ -154,6 +163,7 @@ func (s *Session) pump() {
 		if n > 0 {
 			s.emu.Write(chunk[:n])
 			s.mu.Lock()
+			s.act.output(time.Now())
 			s.buf = append(s.buf, chunk[:n]...)
 			if over := len(s.buf) - keep; over > 0 {
 				// Trim in slabs, not every write: copying 4 MiB per
@@ -205,11 +215,13 @@ func (s *Session) Info() Info {
 		t := s.ended
 		in.Ended = &t
 	}
+	in.State, in.Message, in.Title = s.act.state(time.Now(), s.exited)
 	return in
 }
 
 // Input writes a client's keystrokes to the program.
 func (s *Session) Input(p []byte) error {
+	s.act.input(time.Now())
 	_, err := s.pty.Write(p)
 	return err
 }

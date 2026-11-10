@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ResearchConversation, GrowingTextarea, repoFromURL } from './Research';
 import SandboxCard from './SandboxCard';
+import SandboxTerminal from './Terminal';
 import { EngineIcon, ageOf, recipeSource } from './WorkBits';
 import { fetchWorkFeed } from './Work';
 
@@ -47,6 +48,8 @@ const LIST_DEFAULT = 340;
 // one of the member's.
 export function rowKey(row) {
   if (row.research) return `r:${row.research}`;
+  // An engine terminal (termd): no conversation id, its terminal's.
+  if (row.terminal) return `t:${row.overseer || ''}/${row.sandbox}/${row.terminal}`;
   return row.overseer ? `o:${row.overseer}/${row.sandbox}/${row.task}` : `${row.sandbox}/${row.task}`;
 }
 
@@ -62,7 +65,7 @@ export function sessionsRoute(hash = window.location.hash) {
 }
 
 function hashOf(key) {
-  if (!key) return '#/sessions';
+  if (!key || key.startsWith('t:')) return '#/sessions';
   if (key.startsWith('o:')) return `#/sessions/overseers/${key.slice(2)}`;
   return key.startsWith('r:') ? `#/sessions/research/${key.slice(2)}` : `#/sessions/${key}`;
 }
@@ -83,6 +86,11 @@ export function rowTitle(row) {
 // rowDoing is what the row's agent is doing now, in a few words.
 export function rowDoing(row) {
   const run = (row.runs && row.runs[0]) || {};
+  if (row.terminal) {
+    // What its terminal heard the program say, else its state.
+    const word = { 'needs-you': '⚠ needs you', working: 'working', idle: 'idle', done: 'done', failed: 'error' }[row.state] || row.state;
+    return row.doing ? `${word}: ${row.doing}` : word;
+  }
   if (row.requested) return 'starting sandbox…';
   if (row.waiting) return '⚠ asking permission';
   if (row.retrying) return '⟳ retrying';
@@ -702,6 +710,12 @@ export default function Sessions({ namespace, active = true }) {
               </div>
             )}
             <StartBox boards={boards} onStarted={onStarted} onOpen={select} onLaunched={onLaunched} autoFocus />
+          </div>
+        ) : open.terminal ? (
+          // An engine's CLI: its terminal, live, here.
+          <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', backgroundColor: '#1e1e1e' }}>
+            <SandboxTerminal key={rowKey(open)} namespace={open.overseer ? `overseer-${open.overseer}` : namespace}
+              sandboxName={open.sandbox} chat={open.chat || ''} program={open.chat ? '' : open.program} fill />
           </div>
         ) : (
           <>

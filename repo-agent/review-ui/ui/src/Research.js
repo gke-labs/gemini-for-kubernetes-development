@@ -5,6 +5,7 @@ import ReactMarkdown from 'react-markdown';
 // newlines collapsing to spaces into a wall of pipes.
 import remarkGfm from 'remark-gfm';
 import Chip from './Chip';
+import { terminalHash, TERMINAL_PROGRAMS } from './Terminal';
 import { RUN_STYLE } from './WorkBits';
 
 // Research: conversation-based deep research, the third mode alongside
@@ -1822,11 +1823,17 @@ export function ResearchConversation({
                   background: 'var(--bg-card)', boxShadow: '0 4px 14px rgba(0,0,0,0.18)',
                 }}>
                   {info && info.sandbox && info.namespace && (
-                    <a role="menuitem" href={`#/terminal/${info.namespace}/${info.sandbox}`}
+                    <a role="menuitem" href={terminalHash(info.namespace, info.sandbox)}
                       target="_blank" rel="noopener noreferrer" onClick={() => setMenuOpen(false)}
                       style={{ fontSize: 'x-small', padding: '4px 6px' }}
                       title={`Shell into ${info.sandbox}`}>terminal ↗</a>
                   )}
+                  {info && info.sandbox && info.namespace && TERMINAL_PROGRAMS.map(p => (
+                    <a key={p.program} role="menuitem" href={terminalHash(info.namespace, info.sandbox, { program: p.program })}
+                      target="_blank" rel="noopener noreferrer" onClick={() => setMenuOpen(false)}
+                      style={{ fontSize: 'x-small', padding: '4px 6px' }}
+                      title={`Open ${p.label} in ${info.sandbox}, continuing its latest conversation`}>{p.program} ↗</a>
+                  ))}
                   {/* A session's group (care's) starts over in a new
                       conversation with its leading recipe; this one stays
                       readable, and the row's chip follows the new one. */}

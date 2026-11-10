@@ -33,15 +33,43 @@ type ghosttyEmulator struct {
 	term   *libghostty.Terminal
 	format *libghostty.Formatter
 	closed bool
+
+	sig signals
+	// titled says the title changed during a write; read after it, not
+	// from inside the terminal's callback.
+	titled bool
 }
 
-func newGhosttyEmulator(cols, rows int, reply func([]byte)) (emulator, error) {
+func newGhosttyEmulator(cols, rows int, reply func([]byte), sig signals) (emulator, error) {
+	e := &ghosttyEmulator{sig: sig}
+	// The callbacks run during Write, on its goroutine, with the
+	// emulator's lock held: none blocks or calls back in.
 	term, err := libghostty.NewTerminal(
 		libghostty.WithSize(uint16(cols), uint16(rows)),
 		libghostty.WithMaxScrollbackBytes(ghosttyScrollback),
-		// Called during Write, on its goroutine, with the emulator's
-		// lock held: reply must not block or call back in.
 		libghostty.WithWritePty(func(_ *libghostty.Terminal, data []byte) { reply(data) }),
+		libghostty.WithTitleChanged(func(*libghostty.Terminal) { e.titled = true }),
+		libghostty.WithBell(func(*libghostty.Terminal) { sig.attention("bell") }),
+		libghostty.WithDesktopNotification(func(_ *libghostty.Terminal, n libghostty.TerminalDesktopNotification) {
+			msg := n.Body
+			if n.Title != "" {
+				msg = n.Title + ": " + n.Body
+			}
+			sig.attention(msg)
+		}),
+		libghostty.WithProgressReport(func(_ *libghostty.Terminal, r libghostty.TerminalProgressReport) {
+			sig.progress(r.State != libghostty.TerminalProgressStateRemove)
+		}),
+		libghostty.WithProgramStatus(func(_ *libghostty.Terminal, st libghostty.ProgramStatus) {
+			if st.ID != "" {
+				return // a sub-record: the session shows the program's own
+			}
+			if st.State == libghostty.ProgramStatusStateClear {
+				sig.status(nil)
+				return
+			}
+			sig.status(&Status{State: programState(st.State), Kind: programKind(st.Kind), Message: st.Message, App: st.App})
+		}),
 	)
 	if err != nil {
 		return nil, err
@@ -58,14 +86,48 @@ func newGhosttyEmulator(cols, rows int, reply func([]byte)) (emulator, error) {
 		term.Close()
 		return nil, err
 	}
-	return &ghosttyEmulator{term: term, format: format}, nil
+	e.term, e.format = term, format
+	return e, nil
+}
+
+func programState(s libghostty.ProgramStatusState) string {
+	switch s {
+	case libghostty.ProgramStatusStateWorking:
+		return "working"
+	case libghostty.ProgramStatusStateBlocked:
+		return "blocked"
+	case libghostty.ProgramStatusStateDone:
+		return "done"
+	case libghostty.ProgramStatusStateError:
+		return "error"
+	}
+	return "idle"
+}
+
+func programKind(k libghostty.ProgramStatusKind) string {
+	switch k {
+	case libghostty.ProgramStatusKindPermission:
+		return "permission"
+	case libghostty.ProgramStatusKindQuestion:
+		return "question"
+	case libghostty.ProgramStatusKindAuth:
+		return "auth"
+	}
+	return ""
 }
 
 func (e *ghosttyEmulator) Write(p []byte) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if !e.closed {
-		e.term.VTWrite(p)
+	if e.closed {
+		return
+	}
+	e.term.VTWrite(p)
+	if e.titled {
+		e.titled = false
+		if t, err := e.term.Title(); err == nil {
+			e.sig.title(t)
+		}
 	}
 }
 

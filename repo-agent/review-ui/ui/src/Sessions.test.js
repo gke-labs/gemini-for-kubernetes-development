@@ -417,3 +417,12 @@ describe('helpers', () => {
         expect(sessionsRoute('#/work')).toBeNull();
     });
 });
+
+// An engine terminal's row: keyed by its terminal, its state in words
+// with what the program said.
+test('terminal rows', () => {
+  const row = { sandbox: 'fix-1', terminal: 'agent-claude', program: 'claude', state: 'needs-you', doing: 'Allow edit?', overseer: 'kcc' };
+  expect(rowKey(row)).toBe('t:kcc/fix-1/agent-claude');
+  expect(rowDoing(row)).toBe('⚠ needs you: Allow edit?');
+  expect(rowDoing({ ...row, state: 'working', doing: '' })).toBe('working');
+});
