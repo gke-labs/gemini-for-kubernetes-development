@@ -104,12 +104,35 @@ type Child struct {
 	// child of a step another continues (Spec.GroupNext); nil for none, or
 	// when not read.
 	GroupPR *GroupPR
+	// MergedPR is, for a closed child, the newest bot PR referencing it
+	// that merged; read only when a step after it requires labels
+	// (Step.Requires), 0 otherwise. MergedPRLabels are its labels - or, for
+	// an open child, MergedBotPR's. See WorkPR.
+	MergedPR       int
+	MergedPRLabels []string
+}
+
+// WorkPR is the PR carrying the child's step's work, and its labels, for a
+// later step's requires: its group's open PR, else the bot PR that merged
+// for it; 0 for none known (no PR, or not read).
+func (c Child) WorkPR() (int, []string) {
+	switch {
+	case c.GroupPR != nil:
+		return c.GroupPR.Number, c.GroupPR.Labels
+	case c.MergedPR > 0:
+		return c.MergedPR, c.MergedPRLabels
+	case c.MergedBotPR > 0:
+		return c.MergedBotPR, c.MergedPRLabels
+	}
+	return 0, nil
 }
 
 // GroupPR is an open bot PR a step's work was pushed to, as observed.
 type GroupPR struct {
 	Number int
 	Author string
+	// Labels are the PR's labels, for a later step's requires.
+	Labels []string
 	// Ready is that the step after may start on it: the PR is as the
 	// watch's ready rule would hand it to people, were it not a draft -
 	// green, mergeable, no trusted feedback waiting, and reviewed at its
@@ -149,6 +172,9 @@ type StepStatus struct {
 	// PR is, in a grouped graph, the group's PR the step's work is in, as
 	// observed; 0 when not known.
 	PR int
+	// Waiting says what a Pending step whose after steps are done waits
+	// for: the labels its requires names, on the PR missing them.
+	Waiting string
 }
 
 // Kinds of action (Action.Kind).
@@ -558,7 +584,13 @@ func statuses(s *Spec, ids []string, canonical map[string]Child, grouped bool) [
 				}
 			}
 		}
-		ss := StepStatus{ID: id, State: v, Child: canonical[id].Number}
+		var waiting string
+		if v == StepReady {
+			if waiting = unmetRequires(s.Step(id), canonical); waiting != "" {
+				v = StepPending
+			}
+		}
+		ss := StepStatus{ID: id, State: v, Child: canonical[id].Number, Waiting: waiting}
 		if pr := canonical[id].GroupPR; pr != nil {
 			ss.PR = pr.Number
 		}
@@ -568,6 +600,26 @@ func statuses(s *Spec, ids []string, canonical map[string]Child, grouped bool) [
 }
 
 func done(state string) bool { return state == StepSucceeded || state == StepSkipped }
+
+// unmetRequires is what step st, its after steps done, still waits for:
+// the labels its requires names, on the first PR carrying an after step's
+// work that lacks them ("" when none does). An after step with no PR known
+// - skipped, closed needing no change, or closed by a person - has nothing
+// to check. Only a step not yet started is asked: once its child exists,
+// a label taken off later does not take it back.
+func unmetRequires(st *Step, canonical map[string]Child) string {
+	if st == nil || st.Requires.IsZero() {
+		return ""
+	}
+	for _, d := range st.After {
+		pr, labels := canonical[d].WorkPR()
+		if pr == 0 || st.Requires.Labels.Match(labels) {
+			continue
+		}
+		return fmt.Sprintf("#%d needs %s", pr, st.Requires.Labels)
+	}
+	return ""
+}
 
 // issuesURL is where a parent's repository keeps its issues, from the
 // parent's own page (https://github.com/o/r/issues/123 → …/issues/); ""

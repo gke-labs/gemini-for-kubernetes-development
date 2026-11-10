@@ -72,6 +72,9 @@ func (s *Spec) validate(plan bool) error {
 		}
 	}
 	for _, st := range s.Steps {
+		if !st.Requires.IsZero() && len(st.After) == 0 {
+			return fmt.Errorf("step %s: requires labels with no after: they are checked on the PRs of the steps it comes after", st.ID)
+		}
 		for _, a := range st.After {
 			switch {
 			case a == st.ID:
@@ -92,6 +95,9 @@ func (s *Spec) validate(plan bool) error {
 		}
 		if len(f.After) > 0 {
 			return errors.New("finally: has after; it comes after every step")
+		}
+		if !f.Requires.IsZero() {
+			return errors.New("finally: has requires; give them to a step with after (finally has no after whose PR to check)")
 		}
 		if err := f.validateFields(plan); err != nil {
 			return fmt.Errorf("finally: %w", err)
@@ -138,6 +144,28 @@ func (st Step) validateFields(plan bool) error {
 	for _, l := range st.Labels {
 		if strings.TrimSpace(l) == "" {
 			return errors.New("an empty label")
+		}
+	}
+	return st.Requires.validate()
+}
+
+// validate checks a step's requires on its own: label names given once
+// each. That it has after steps to check is the graph's (Spec.validate).
+func (r Requires) validate() error {
+	seen := map[string]bool{}
+	for _, list := range []struct {
+		name   string
+		labels []string
+	}{{"all", r.Labels.All}, {"any", r.Labels.Any}} {
+		for _, l := range list.labels {
+			key := strings.ToLower(strings.TrimSpace(l))
+			switch {
+			case key == "":
+				return fmt.Errorf("requires: labels %s: an empty label", list.name)
+			case seen[key]:
+				return fmt.Errorf("requires: labels: %q is given twice", l)
+			}
+			seen[key] = true
 		}
 	}
 	return nil
