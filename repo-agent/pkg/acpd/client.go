@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -215,7 +216,6 @@ func (c *Client) ForceStop(ctx context.Context, id string) error {
 	return c.do(ctx, http.MethodPost, "/sessions/"+url.PathEscape(id)+"/stop", nil, nil, "")
 }
 
-// do issues one short request. A nil out discards the body.
 // maxTaskFile bounds ReadTaskFile: a task's result is a YAML document of
 // a few kilobytes, and an unbounded read would let a runaway file consume
 // the caller's memory.
@@ -225,7 +225,33 @@ const maxTaskFile = 1 << 20
 // task server serves it: its result (task-output.yaml), or the mark that
 // it was applied (task-output.applied). A missing file is ErrNotFound.
 func (c *Client) ReadTaskFile(ctx context.Context, id, name string) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/tasks/"+url.PathEscape(id)+"/files/"+url.PathEscape(name), nil)
+	return c.ReadTaskFileUpTo(ctx, id, name, maxTaskFile)
+}
+
+// TaskFiles names the files in task id's directory and one directory
+// down ("session/stream.ndjson", "steps/01-1-setup-git.log"), as the
+// daemon's task server lists them.
+func (c *Client) TaskFiles(ctx context.Context, id string) ([]string, error) {
+	var names []string
+	if err := c.do(ctx, http.MethodGet, "/tasks/"+url.PathEscape(id)+"/files?subdirs=1", nil, &names, ""); err != nil {
+		return nil, err
+	}
+	return names, nil
+}
+
+// MaxTranscript bounds a transcript read (ReadTaskFileUpTo): a long
+// session's stream.ndjson runs to a few megabytes.
+const MaxTranscript = 32 << 20
+
+// ReadTaskFileUpTo is ReadTaskFile for a file of at most limit bytes. A
+// name one directory down ("session-review/stream.ndjson") is read as the
+// task server serves it, its directory a path segment of its own.
+func (c *Client) ReadTaskFileUpTo(ctx context.Context, id, name string, limit int) ([]byte, error) {
+	path := url.PathEscape(name)
+	if dir, rest, ok := strings.Cut(name, "/"); ok {
+		path = url.PathEscape(dir) + "/" + url.PathEscape(rest)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/tasks/"+url.PathEscape(id)+"/files/"+path, nil)
 	if err != nil {
 		return nil, fmt.Errorf("acpd: building request: %w", err)
 	}
@@ -237,16 +263,17 @@ func (c *Client) ReadTaskFile(ctx context.Context, id, name string) ([]byte, err
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, statusError(resp)
 	}
-	data, err := io.ReadAll(io.LimitReader(resp.Body, maxTaskFile+1))
+	data, err := io.ReadAll(io.LimitReader(resp.Body, int64(limit)+1))
 	if err != nil {
 		return nil, fmt.Errorf("acpd: reading %s of task %s: %w", name, id, err)
 	}
-	if len(data) > maxTaskFile {
-		return nil, fmt.Errorf("acpd: %s of task %s is over %d bytes", name, id, maxTaskFile)
+	if len(data) > limit {
+		return nil, fmt.Errorf("acpd: %s of task %s is over %d bytes", name, id, limit)
 	}
 	return data, nil
 }
 
+// do issues one short request. A nil out discards the body.
 func (c *Client) do(ctx context.Context, method, path string, in, out any, apiKey string) error {
 	var body io.Reader
 	if in != nil {

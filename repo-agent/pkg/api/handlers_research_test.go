@@ -133,6 +133,31 @@ func (f *fakeSessions) handler() http.Handler {
 		}
 		_, _ = w.Write([]byte(data))
 	})
+	mux.HandleFunc("GET /tasks/{id}/files/{dir}/{name}", func(w http.ResponseWriter, r *http.Request) {
+		f.record(r.Method, "/tasks/"+r.PathValue("id")+"/files/"+r.PathValue("dir")+"/"+r.PathValue("name"))
+		f.mu.Lock()
+		data, ok := f.files[r.PathValue("id")+"/"+r.PathValue("dir")+"/"+r.PathValue("name")]
+		f.mu.Unlock()
+		if !ok {
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":"no file"}`))
+			return
+		}
+		_, _ = w.Write([]byte(data))
+	})
+	// The task's files and, with subdirs=1, those one directory down.
+	mux.HandleFunc("GET /tasks/{id}/files", func(w http.ResponseWriter, r *http.Request) {
+		f.record(r.Method, "/tasks/"+r.PathValue("id")+"/files")
+		f.mu.Lock()
+		names := []string{}
+		for k := range f.files {
+			if rest, ok := strings.CutPrefix(k, r.PathValue("id")+"/"); ok && (r.URL.Query().Get("subdirs") == "1" || !strings.Contains(rest, "/")) {
+				names = append(names, rest)
+			}
+		}
+		f.mu.Unlock()
+		_ = json.NewEncoder(w).Encode(names)
+	})
 	mux.HandleFunc("GET /sessions/{id}", func(w http.ResponseWriter, r *http.Request) {
 		f.record(r.Method, "/sessions/"+r.PathValue("id"))
 		f.mu.Lock()
@@ -377,6 +402,8 @@ func researchTestServer(t *testing.T, daemon *fakeSessions, sandboxes []*unstruc
 	r.PATCH("/api/research/:session", server.renameResearchSession)
 	r.DELETE("/api/research/:session", server.deleteResearchSession)
 	r.GET("/api/task-sessions/:sandbox/:task", server.getTaskSession)
+	r.GET("/api/task-sessions/:sandbox/:task/streams", server.getTaskSessionStreams)
+	r.GET("/api/task-sessions/:sandbox/:task/streams/:name", server.getTaskSessionStream)
 	r.POST("/api/task-sessions/:sandbox/:task/prompt", server.promptTaskSession)
 	r.POST("/api/task-sessions/:sandbox/:task/permission", server.resolveTaskSessionPermission)
 	r.POST("/api/task-sessions/:sandbox/:task/cancel", server.cancelTaskSession)
