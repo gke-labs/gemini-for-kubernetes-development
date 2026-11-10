@@ -105,6 +105,7 @@ func (m *Manager) Create(req CreateRequest, apiKey string) (*Session, bool, erro
 			return s, false, nil
 		}
 		delete(m.sessions, id)
+		s.release()
 	}
 	live := 0
 	for _, s := range m.sessions {
@@ -238,6 +239,7 @@ func (m *Manager) Delete(id string) bool {
 	m.mu.Unlock()
 	if ok {
 		s.Kill(3 * time.Second)
+		s.release()
 	}
 	return ok
 }
@@ -258,6 +260,7 @@ func (m *Manager) Reap(interval time.Duration, stop <-chan struct{}) {
 			in := s.Info()
 			if in.Exited && in.Clients == 0 && in.Ended != nil && time.Since(*in.Ended) > exitedKeep {
 				delete(m.sessions, id)
+				s.release()
 			}
 		}
 		m.mu.Unlock()
@@ -273,7 +276,7 @@ func (m *Manager) Close() {
 	var wg sync.WaitGroup
 	for _, s := range all {
 		wg.Add(1)
-		go func(s *Session) { defer wg.Done(); s.Kill(2 * time.Second) }(s)
+		go func(s *Session) { defer wg.Done(); s.Kill(2 * time.Second); s.release() }(s)
 	}
 	wg.Wait()
 }

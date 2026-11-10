@@ -24,13 +24,50 @@ RUN git clone --filter=blob:none "${GEMINI_CLI_REPO}" /src && \
 
 # --------------------------------
 
-# Build factory binary
+# Build libghostty-vt, the terminal emulator the daemon's terminal sessions
+# use (factory/pkg/termd, build tag libghostty): a static library that
+# depends only on libc. The signed release tarballs, checked against
+# their published SHA256SUMS, built offline with Zig (the deps tarball
+# holds every Zig package). See factory/design/daemon-terminal-sessions.md.
+FROM golang:1.26.3 AS build-libghostty
+ARG ZIG_VERSION=0.17.0
+ARG ZIG_SHA256=1cbe9df9f27e6b78d14ccbca43b6703a404ef79ef1c463de901d7f088d4e2026
+ARG LIBGHOSTTY_VT_VERSION=1.0.0
+ARG LIBGHOSTTY_VT_SHA256=4a6ef758be721923e1969e7b81b443dcc92d8dd3fb5a39600c03a8817a753676
+ARG LIBGHOSTTY_VT_DEPS_SHA256=4d5ea5e448e4c7ea8fb55ccbaa8668f2a97d44f438cee831e2b7ecd162d85c29
+RUN apt-get update && apt-get install -y --no-install-recommends xz-utils && rm -rf /var/lib/apt/lists/*
+WORKDIR /src
+RUN curl -fsSLo zig.tar.xz "https://ziglang.org/download/${ZIG_VERSION}/zig-x86_64-linux-${ZIG_VERSION}.tar.xz" && \
+    echo "${ZIG_SHA256}  zig.tar.xz" | sha256sum -c - && \
+    mkdir /opt/zig && tar -xJf zig.tar.xz -C /opt/zig --strip-components=1 && rm zig.tar.xz
+RUN base="https://release.files.ghostty.org/libghostty-vt/${LIBGHOSTTY_VT_VERSION}" && \
+    curl -fsSLO "${base}/libghostty-vt-${LIBGHOSTTY_VT_VERSION}.tar.gz" && \
+    curl -fsSLO "${base}/libghostty-vt-${LIBGHOSTTY_VT_VERSION}-deps.tar.gz" && \
+    echo "${LIBGHOSTTY_VT_SHA256}  libghostty-vt-${LIBGHOSTTY_VT_VERSION}.tar.gz" | sha256sum -c - && \
+    echo "${LIBGHOSTTY_VT_DEPS_SHA256}  libghostty-vt-${LIBGHOSTTY_VT_VERSION}-deps.tar.gz" | sha256sum -c - && \
+    tar -xzf "libghostty-vt-${LIBGHOSTTY_VT_VERSION}.tar.gz" && \
+    tar -xzf "libghostty-vt-${LIBGHOSTTY_VT_VERSION}-deps.tar.gz"
+RUN cd "libghostty-vt-${LIBGHOSTTY_VT_VERSION}" && \
+    ZIG_GLOBAL_CACHE_DIR=/tmp/zig-cache /opt/zig/zig build \
+      --prefix /opt/libghostty-vt \
+      --system "../libghostty-vt-${LIBGHOSTTY_VT_VERSION}-deps" \
+      -Demit-lib-vt -Doptimize=ReleaseFast -Dcpu=baseline && \
+    rm -rf /tmp/zig-cache
+
+# --------------------------------
+
+# Build factory binary: cgo, linking libghostty-vt statically (libghostty
+# tag). Builds without the tag - the factory CLI anywhere else - stay pure
+# Go, with termd's pure-Go emulator.
 FROM golang:1.26.3 AS build-factory
+RUN apt-get update && apt-get install -y --no-install-recommends pkg-config && rm -rf /var/lib/apt/lists/*
+COPY --from=build-libghostty /opt/libghostty-vt /opt/libghostty-vt
+ENV PKG_CONFIG_PATH=/opt/libghostty-vt/lib/pkgconfig
 WORKDIR /app/factory
 COPY factory/go.mod factory/go.sum ./
 RUN go mod download
 COPY factory/ ./
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -v -o /factory .
+RUN CGO_ENABLED=1 GOOS=linux go build -tags libghostty -ldflags="-s -w" -v -o /factory .
 
 
 

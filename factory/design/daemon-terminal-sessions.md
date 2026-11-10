@@ -69,13 +69,34 @@ Text frames are JSON control (`termd.Frame`), binary frames output.
 repo-agent passes the frames through unchanged, so the browser speaks
 the daemon's protocol.
 
+## The emulator
+
+Two, behind one interface (`emulator`, `pkg/termd/emulator.go`):
+
+- **libghostty-vt** (`go.mitchellh.com/libghostty`, build tag
+  `libghostty`), in the sandbox image: Ghostty's terminal emulator,
+  linked statically (it depends only on libc). Its snapshot is its VT
+  formatter with every extra but the palette: modes (bracketed paste,
+  application cursor keys, mouse tracking, kitty keyboard), scrolling
+  region, tab stops, charsets, hyperlinks, cursor, and its scrollback - so
+  a client reattaching to a TUI types and pastes the way the program
+  expects. Built in `images/factory-golang/Dockerfile` from the signed
+  release tarballs with Zig.
+- **charmbracelet/x/vt**, every other build (the factory CLI on a laptop,
+  `go test`): pure Go, no cgo. Its snapshot is cells, styles, cursor and
+  alternate screen only. It is also far slower - a few MB/s on a coloured
+  build log against hundreds for libghostty-vt - and the emulator is fed
+  on the goroutine that reads the PTY, so it is not for sessions with
+  heavy output.
+
+The palette is left out because it would override the client's colours
+with Ghostty's defaults.
+
 ## Why not
 
-- **libghostty-vt** for the emulator: Zig with a C API, so cgo and a Zig
-  build for every architecture in a binary that is `CGO_ENABLED=0` today.
-  The emulator is only for snapshots - exact replay covers every resume
-  within 4 MiB - so a pure-Go one is enough to start; the emulator is one
-  field of `Session` to swap.
+- **libghostty-vt as WebAssembly** (wazero, no cgo): native through cgo
+  is faster and has maintained Go bindings; the cgo build is contained
+  to the sandbox image by the build tag.
 - **tmux**: what this replaces. Kept only as the fallback for sandboxes
   whose daemon predates `/v1/terminals`.
 - **chemuxer / agent-tmux-web**: prior art for the snapshot-on-reconnect

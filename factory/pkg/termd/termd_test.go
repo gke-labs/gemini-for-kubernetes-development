@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/charmbracelet/x/vt"
 	"github.com/gorilla/websocket"
 )
 
@@ -194,8 +195,14 @@ func TestSnapshotWhenOutputIsNoLongerKept(t *testing.T) {
 		}
 		s.until("the snapshot", func() bool { _, ok := s.frame("snapshot"); return ok })
 		snap, _ := s.frame("snapshot")
-		if !strings.Contains(snap.Data, "SCREEN-NOW") || strings.Contains(snap.Data, "line-10-") {
-			t.Errorf("offset %q: snapshot %q, want the current screen only", offset, tail(snap.Data))
+		// Drawn on a fresh terminal of the same size, it is the screen:
+		// SCREEN-NOW on the top row, the prompt below, the cursor after it.
+		screen := vt.NewEmulator(80, 24)
+		_, _ = screen.Write([]byte(snap.Data))
+		lines := strings.Split(screen.String(), "\n")
+		pos := screen.CursorPosition()
+		if lines[0] != "SCREEN-NOW" || len(lines) < 2 || !strings.HasSuffix(strings.TrimSpace(lines[1]), "$") || pos.Y != 1 || pos.X != len(strings.TrimRight(lines[1], " "))+1 {
+			t.Errorf("offset %q (%s): snapshot draws %q with the cursor at %v; snapshot %q", offset, EmulatorName, screen.String(), pos, tail(snap.Data))
 		}
 		_ = s.ws.Close()
 	}
@@ -244,3 +251,39 @@ func contains(xs []string, x string) bool {
 }
 
 func itoa(n int64) string { b, _ := json.Marshal(n); return string(b) }
+
+// waitOffset waits until s has written at least n bytes.
+func waitOffset(t *testing.T, s *Session, n int64) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for s.Info().Offset < n {
+		if time.Now().After(deadline) {
+			t.Fatalf("session wrote %d bytes, want %d", s.Info().Offset, n)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// A program that asks its terminal something while no client is attached
+// gets its answer from the emulator: it does not hang waiting for one.
+func TestQueriesAnsweredWithNoClient(t *testing.T) {
+	script := `stty -echo -icanon min 1; printf '\033[6n'; r=$(dd bs=1 count=6 2>/dev/null | tr -d '\033'); printf 'GOT[%s]\n' "$r"; sleep 5`
+	s, err := start("q", Spec{Argv: []string{"/bin/sh", "-c", script}, Env: []string{"PATH=" + os.Getenv("PATH")}, Dir: t.TempDir(), Cols: 80, Rows: 24})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { s.Kill(time.Second); s.release() }()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		s.mu.Lock()
+		out := string(s.buf)
+		s.mu.Unlock()
+		if strings.Contains(out, "GOT[[1;1R]") {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%s: no answer to the cursor position query; output %q", EmulatorName, out)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}

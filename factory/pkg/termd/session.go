@@ -17,13 +17,11 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
 
-	"github.com/charmbracelet/x/vt"
 	"github.com/creack/pty"
 )
 
@@ -56,7 +54,10 @@ type Session struct {
 
 	cmd *exec.Cmd
 	pty *os.File
-	emu *vt.SafeEmulator
+	emu emulator
+	// replies carries the emulator's answers to the program's queries to
+	// the PTY (reply), off the goroutine that feeds the emulator.
+	replies chan []byte
 
 	mu   sync.Mutex
 	cond *sync.Cond
@@ -69,8 +70,8 @@ type Session struct {
 	ended      time.Time
 	done       chan struct{}
 
-	// clients is how many clients are attached; atomic, because answer
-	// reads it while the emulator, mid-write, waits on it.
+	// clients is how many clients are attached; atomic, because reply
+	// reads it from inside the emulator's write.
 	clients atomic.Int32
 }
 
@@ -101,13 +102,47 @@ func start(id string, spec Spec) (*Session, error) {
 	}
 	s := &Session{
 		id: id, program: spec.Program, cwd: spec.Dir, created: time.Now().UTC(),
-		cmd: cmd, pty: f, emu: vt.NewSafeEmulator(cols, rows),
-		cols: cols, rows: rows, done: make(chan struct{}),
+		cmd: cmd, pty: f, cols: cols, rows: rows, done: make(chan struct{}),
+		replies: make(chan []byte, 64),
 	}
 	s.cond = sync.NewCond(&s.mu)
+	emu, err := newEmulator(cols, rows, s.reply)
+	if err != nil {
+		_ = cmd.Process.Kill()
+		_ = f.Close()
+		return nil, fmt.Errorf("terminal emulator: %w", err)
+	}
+	s.emu = emu
 	go s.answer()
 	go s.pump()
 	return s, nil
+}
+
+// reply takes the emulator's answer to a query of the program's (cursor
+// position, device attributes, …). With a client attached its terminal
+// answers, so the emulator's is dropped; with none - a session started
+// ahead of anyone attaching - the emulator answers, so a program that
+// waits for a reply does not hang. It never blocks the emulator.
+func (s *Session) reply(p []byte) {
+	if s.clients.Load() != 0 {
+		return
+	}
+	select {
+	case s.replies <- append([]byte(nil), p...):
+	default:
+	}
+}
+
+// answer writes the emulator's replies to the program until it ends.
+func (s *Session) answer() {
+	for {
+		select {
+		case <-s.done:
+			return
+		case p := <-s.replies:
+			_, _ = s.pty.Write(p)
+		}
+	}
 }
 
 // pump reads the program's output into the kept bytes and the emulator,
@@ -117,7 +152,7 @@ func (s *Session) pump() {
 	for {
 		n, err := s.pty.Read(chunk)
 		if n > 0 {
-			_, _ = s.emu.Write(chunk[:n])
+			s.emu.Write(chunk[:n])
 			s.mu.Lock()
 			s.buf = append(s.buf, chunk[:n]...)
 			if over := len(s.buf) - keep; over > 0 {
@@ -149,35 +184,12 @@ func (s *Session) pump() {
 	s.cond.Broadcast()
 	s.mu.Unlock()
 	close(s.done)
-	// Ends answer: a cursor position query makes the emulator reply, and
-	// answer, reading it, sees done. Not emu.Close: vt's Read checks its
-	// closed flag without the lock Close sets it under.
-	_, _ = s.emu.Write([]byte("\x1b[6n"))
 }
 
-// answer handles the emulator's replies to the program's queries (cursor
-// position, device attributes, …). With a client attached its terminal
-// answers, so the emulator's are dropped; with none - a session started
-// ahead of anyone attaching - the emulator answers, so a program that
-// waits for a reply does not hang.
-func (s *Session) answer() {
-	reply := make([]byte, 4096)
-	for {
-		n, err := s.emu.Read(reply)
-		select {
-		case <-s.done:
-			return
-		default:
-		}
-		if n > 0 {
-			if s.clients.Load() == 0 {
-				_, _ = s.pty.Write(reply[:n])
-			}
-		}
-		if err != nil {
-			return
-		}
-	}
+// release frees the emulator, once the session is forgotten: an ended
+// session still draws its last screen for whoever attaches until then.
+func (s *Session) release() {
+	s.emu.Close()
 }
 
 // Info is the session's listing.
@@ -267,7 +279,7 @@ func (s *Session) position(want int64) Attachment {
 	}
 	// Taken under the lock, so no output lands between the snapshot and
 	// the offset it is good for.
-	snap := snapshot(s.emu)
+	snap := s.emu.Snapshot()
 	s.mu.Unlock()
 	return Attachment{Offset: end, Reset: true, Snapshot: snap}
 }
@@ -312,25 +324,6 @@ func (s *Session) wake() {
 	s.mu.Lock()
 	s.cond.Broadcast()
 	s.mu.Unlock()
-}
-
-// snapshot draws the emulator's screen on a cleared terminal: the cells
-// with their styles, then the cursor where the program left it.
-func snapshot(emu *vt.SafeEmulator) string {
-	var b strings.Builder
-	if emu.IsAltScreen() {
-		b.WriteString("\x1b[?1049h")
-	}
-	b.WriteString("\x1b[0m\x1b[H\x1b[2J")
-	b.WriteString(strings.ReplaceAll(emu.Render(), "\n", "\r\n"))
-	pos := emu.CursorPosition()
-	fmt.Fprintf(&b, "\x1b[0m\x1b[%d;%dH", pos.Y+1, pos.X+1)
-	if emu.CursorHidden() {
-		b.WriteString("\x1b[?25l")
-	} else {
-		b.WriteString("\x1b[?25h")
-	}
-	return b.String()
 }
 
 func clampSize(cols, rows int) (int, int) {
