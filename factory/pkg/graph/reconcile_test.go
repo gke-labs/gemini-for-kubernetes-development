@@ -402,68 +402,76 @@ func TestReconcileDeferredQuestions(t *testing.T) {
 	}
 }
 
-// The start block's pr-labels go on the open bot PRs fixing the open
-// children - only the ones the overseer allows - and come off, the ones the
-// graph put there, once the block stops naming them. A label a person put
-// on first is not the graph's: it stays. A PR no longer open drops out of
-// the record.
+// The parent's labels the template names (pr-labels-from-parent) go on the
+// open bot PRs fixing the open children, and come off - the ones the graph
+// put there - once the parent loses them. A label a person put on first is
+// not the graph's: it stays. A PR no longer open drops out of the record. A
+// paused graph only takes labels off.
 func TestReconcilePRLabels(t *testing.T) {
 	s := abc(t, "")
+	s.PRLabelsFromParent = []string{"overseer/auto-merge"}
 	withPRs := func(c Child, prs ...PRRef) Child { c.OpenPRs = prs; return c }
 	pr := func(n int, labels ...string) PRRef { return PRRef{Number: n, Labels: labels} }
+	auto := []string{"overseer/auto-merge"}
 	for _, tc := range []struct {
 		name     string
 		children map[string][]Child
-		labels   []string
+		parent   []string // the parent's labels
 		state    map[int][]string
 		actions  []string // kind:issue:labels
 		record   map[int][]string
-		refused  []string
 	}{
 		{"added, and recorded",
 			map[string][]Child{"a": {withPRs(open(101), pr(200, "overseer"))}},
-			[]string{"overseer/auto-merge"}, nil,
+			auto, nil,
 			[]string{"add-pr-labels:200:overseer/auto-merge"},
-			map[int][]string{200: {"overseer/auto-merge"}}, nil},
-		{"one not allowed: refused, nothing written for it",
+			map[int][]string{200: auto}},
+		{"a parent label the template does not name: not carried",
 			map[string][]Child{"a": {withPRs(open(101), pr(200))}},
-			[]string{"lgtm", "overseer/auto-merge"}, nil,
-			[]string{"add-pr-labels:200:overseer/auto-merge"},
-			map[int][]string{200: {"overseer/auto-merge"}}, []string{"lgtm"}},
+			[]string{"cp/leaf", "overseer/graph"}, nil,
+			nil, nil},
 		{"a person's label: not added, not recorded",
 			map[string][]Child{"a": {withPRs(open(101), pr(200, "overseer/auto-merge"))}},
-			[]string{"overseer/auto-merge"}, nil,
-			nil, nil, nil},
+			auto, nil,
+			nil, nil},
 		{"recorded and still there: nothing to do",
 			map[string][]Child{"a": {withPRs(open(101), pr(200, "overseer/auto-merge"))}},
-			[]string{"overseer/auto-merge"}, map[int][]string{200: {"overseer/auto-merge"}},
-			nil, map[int][]string{200: {"overseer/auto-merge"}}, nil},
+			auto, map[int][]string{200: auto},
+			nil, map[int][]string{200: auto}},
 		{"recorded, taken off the PR by hand: put back, recorded once",
 			map[string][]Child{"a": {withPRs(open(101), pr(200))}},
-			[]string{"overseer/auto-merge"}, map[int][]string{200: {"overseer/auto-merge"}},
+			auto, map[int][]string{200: auto},
 			[]string{"add-pr-labels:200:overseer/auto-merge"},
-			map[int][]string{200: {"overseer/auto-merge"}}, nil},
-		{"dropped from the block: the graph's comes off",
+			map[int][]string{200: auto}},
+		{"taken off the parent: the graph's comes off",
 			map[string][]Child{"a": {withPRs(open(101), pr(200, "overseer/auto-merge"))}},
-			nil, map[int][]string{200: {"overseer/auto-merge"}},
-			[]string{"remove-pr-labels:200:overseer/auto-merge"}, nil, nil},
-		{"dropped from the block, a person's: stays",
+			nil, map[int][]string{200: auto},
+			[]string{"remove-pr-labels:200:overseer/auto-merge"}, nil},
+		{"taken off the parent, a person's: stays",
 			map[string][]Child{"a": {withPRs(open(101), pr(200, "overseer/auto-merge"))}},
 			nil, nil,
-			nil, nil, nil},
+			nil, nil},
 		{"the PR no longer open: out of the record, nothing taken off",
 			map[string][]Child{"a": {open(101)}},
-			nil, map[int][]string{200: {"overseer/auto-merge"}},
-			nil, nil, nil},
+			nil, map[int][]string{200: auto},
+			nil, nil},
 		{"a group's PR fixing two children: labelled once",
 			map[string][]Child{"a": {closed(101)}, "b": {withPRs(open(102), pr(200))}, "c": {withPRs(open(103), pr(200))}},
-			[]string{"overseer/auto-merge"}, nil,
+			auto, nil,
 			[]string{"add-pr-labels:200:overseer/auto-merge"},
-			map[int][]string{200: {"overseer/auto-merge"}}, nil},
+			map[int][]string{200: auto}},
+		{"paused, taken off the parent: the graph's still comes off",
+			map[string][]Child{"a": {withPRs(open(101), pr(200, "overseer/auto-merge"))}},
+			[]string{"overseer/stop"}, map[int][]string{200: auto},
+			[]string{"remove-pr-labels:200:overseer/auto-merge"}, nil},
+		{"paused, the parent has it: nothing added",
+			map[string][]Child{"a": {withPRs(open(101), pr(200))}},
+			[]string{"overseer/stop", "overseer/auto-merge"}, nil,
+			nil, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			o := observed(s, tc.children, State{PRLabels: tc.state})
-			o.PRLabels, o.AllowedPRLabels = tc.labels, []string{"overseer/auto-merge"}
+			o.Parent.Labels = tc.parent
 			r := Reconcile(o)
 			var got []string
 			for _, a := range r.Actions {
@@ -477,9 +485,25 @@ func TestReconcilePRLabels(t *testing.T) {
 			if !maps.EqualFunc(r.State.PRLabels, tc.record, slices.Equal) {
 				t.Errorf("record %v, want %v", r.State.PRLabels, tc.record)
 			}
-			if !slices.Equal(r.RefusedPRLabels, tc.refused) {
-				t.Errorf("refused %v, want %v", r.RefusedPRLabels, tc.refused)
-			}
 		})
+	}
+}
+
+// pr-labels-from-parent is a template's: a plan, written by an agent, may
+// not have the watcher label PRs.
+func TestPRLabelsFromParentOnlyInTemplates(t *testing.T) {
+	plan, err := ParsePlanBlock("```yaml graph\npr-labels-from-parent: [overseer/auto-merge]\nsteps:\n  - {id: a, title: A, body: a}\n```\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := plan.ValidatePlan(); err == nil || !strings.Contains(err.Error(), "template's") {
+		t.Errorf("a plan with pr-labels-from-parent: %v", err)
+	}
+	tpl, err := ParseTemplate([]byte("apiVersion: factory.gemini.google.com/v1alpha1\nkind: IssueGraph\nmetadata: {name: one}\nspec:\n  pr-labels-from-parent: [overseer/auto-merge]\n  steps:\n    - {id: a, title: A, body: a}\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tpl.Validate(); err != nil {
+		t.Errorf("a template with pr-labels-from-parent: %v", err)
 	}
 }

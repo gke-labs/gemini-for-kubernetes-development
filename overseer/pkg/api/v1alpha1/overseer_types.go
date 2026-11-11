@@ -187,16 +187,6 @@ type OverseerSpec struct {
 	// +kubebuilder:validation:Optional
 	GraphsInterval *metav1.Duration `json:"graphsInterval,omitempty"`
 
-	// GraphPRLabels are the labels a graph's start block may put on the
-	// open PRs carrying its children's work (pr-labels: [...] in the
-	// factory-graph block), e.g. [overseer/auto-merge]: the graph keeps
-	// them on those PRs while the block names them, and takes off the ones
-	// it put there once it no longer does. A label not listed here is
-	// refused, and the graph's status says so. Unset, a start block puts
-	// no labels on PRs.
-	// +kubebuilder:validation:Optional
-	GraphPRLabels []string `json:"graphPRLabels,omitempty"`
-
 	// Retro runs the weekly retro (factory/design/retro.md): on its
 	// schedule the watcher stages the week's PR outcomes, human feedback
 	// and agent traces from the token-usage collector, runs the retro

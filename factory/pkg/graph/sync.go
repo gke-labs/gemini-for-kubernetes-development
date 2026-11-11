@@ -76,10 +76,6 @@ type Options struct {
 	// group's PR is its first step's bot's. Nil: the watcher's own client
 	// tries (GitHub.MarkPullRequestReady).
 	MarkReadyAs func(ctx context.Context, pr int, author string) error
-	// AllowedPRLabels are the labels a start block's pr-labels may put on
-	// the PRs carrying a graph's work (an overseer's graphPRLabels): any
-	// other it names is refused, and the status says so. Empty, none.
-	AllowedPRLabels []string
 }
 
 // ErrNoStepReady is StepReady's answer when it cannot judge (the watch
@@ -214,8 +210,6 @@ func Observe(ctx context.Context, gh GitHub, opts Options) (*Pass, *githubv39.Is
 	o.Source = start.SourceName()
 	o.Params = start.Params
 	o.Grouped = start.Grouped
-	o.PRLabels = start.PRLabels
-	o.AllowedPRLabels = opts.AllowedPRLabels
 	o.Spec, p.Version, o.SpecErr = readSteps(ctx, gh, start, comments, opts)
 	if o.SpecErr == nil {
 		o.Spec, o.SpecErr = start.WithGates(o.Spec)
@@ -676,9 +670,9 @@ func describe(a Action, dryRun bool) string {
 	case ActRemoveChildLabels:
 		return fmt.Sprintf("%sunlabel #%d (step %s, in its group's PR) %s", would, a.Issue, a.Step, strings.Join(a.Labels, ", "))
 	case ActAddPRLabels:
-		return fmt.Sprintf("%slabel PR #%d (step %s's, the start block's pr-labels) %s", would, a.Issue, a.Step, strings.Join(a.Labels, ", "))
+		return fmt.Sprintf("%slabel PR #%d (step %s's, from the parent: pr-labels-from-parent) %s", would, a.Issue, a.Step, strings.Join(a.Labels, ", "))
 	case ActRemovePRLabels:
-		return fmt.Sprintf("%sunlabel PR #%d (step %s's, no longer in the start block's pr-labels) %s", would, a.Issue, a.Step, strings.Join(a.Labels, ", "))
+		return fmt.Sprintf("%sunlabel PR #%d (step %s's, no longer on the parent) %s", would, a.Issue, a.Step, strings.Join(a.Labels, ", "))
 	case ActAddChildAssignees:
 		return fmt.Sprintf("%sassign #%d (step %s) to %s, from the parent", would, a.Issue, a.Step, strings.Join(a.Assignees, ", "))
 	case ActAddParentLabels:

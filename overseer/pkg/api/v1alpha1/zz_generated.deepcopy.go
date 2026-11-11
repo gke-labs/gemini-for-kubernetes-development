@@ -166,11 +166,6 @@ func (in *OverseerSpec) DeepCopyInto(out *OverseerSpec) {
 		*out = new(v1.Duration)
 		**out = **in
 	}
-	if in.GraphPRLabels != nil {
-		in, out := &in.GraphPRLabels, &out.GraphPRLabels
-		*out = make([]string, len(*in))
-		copy(*out, *in)
-	}
 	out.Retro = in.Retro
 	if in.RepoRecipe != nil {
 		in, out := &in.RepoRecipe, &out.RepoRecipe

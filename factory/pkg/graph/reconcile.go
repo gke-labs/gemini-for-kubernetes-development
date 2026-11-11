@@ -64,10 +64,6 @@ type Observed struct {
 	// Grouped is the start block's grouped: consecutive steps share one
 	// PR (Spec.GroupPrev).
 	Grouped bool
-	// PRLabels are the start block's pr-labels, AllowedPRLabels the ones
-	// the overseer lets a start block put on PRs (Options.AllowedPRLabels):
-	// only a label in both is applied.
-	PRLabels, AllowedPRLabels []string
 }
 
 // Parent is the graph's parent issue, as observed.
@@ -115,8 +111,8 @@ type Child struct {
 	MergedPR       int
 	MergedPRLabels []string
 	// OpenPRs are, for an open child, the open bot PRs that fix it (their
-	// body says so: "Fixes #n"), with their labels: where the start block's
-	// pr-labels go.
+	// body says so: "Fixes #n"), with their labels: where the parent's
+	// labels the template names (Spec.PRLabelsFromParent) go.
 	OpenPRs []PRRef
 }
 
@@ -172,10 +168,6 @@ type Result struct {
 	// (and the watcher may not create): the pass's writes went without
 	// them, and the status names them, for someone to create.
 	MissingLabels []string
-	// RefusedPRLabels are the start block's pr-labels the overseer does
-	// not allow (Observed.AllowedPRLabels): applied to nothing, and named
-	// by the status.
-	RefusedPRLabels []string
 	// IssuesURL is where the repository's issues are
 	// (https://github.com/<owner>/<repo>/issues/), from the parent's page:
 	// the diagram links each step's issue there. Empty: no links.
@@ -210,8 +202,9 @@ const (
 	// ActMarkGroupPRReady marks a group's PR ready for review when the
 	// group's last step closed needing no change: no push of its marks it.
 	ActMarkGroupPRReady = "mark-group-pr-ready"
-	// ActAddPRLabels and ActRemovePRLabels keep the start block's pr-labels
-	// on the open PRs carrying the children's work.
+	// ActAddPRLabels and ActRemovePRLabels keep the parent's labels the
+	// template names (Spec.PRLabelsFromParent) on the open PRs carrying the
+	// children's work.
 	ActAddPRLabels    = "add-pr-labels"
 	ActRemovePRLabels = "remove-pr-labels"
 )
@@ -312,16 +305,24 @@ func Reconcile(o Observed) Result {
 
 	r.Steps = statuses(s, ids, canonical, o.Grouped)
 
-	// 2. The stop label: only the status.
+	// 2. The stop label: only the status - and the PR labels the parent no
+	// longer has taken off, so stopping a graph and taking its
+	// overseer/auto-merge off does stop its PRs merging. Nothing is added.
 	if containsFold(o.Parent.Labels, stop) {
 		r.Phase, r.Reason = PhasePaused, "the parent has "+stop
+		var prActions []Action
+		prActions, r.State.PRLabels = prLabels(o, ids, canonical, false)
+		r.Actions = append(r.Actions, prActions...)
 		return r
 	}
 
-	// 4. Params changed after start.
+	// 4. Params changed after start: likewise.
 	hash := HashParams(o.Params)
 	if o.State.Params != "" && o.State.Params != hash {
 		r.Phase, r.Reason = PhaseBlocked, "the parent's params changed after the graph started; restore them, or file a new parent"
+		var prActions []Action
+		prActions, r.State.PRLabels = prLabels(o, ids, canonical, false)
+		r.Actions = append(r.Actions, prActions...)
 		return r
 	}
 
@@ -387,10 +388,10 @@ func Reconcile(o Observed) Result {
 			}
 		}
 	}
-	// The start block's pr-labels on the open PRs carrying the children's
-	// work (a child a merged PR completes has none left open).
+	// The parent's labels the template names on the open PRs carrying the
+	// children's work (a child a merged PR completes has none left open).
 	var prActions []Action
-	prActions, r.State.PRLabels, r.RefusedPRLabels = prLabels(o, ids, canonical)
+	prActions, r.State.PRLabels = prLabels(o, ids, canonical, true)
 	r.Actions = append(r.Actions, prActions...)
 	// Who is handed down from now on: the parent's humans as they are, so
 	// one taken off the parent and put back is handed down again.
@@ -694,23 +695,21 @@ This step of #%d's plan waits for a decision: no bot works on it until a person 
 The steps after it start once it is closed.`, parent, trigger, trigger, trigger, trigger, trigger)
 }
 
-// prLabels decides the start block's pr-labels on the open PRs fixing the
-// open children: each PR gets the allowed ones it lacks, and loses those the
-// graph put there (State.PRLabels) that the block no longer names. It
-// returns the actions, what the graph has put on each PR from now on - what
-// it recorded and still wants, and what it adds now; a label a person put
-// on first is not recorded, so never taken off - and the labels refused.
-// A PR no longer open (merged, closed) or no longer fixing an open child
-// drops out of the record: nothing is taken off it.
-func prLabels(o Observed, ids []string, canonical map[string]Child) ([]Action, map[int][]string, []string) {
-	var want, refused []string
-	for _, l := range o.PRLabels {
-		switch {
-		case containsFold(want, l) || containsFold(refused, l):
-		case containsFold(o.AllowedPRLabels, l):
+// prLabels decides the parent's labels the template names
+// (Spec.PRLabelsFromParent) on the open PRs fixing the open children: each
+// PR gets those the parent has that it lacks (only when add: a paused or
+// blocked graph adds nothing), and loses those the graph put there
+// (State.PRLabels) that the parent no longer has. It returns the actions and
+// what the graph has put on each PR from now on - what it recorded and the
+// parent still has, and what it adds now; a label a person put on first is
+// not recorded, so never taken off. A PR no longer open (merged, closed) or
+// no longer fixing an open child drops out of the record: nothing is taken
+// off it.
+func prLabels(o Observed, ids []string, canonical map[string]Child, add bool) ([]Action, map[int][]string) {
+	var want []string
+	for _, l := range o.Spec.PRLabelsFromParent {
+		if containsFold(o.Parent.Labels, l) && !containsFold(want, l) {
 			want = append(want, l)
-		default:
-			refused = append(refused, l)
 		}
 	}
 	type openPR struct {
@@ -745,7 +744,7 @@ func prLabels(o Observed, ids []string, canonical map[string]Child) ([]Action, m
 				drop = append(drop, l)
 			}
 		}
-		if missing := missingLabels(pr.labels, want); len(missing) > 0 {
+		if missing := missingLabels(pr.labels, want); add && len(missing) > 0 {
 			actions = append(actions, Action{Kind: ActAddPRLabels, Step: pr.step, Issue: n, Labels: missing})
 			for _, l := range missing {
 				if !containsFold(keep, l) {
@@ -763,7 +762,7 @@ func prLabels(o Observed, ids []string, canonical map[string]Child) ([]Action, m
 	if len(record) == 0 {
 		record = nil
 	}
-	return actions, record, refused
+	return actions, record
 }
 
 // childLabels are the labels a step's child is created with, by what it

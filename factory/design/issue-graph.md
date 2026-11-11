@@ -155,6 +155,7 @@ spec:
 | `after` | Step ids that must be done before this step's child is created. They must form a DAG: unknown ids and cycles are invalid. A step without `after` is ready at once. |
 | `finally` | Optional: one step (`title`, `body`, `then`, `labels`, `review`), created once every other step is done, with no `after` to keep up to date. The parent closes when it is done. Without it, the parent closes when the steps are done. |
 | `maxActive` | How many steps may be active at once. Default 1. |
+| `pr-labels-from-parent` | Optional, templates only: the parent's labels that go on the open bot PRs carrying the children's work while the parent has them, and come off - the ones the graph put there - once it does not (§4.10). |
 | `then` | What the child does first: `fix` (default), `plan` or `ask` (§4.6). |
 | `checkpoint` | `stop`, `replan` or both: when the step is done, the reconciler stops the graph, has the plan revised, or both (§4.8). |
 | `no-change` | `ok`: the step's fix may rightly need no PR (its work already done, say). A fix that commits nothing and says why closes the step's issue as completed, and the graph goes on; the issue's marker carries `nochange=ok`. Unset, such a fix's issue stays open for a person: an unexpected no-op may be a wrong conclusion. Fix steps only. |
@@ -282,23 +283,24 @@ Not given, the graph's `group-gate` steps gate. Given, the list replaces them: e
 - **Grouping a graph already running.** Markers are written when a child is created, so a step created before `grouped: true` was added has none of the above, and its PR opens as a normal one, possibly handed to people already (`<trigger>/ready-for-human`). The group still finds it (the PR fixes the step's child). The step check counts a `ready-for-human` PR as one the ready rule would run on, so the next step starts. That step's `open-pr`, run as the PR's author, makes the PR a draft again and takes the label off; the group's last step marks it ready as usual (KCC #15000, #15068).
 - **When the PR merges**, every step child it fixes closes, and the graph goes on as usual.
 
-### 4.10 Labels for the children's PRs (`pr-labels`)
+### 4.10 Labels for the children's PRs (`pr-labels-from-parent`)
 
-The parent can have labels put on the PRs that carry its graph's work, for as long as its block names them:
+A template can name parent labels that go on the PRs carrying its graph's work. A maintainer switches it on per graph by labelling the parent:
 
-```factory-graph
-graph: kcc-greenfield
-grouped: true
-pr-labels: [overseer/auto-merge]   # e.g. opt every PR of this graph in to the merge rules
-params:
-  kind: SpannerInstanceConfig
+```yaml
+# .agents/graphs/kcc-greenfield.yaml
+spec:
+  pr-labels-from-parent: [overseer/auto-merge]
 ```
 
+Label the parent `overseer/auto-merge` and every open PR of its graph gets the label; take it off and the PRs lose it.
+
 - **Which PRs.** The open bot PRs that fix an open child (their body says `Fixes #<child>`): a grouped graph's shared PR, or each step's own. They are read from the child's cross-references, which every pass reads already. A merged PR has completed its child and is no longer looked at.
-- **Only what the overseer allows.** The overseer's `graphPRLabels` (factory config `graphPRLabels`) lists the labels a block may name. Anything else is refused: put on nothing, and named in the status comment. Unset, a block puts no labels on PRs. Anyone who can edit the parent's body could otherwise have the watcher label PRs `lgtm` or `approved`.
-- **The block is the switch.** Each pass adds the labels a PR lacks, so a label taken off a PR by hand comes back while the block names it. To hold back one PR, use the rules' own opt-out (`do-not-merge/hold` for the merge rules).
-- **It takes off only what it put on.** The graph state records, per PR, the labels the graph added. When the block stops naming one, the reconciler takes it off those PRs. A label a person put on a PR before the graph did is not recorded, and stays.
-- **Children are not labelled.** The PR inherits its closing issues' labels (`inherit-labels`), so a label on a child would come back to the PR whatever the block said.
+- **Who can switch it.** Labelling the parent takes triage access, so only maintainers can; the template itself is on the default branch, reviewed like any change. Only the labels the template names are carried: the parent's others (`overseer/graph`, `workflow/*`, ...) stay where they are. A plan, an agent's writing, may not name any: `ValidatePlan` refuses it.
+- **The parent is the switch.** Each pass adds the labels a PR lacks, so a label taken off a PR by hand comes back while the parent has it. To hold back one PR, use the rules' own opt-out (`do-not-merge/hold` for the merge rules).
+- **It takes off only what it put on.** The graph state records, per PR (`prLabels`), the labels the graph added. When the parent loses one, the reconciler takes it off those PRs. A label a person put on a PR before the graph did is not recorded, and stays.
+- **Paused or blocked, removal still runs.** A graph paused by `<trigger>/stop`, or blocked on changed params, adds nothing, but still takes off the labels the parent no longer has: stopping a graph and taking `overseer/auto-merge` off its parent stops its PRs merging.
+- **Children are not labelled.** The PR inherits its closing issues' labels (`inherit-labels`), so a label on a child would come back to the PR whatever the parent said.
 
 ### 4.11 Label prerequisites (`requires`)
 

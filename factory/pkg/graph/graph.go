@@ -71,6 +71,12 @@ type Spec struct {
 	Steps     []Step   `yaml:"steps"`
 	// Finally is the optional step created once every other step is done.
 	Finally *Step `yaml:"finally,omitempty"`
+	// PRLabelsFromParent are the parent's labels that go on the open bot
+	// PRs carrying the children's work, while the parent has them: a
+	// maintainer labels the parent (overseer/auto-merge, say) to have every
+	// PR of its graph labelled, and takes it off to have the graph take off
+	// what it put there. A template's only: a plan is an agent's writing.
+	PRLabelsFromParent []string `yaml:"pr-labels-from-parent,omitempty"`
 }
 
 // Defaults apply to every step unless the step overrides them.

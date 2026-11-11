@@ -92,15 +92,6 @@ function writeFactoryConfig {
         echo "graphsInterval: \"$GRAPHS_INTERVAL\"" >> "$CFG_FILE"
     fi
 
-    # The labels a graph's start block may put on its children's PRs
-    # (pr-labels), comma-separated.
-    if [ -n "$GRAPH_PR_LABELS" ]; then
-        echo "graphPRLabels:" >> "$CFG_FILE"
-        echo "$GRAPH_PR_LABELS" | tr ',' '\n' | while read -r l; do
-            if [ -n "$l" ]; then echo "  - \"$l\"" >> "$CFG_FILE"; fi
-        done
-    fi
-
     if [ -n "$FACTORY_SECRETS" ]; then
         echo "secrets:" >> "$CFG_FILE"
         echo "$FACTORY_SECRETS" | jq -r '.[] | "  - name: \(.name)\n    mountPath: \(.mountPath)"' >> "$CFG_FILE"

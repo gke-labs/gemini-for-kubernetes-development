@@ -71,10 +71,6 @@ type FactoryConfig struct {
 	// parent at once; the sweep catches what that missed, and reads every
 	// parent. Unset or invalid, graphs.DefaultInterval.
 	GraphsInterval string `yaml:"graphsInterval"`
-	// GraphPRLabels are the labels a graph's start block may put on the
-	// PRs carrying its children's work (its pr-labels), e.g.
-	// [overseer/auto-merge]: any other it names is refused. Unset, none.
-	GraphPRLabels []string `yaml:"graphPRLabels"`
 }
 
 // WarmWorkspaceConfig is how often the workspace is warmed, how many

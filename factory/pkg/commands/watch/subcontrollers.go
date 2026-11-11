@@ -189,20 +189,17 @@ func (w *Watcher) newGraphController() *graphs.Controller {
 		}
 	}
 	interval := graphs.DefaultInterval
-	var prLabels []string
 	if cfg != nil {
 		interval = graphsInterval(cfg.GraphsInterval)
-		prLabels = cfg.GraphPRLabels
 	}
 	return graphs.New(graphs.Config{
-		Interval:        interval,
-		TriggerLabel:    w.triggerLabel,
-		GitHubLogin:     w.githubLogin,
-		Pool:            w.allBotUsers,
-		Members:         w.cfg.TrustedLogins(),
-		MinNumber:       w.minIssueNumber(),
-		DryRun:          w.loopDryRun(w.IssueMode),
-		AllowedPRLabels: prLabels,
+		Interval:     interval,
+		TriggerLabel: w.triggerLabel,
+		GitHubLogin:  w.githubLogin,
+		Pool:         w.allBotUsers,
+		Members:      w.cfg.TrustedLogins(),
+		MinNumber:    w.minIssueNumber(),
+		DryRun:       w.loopDryRun(w.IssueMode),
 	}, graphs.Deps{GitHub: w.repoClient, Paused: w.draining, StepReady: w.groupStepReady, MarkReadyAs: w.markGroupPRReadyAs()})
 }
 
