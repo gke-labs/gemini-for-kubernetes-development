@@ -35,13 +35,6 @@ type Start struct {
 	// list gates none: the steps in a line are one PR. Not given (nil),
 	// the steps' group-gate decides.
 	Gates []string `yaml:"gates,omitempty"`
-	// PRLabels are labels for the open bot PRs carrying the children's
-	// work, kept on them while the block names them and taken off - those
-	// the graph put there - once it no longer does. Only labels the
-	// overseer allows (Options.AllowedPRLabels) are applied; the status
-	// names the others. Children are not labelled: what a PR inherits from
-	// its issues is not what this is.
-	PRLabels []string `yaml:"pr-labels,omitempty"`
 }
 
 // SourceName is what a child's marker records: the template's name, or
@@ -99,11 +92,6 @@ func (s *Start) validate() error {
 	case s.Gates != nil && !s.Grouped:
 		return fmt.Errorf("gates are a grouped graph's (grouped: true); without it every step is its own PR")
 	}
-	for _, l := range s.PRLabels {
-		if strings.TrimSpace(l) == "" || strings.Contains(l, ",") {
-			return fmt.Errorf("pr-labels: %q is not a label name", l)
-		}
-	}
 	return nil
 }
 
@@ -146,9 +134,6 @@ func (s Start) StartBlock() string {
 	}
 	if s.Gates != nil {
 		fmt.Fprintf(&b, "gates: [%s]\n", strings.Join(s.Gates, ", "))
-	}
-	if len(s.PRLabels) > 0 {
-		fmt.Fprintf(&b, "pr-labels: [%s]\n", strings.Join(s.PRLabels, ", "))
 	}
 	if len(s.Params) > 0 {
 		b.WriteString("params:\n")

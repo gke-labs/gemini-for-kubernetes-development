@@ -44,6 +44,14 @@ func (s *Spec) ValidatePlan() error {
 // validate checks the steps: ids, after edges (known, not itself, no
 // cycle), then and checkpoint values, maxActive, and the finally step.
 func (s *Spec) validate(plan bool) error {
+	if plan && len(s.PRLabelsFromParent) > 0 {
+		return errors.New("pr-labels-from-parent is a template's: a plan, an agent's writing, may not have the watcher label PRs")
+	}
+	for _, l := range s.PRLabelsFromParent {
+		if strings.TrimSpace(l) == "" || strings.Contains(l, ",") {
+			return fmt.Errorf("pr-labels-from-parent: %q is not a label name", l)
+		}
+	}
 	if s.MaxActive < 0 {
 		return fmt.Errorf("maxActive %d: give 1 or more (or leave it out, for 1)", s.MaxActive)
 	}

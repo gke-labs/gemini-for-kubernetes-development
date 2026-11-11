@@ -77,13 +77,6 @@ func RenderStatus(source string, version int, s *Spec, r Result) string {
 		}
 		fmt.Fprintf(&b, "> ⚠️ Labels this graph uses do not exist in the repository, and the watcher may not create them: %s. Steps go without them until someone with triage access creates them.\n\n", strings.Join(names, ", "))
 	}
-	if len(r.RefusedPRLabels) > 0 {
-		var names []string
-		for _, l := range r.RefusedPRLabels {
-			names = append(names, "`"+l+"`")
-		}
-		fmt.Fprintf(&b, "> ⚠️ The start block's pr-labels names labels this overseer does not let a graph put on PRs: %s. They are not applied; the overseer's graphPRLabels lists the ones it allows.\n\n", strings.Join(names, ", "))
-	}
 	if len(r.Orphans) > 0 {
 		var refs []string
 		for _, n := range r.Orphans {

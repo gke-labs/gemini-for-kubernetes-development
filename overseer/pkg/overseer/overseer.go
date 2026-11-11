@@ -380,12 +380,6 @@ func newOverseerSandboxFromOverseer(o *overseerv1alpha1.Overseer, name, namespac
 			"value": o.Spec.GraphsInterval.Duration.String(),
 		})
 	}
-	if len(o.Spec.GraphPRLabels) > 0 {
-		env = append(env, map[string]interface{}{
-			"name":  "GRAPH_PR_LABELS",
-			"value": strings.Join(o.Spec.GraphPRLabels, ","),
-		})
-	}
 	if o.Spec.Retro.Schedule != "" {
 		env = append(env, map[string]interface{}{
 			"name":  "WATCH_RETRO_SCHEDULE",
