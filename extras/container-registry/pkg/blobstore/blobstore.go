@@ -90,8 +90,12 @@ func (b *BlobStore) path(digest string) string {
 	// digest format is "sha256:<hex>"
 	// We can shard it to avoid too many files in one directory
 	// e.g., root/sha256/ab/cd/abcdef...
+	// Reject anything that could escape b.root (path traversal, absolute paths).
+	if !filepath.IsLocal(digest) {
+		return filepath.Join(b.root, "invalid", "_rejected")
+	}
 	if len(digest) < 14 || digest[:7] != "sha256:" {
-		return filepath.Join(b.root, "invalid", digest)
+		return filepath.Join(b.root, "invalid", "_rejected")
 	}
 	hash := digest[7:]
 	return filepath.Join(b.root, "blobs", "sha256", hash[:2], hash[2:4], hash)
