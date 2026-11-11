@@ -36,6 +36,11 @@ type State struct {
 	// its open children: one added to the parent later is added to them
 	// once, and one taken off a child by hand is not put back.
 	Inherited []string `json:"inherited,omitempty"`
+	// PRLabels are, by PR, the start block's pr-labels the graph put on the
+	// open PRs carrying its children's work: the ones it takes off when the
+	// block stops naming them. A label a person put on first is not the
+	// graph's, and stays.
+	PRLabels map[int][]string `json:"prLabels,omitempty"`
 }
 
 // ParseState reads the state block from a status comment; the zero State
@@ -58,6 +63,13 @@ func (st State) Block() string {
 	slices.Sort(st.Checkpoints)
 	st.Inherited = slices.Clone(st.Inherited)
 	slices.Sort(st.Inherited)
+	if st.PRLabels != nil {
+		sorted := make(map[int][]string, len(st.PRLabels))
+		for n, labels := range st.PRLabels {
+			sorted[n] = slices.Sorted(slices.Values(labels))
+		}
+		st.PRLabels = sorted
+	}
 	data, _ := json.Marshal(st)
 	return fmt.Sprintf("<!-- factory:graph-state %s -->", data)
 }
@@ -69,6 +81,12 @@ func (st State) clone() State {
 	c.Checkpoints = slices.Clone(st.Checkpoints)
 	c.Children = maps.Clone(st.Children)
 	c.Inherited = slices.Clone(st.Inherited)
+	if st.PRLabels != nil {
+		c.PRLabels = make(map[int][]string, len(st.PRLabels))
+		for n, labels := range st.PRLabels {
+			c.PRLabels[n] = slices.Clone(labels)
+		}
+	}
 	return c
 }
 

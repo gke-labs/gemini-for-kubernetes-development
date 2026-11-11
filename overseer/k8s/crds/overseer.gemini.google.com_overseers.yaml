@@ -60,6 +60,10 @@ spec:
                 type: string
               geminiAPIKeySecretName:
                 type: string
+              graphPRLabels:
+                items:
+                  type: string
+                type: array
               graphqlPRDetails:
                 type: boolean
               graphs:
