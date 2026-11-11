@@ -459,7 +459,9 @@ func (s *Server) streamTaskSessionEvents(c *gin.Context) {
 	followSession(ctx, cancel, ws, conn.client, conn.task, offset, func(ctx context.Context) (*acpd.Session, error) {
 		session, err := s.ensureTaskSession(ctx, conn)
 		var acpErr *acpd.Error
-		if errors.As(err, &acpErr) && acpErr.StatusCode == http.StatusConflict {
+		// A conversation handed to a terminal is said, not closed quietly:
+		// the view shows that terminal (and the way back) on it.
+		if errors.As(err, &acpErr) && acpErr.StatusCode == http.StatusConflict && !acpd.InTerminal(err) {
 			return nil, errQuietClose
 		}
 		return session, err

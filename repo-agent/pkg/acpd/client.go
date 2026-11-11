@@ -72,6 +72,13 @@ func (e *Error) Error() string {
 	return fmt.Sprintf("acpd: http %d: %s", e.StatusCode, e.Message)
 }
 
+// InTerminal reports a session create refused because the conversation
+// is in the engine's CLI in a terminal (acpd's handoff), not in a view.
+func InTerminal(err error) bool {
+	var e *Error
+	return errors.As(err, &e) && e.StatusCode == http.StatusConflict && strings.Contains(e.Message, "in a terminal")
+}
+
 // ErrNotFound is matched by errors.Is for a 404, which is how a caller
 // distinguishes "this session is gone" — the normal end of a
 // conversation whose pod went away — from a real failure.

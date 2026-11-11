@@ -51,6 +51,9 @@ load = "--load" in sys.argv[1:]
 replay_late = "--replay-late" in sys.argv[1:]
 current = "default"
 sid = "agent-side-id"
+if os.environ.get("FAKE_PIDFILE"):
+    with open(os.environ["FAKE_PIDFILE"], "w") as f:
+        f.write(str(os.getpid()))
 
 def history_path(session_id):
     return os.path.join(os.environ["FAKE_HISTORY"], session_id)
