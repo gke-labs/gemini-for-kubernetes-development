@@ -92,6 +92,12 @@ func (s *Server) handleV2(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Reject repository names that could escape the storage root.
+	if !filepath.IsLocal(name) {
+		http.Error(w, "invalid repository name", http.StatusBadRequest)
+		return
+	}
+
 	if strings.HasPrefix(resource, "blobs/uploads") {
 		s.handleBlobUpload(name, w, r)
 		return
@@ -258,6 +264,11 @@ func (s *Server) handleBlobUpload(name string, w http.ResponseWriter, r *http.Re
 func (s *Server) handleBlob(name string, w http.ResponseWriter, r *http.Request) {
 	digest := strings.TrimPrefix(r.URL.Path, "/v2/"+name+"/blobs/")
 
+	if !filepath.IsLocal(digest) {
+		http.Error(w, "invalid digest", http.StatusBadRequest)
+		return
+	}
+
 	switch r.Method {
 	case http.MethodGet, http.MethodHead:
 		exists, err := s.blobs.Exists(digest)
@@ -301,6 +312,12 @@ func (s *Server) handleBlob(name string, w http.ResponseWriter, r *http.Request)
 
 func (s *Server) handleManifest(name string, w http.ResponseWriter, r *http.Request) {
 	reference := strings.TrimPrefix(r.URL.Path, "/v2/"+name+"/manifests/")
+
+	if !filepath.IsLocal(name) || !filepath.IsLocal(reference) {
+		http.Error(w, "invalid name or reference", http.StatusBadRequest)
+		return
+	}
+
 	manifestPath := filepath.Join(s.root, "manifests", name, reference)
 
 	switch r.Method {

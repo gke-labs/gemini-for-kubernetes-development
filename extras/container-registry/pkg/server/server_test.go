@@ -108,3 +108,59 @@ func TestBlobUpload(t *testing.T) {
 		t.Errorf("Expected %s, got %s", data, rr.Body.Bytes())
 	}
 }
+
+func TestPathTraversalRejected(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "registry-traversal-test-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	s, err := NewServer(tmpDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name   string
+		method string
+		path   string
+		body   []byte
+	}{
+		{
+			name:   "manifest PUT traversal in reference",
+			method: http.MethodPut,
+			path:   "/v2/x/manifests/..%2F..%2Fescaped-manifest",
+			body:   []byte(`{"schemaVersion":2}`),
+		},
+		{
+			name:   "manifest GET traversal in reference",
+			method: http.MethodGet,
+			path:   "/v2/x/manifests/..%2F..%2Fescaped-manifest",
+		},
+		{
+			name:   "blob GET traversal in digest",
+			method: http.MethodGet,
+			path:   "/v2/x/blobs/..%2F..%2Fescaped-blob",
+		},
+		{
+			name:   "traversal in repo name",
+			method: http.MethodGet,
+			path:   "/v2/..%2Fescaped-repo/manifests/latest",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			req, err := http.NewRequest(tc.method, tc.path, bytes.NewReader(tc.body))
+			if err != nil {
+				t.Fatal(err)
+			}
+			rr := httptest.NewRecorder()
+			s.Handler().ServeHTTP(rr, req)
+			if rr.Code != http.StatusBadRequest {
+				t.Errorf("%s %s: status = %d, want %d (body: %q)", tc.method, tc.path, rr.Code, http.StatusBadRequest, rr.Body.String())
+			}
+		})
+	}
+}
