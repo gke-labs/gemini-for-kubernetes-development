@@ -1,8 +1,12 @@
 package api
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/gorilla/websocket"
 )
 
 // The chat command is the contract for resuming a task's agent
@@ -130,5 +134,65 @@ func TestChatCommandAntigravity(t *testing.T) {
 		if strings.Contains(cmd, reject) {
 			t.Errorf("antigravity chatCommand must not contain %q:\n%s", reject, cmd)
 		}
+	}
+}
+
+func TestUpgraderCheckOrigin(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ws, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		_ = ws.Close()
+	}))
+	t.Cleanup(srv.Close)
+
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http")
+
+	tests := []struct {
+		name       string
+		origin     string
+		wantStatus int
+	}{
+		{
+			name:       "no origin header allowed for non-browser clients",
+			origin:     "",
+			wantStatus: http.StatusSwitchingProtocols,
+		},
+		{
+			name:       "same-origin allowed",
+			origin:     srv.URL,
+			wantStatus: http.StatusSwitchingProtocols,
+		},
+		{
+			name:       "cross-origin rejected",
+			origin:     "https://evil.attacker.example",
+			wantStatus: http.StatusForbidden,
+		},
+		{
+			name:       "malformed origin rejected",
+			origin:     "://invalid-origin",
+			wantStatus: http.StatusForbidden,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			hdr := http.Header{}
+			if tc.origin != "" {
+				hdr.Set("Origin", tc.origin)
+			}
+			conn, resp, err := (&websocket.Dialer{}).Dial(wsURL, hdr)
+			if conn != nil {
+				_ = conn.Close()
+			}
+			if resp == nil {
+				t.Fatalf("Dial(%q) returned nil response: %v", tc.origin, err)
+			}
+			_ = resp.Body.Close()
+			if resp.StatusCode != tc.wantStatus {
+				t.Errorf("Origin=%q: status = %d, want %d", tc.origin, resp.StatusCode, tc.wantStatus)
+			}
+		})
 	}
 }
