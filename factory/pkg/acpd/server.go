@@ -58,6 +58,9 @@ type Server struct {
 
 	mu       sync.Mutex
 	sessions map[string]*Session
+	// terminalLive says whether a session's conversation is live in a
+	// terminal (handoff.go).
+	terminalLive func(id string) bool
 }
 
 // NewServer returns a server storing transcripts under stateDir and
@@ -235,6 +238,17 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// One process drives a conversation: while it is in a terminal, the
+	// terminal (handoff.go).
+	if s.inTerminal(req.ID, dir) {
+		writeJSON(w, http.StatusConflict, map[string]any{
+			"error":    "the conversation is in a terminal; bring it back to the view first",
+			"handoff":  "terminal",
+			"terminal": HandoffTerminalID(req.ID),
+		})
+		return
+	}
+	handoff, _ := ReadHandoff(dir)
 
 	s.mu.Lock()
 	if _, exists := s.sessions[req.ID]; exists {
@@ -258,6 +272,7 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		AutoApprove:  req.AutoApprove,
 		Dir:          dir,
 		Env:          req.Env,
+		Handoff:      handoff,
 	})
 	if err != nil {
 		s.mu.Lock()

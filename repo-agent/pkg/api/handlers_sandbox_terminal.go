@@ -240,6 +240,13 @@ func (s *Server) streamSandboxTerminal(c *gin.Context, namespace, name string) {
 		c.JSON(400, gin.H{"error": "program is one of gemini, claude, agy, and not with chat"})
 		return
 	}
+	// ?terminal=<id>: an existing terminal session, attached and never
+	// started - a conversation handed off from the session view.
+	terminalID := c.Query("terminal")
+	if terminalID != "" && (chatTask != "" || program != "" || !terminalIDRE.MatchString(terminalID)) {
+		c.JSON(400, gin.H{"error": "invalid terminal"})
+		return
+	}
 
 	ws, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
@@ -285,7 +292,11 @@ func (s *Server) streamSandboxTerminal(c *gin.Context, namespace, name string) {
 	// exec, below.
 	if perr == nil && s.ACPD != nil {
 		if base, ok := s.ACPD.Terminals(ctx, pod); ok {
-			s.daemonTerminal(ctx, ws, base, namespace, name, chatTask, program, c.Query("offset"))
+			if terminalID != "" {
+				s.attachDaemonTerminal(ctx, ws, base, namespace, name, terminalID, c.Query("offset"))
+			} else {
+				s.daemonTerminal(ctx, ws, base, namespace, name, chatTask, program, c.Query("offset"))
+			}
 			return
 		}
 	}

@@ -62,3 +62,8 @@ test('applyFrame state', () => {
   expect(out.write).toBe(null);
   expect(stream.offset).toBe(5);
 });
+
+// A conversation handed to a terminal is attached by its terminal's id.
+test('terminalURL attaches an existing terminal', () => {
+  expect(terminalURL('overseer-kcc', 'sb', '', null, '', 'handoff-recipe-research-1')).toBe('/api/overseers/kcc/sandbox-card/sb/terminal?terminal=handoff-recipe-research-1');
+});

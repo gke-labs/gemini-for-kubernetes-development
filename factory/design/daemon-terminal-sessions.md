@@ -92,6 +92,29 @@ repo-agent lists the engine terminals (not shells) of running sandboxes
 as rows on the Sessions page with that state, and opens one there as its
 live terminal.
 
+## A conversation between the session view and a terminal
+
+A recipe's agent session (research, plan, review…) runs on acpd: the
+engine in ACP mode, drawn by the session view. "Continue in terminal"
+hands the same conversation to the engine's own CLI, in a termd session,
+and "back to the view" hands it back. One process drives a conversation
+at a time (`pkg/acpd/handoff.go`, `pkg/taskapi/handoff.go`,
+`POST /v1/sessions/{id}/handoff`):
+
+- **To the terminal:** refused while a turn or a permission is in
+  flight, or while the session's task runs. Otherwise acpd stops the
+  engine and writes `handoff.json` beside the session record: the
+  conversation id and how many user turns the transcript has. termd then
+  starts the CLI in `handoff-<id>`, resuming that conversation
+  (`gemini --resume <id>`; agy, which takes no id, `--continue`, its
+  latest). While that terminal runs, acpd refuses to open the session.
+- **Back to the view:** the terminal ends and the marker says `view`.
+  The next open loads the conversation (`session/load`). The engine
+  replays all of it; acpd normally drops a replay, since the transcript
+  has it, but here it writes the user turns past the recorded count, and
+  what follows them, as turns of their own. Those are the ones made in
+  the terminal.
+
 ## The emulator
 
 Two, behind one interface (`emulator`, `pkg/termd/emulator.go`):
@@ -129,7 +152,4 @@ with Ghostty's defaults.
 
 ## Not yet
 
-- Switching a conversation between the research view (ACP) and its
-  engine's CLI here: a handoff of the same session id between two
-  processes.
 - `factory sandbox attach`: a native client in your own terminal.

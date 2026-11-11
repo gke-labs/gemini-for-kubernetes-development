@@ -216,6 +216,18 @@ func (c *Client) ForceStop(ctx context.Context, id string) error {
 	return c.do(ctx, http.MethodPost, "/sessions/"+url.PathEscape(id)+"/stop", nil, nil, "")
 }
 
+// Handoff moves session id's conversation between the session view and
+// the engine's CLI in a terminal (the daemon's POST /v1/sessions/{id}/handoff):
+// to is "terminal" (answers the terminal session's id; needs the engine's
+// key) or "view". task says the session is a task's.
+func (c *Client) Handoff(ctx context.Context, id, to string, task bool, apiKey string) (string, error) {
+	var out struct {
+		Terminal string `json:"terminal"`
+	}
+	err := c.do(ctx, http.MethodPost, "/sessions/"+url.PathEscape(id)+"/handoff", map[string]any{"to": to, "task": task}, &out, apiKey)
+	return out.Terminal, err
+}
+
 // maxTaskFile bounds ReadTaskFile: a task's result is a YAML document of
 // a few kilobytes, and an unbounded read would let a runaway file consume
 // the caller's memory.

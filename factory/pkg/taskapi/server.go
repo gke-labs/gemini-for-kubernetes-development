@@ -92,6 +92,10 @@ func (s *Server) Handler() http.Handler {
 		mux.Handle("/v1/sessions", s.sessionsHandler())
 		mux.Handle("/v1/sessions/", s.sessionsHandler())
 	}
+	if s.sessions != nil && s.terminals != nil {
+		// More specific than /v1/sessions/, so served here, not by acpd.
+		mux.HandleFunc("POST /v1/sessions/{id}/handoff", s.handleHandoff)
+	}
 	if s.terminals != nil {
 		h := http.StripPrefix("/v1", s.terminals.Handler())
 		mux.Handle("/v1/terminals", h)

@@ -5,7 +5,7 @@ import ReactMarkdown from 'react-markdown';
 // newlines collapsing to spaces into a wall of pipes.
 import remarkGfm from 'remark-gfm';
 import Chip from './Chip';
-import { terminalHash, TERMINAL_PROGRAMS } from './Terminal';
+import SandboxTerminal, { terminalHash, TERMINAL_PROGRAMS } from './Terminal';
 import { RUN_STYLE } from './WorkBits';
 
 // Research: conversation-based deep research, the third mode alongside
@@ -834,6 +834,12 @@ export function ResearchConversation({
   const [sending, setSending] = useState(false);
   const [resolving, setResolving] = useState(false);
   const [error, setError] = useState('');
+  // handoff: the conversation is in the engine's CLI, in this terminal
+  // session (the daemon's handoff), not in this view; null when here.
+  const [handoff, setHandoff] = useState(null);
+  const handoffTerminal = task ? `handoff-${task.task}` : '';
+  // The terminal route is an overseer's for its sandboxes, by namespace.
+  const overseerOf = (apiBase.match(/^\/api\/overseers\/([A-Za-z0-9._-]+)$/) || [])[1];
   const [waking, setWaking] = useState(false);
   // Stop asked the engine to end the turn (stopAsked); once it has had
   // FORCE_STOP_AFTER_MS to do so and has not, Force stop is offered.
@@ -1000,6 +1006,8 @@ export function ResearchConversation({
   // "not up yet" — the server answers 409 before the upgrade, which the
   // browser sees only as a socket that would not open.
   useEffect(() => {
+    // Handed to a terminal: nothing to stream here until it comes back.
+    if (handoff) return undefined;
     if (!api) {
       // No session to talk to: a claim the controller has not made a
       // sandbox for yet (the list's next poll brings the task), or an
@@ -1061,6 +1069,12 @@ export function ResearchConversation({
           return;
         }
         if (frame.type === 'closed') {
+          // Handed to a terminal (from another window, or before a
+          // reload): show the terminal instead of a failing stream.
+          if (frame.error && frame.error.includes('in a terminal') && handoffTerminal) {
+            setHandoff(handoffTerminal);
+            return;
+          }
           if (frame.error) setError(frame.error);
           // Do not reconnect from here: the socket's own onclose runs
           // next and owns the retry, so doing it twice would double the
@@ -1164,7 +1178,7 @@ export function ResearchConversation({
       if (state.timer) clearTimeout(state.timer);
       if (state.ws) { try { state.ws.close(); } catch (e) { /* already gone */ } }
     };
-  }, [pending, legacy, api, eventsPath]);
+  }, [pending, legacy, api, eventsPath, handoff]);
 
   // Follow the tail, but only for a reader who is already at it —
   // yanking the view down while someone is reading back is worse than
@@ -1373,6 +1387,30 @@ export function ResearchConversation({
   // (a forced turn_end) and closes the session; the stream closing sends
   // the view back to probing, and reopening it loads the conversation
   // into a new engine, idle. A 409 means the turn ended meanwhile.
+  // toTerminal hands the conversation to the engine's CLI: the daemon
+  // stops this view's engine and starts the CLI on the same conversation;
+  // toView brings it back, with what was said there.
+  const toTerminal = () => {
+    setError('');
+    fetch(`${api}/handoff`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to: 'terminal' }) })
+      .then(async res => {
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) { setError(body.error || `continue in terminal failed: HTTP ${res.status}`); return; }
+        setHandoff(body.terminal || handoffTerminal);
+      })
+      .catch(err => setError(`continue in terminal failed: ${err}`));
+  };
+  const toView = () => {
+    setError('');
+    fetch(`${api}/handoff`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to: 'view' }) })
+      .then(async res => {
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) { setError(body.error || `back to the view failed: HTTP ${res.status}`); return; }
+        setHandoff(null);
+      })
+      .catch(err => setError(`back to the view failed: ${err}`));
+  };
+
   const forceStop = () => {
     if (!window.confirm('Force stop?\n\nThe agent did not stop when asked. This ends the turn here and starts the agent again on this conversation: whatever it was doing in this turn stops. The conversation and the checkout stay.')) return;
     fetch(`${api}/stop`, { method: 'POST' })
@@ -1587,6 +1625,24 @@ export function ResearchConversation({
   const autoApproving = caughtUp && transcript.auto !== null && transcript.auto !== undefined
     ? transcript.auto
     : modeState.auto;
+
+  if (handoff && task) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', height: fill ? '100%' : '72vh', minHeight: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 8px', borderBottom: '1px solid var(--border-color)' }}>
+          <strong style={{ fontSize: 'small' }}>{title}</strong>
+          <span style={{ fontSize: 'x-small', color: 'var(--text-secondary)' }}>in the engine's CLI — this view picks up what is said there when it comes back</span>
+          <button className="btn btn-sm" style={{ marginLeft: 'auto' }} onClick={toView}
+            title="End the CLI and go on here, with the turns made in the terminal">↩ back to the view</button>
+        </div>
+        {error && <div style={{ color: 'var(--danger, #d33)', fontSize: 'small', padding: '4px 8px' }} onClick={() => setError('')}>{error}</div>}
+        <div style={{ flex: 1, minHeight: 0, backgroundColor: '#1e1e1e' }}>
+          <SandboxTerminal key={handoff} namespace={overseerOf ? `overseer-${overseerOf}` : ((info && info.namespace) || 'member')}
+            sandboxName={task.sandbox} terminal={handoff} fill />
+        </div>
+      </div>
+    );
+  }
 
   return (
     // Full screen is the same conversation in a fixed pane over the
@@ -1827,6 +1883,11 @@ export function ResearchConversation({
                       target="_blank" rel="noopener noreferrer" onClick={() => setMenuOpen(false)}
                       style={{ fontSize: 'x-small', padding: '4px 6px' }}
                       title={`Shell into ${info.sandbox}`}>terminal ↗</a>
+                  )}
+                  {task && (
+                    <button role="menuitem" className="btn btn-sm" onClick={() => { setMenuOpen(false); toTerminal(); }}
+                      style={{ fontSize: 'x-small', textAlign: 'left' }}
+                      title="Go on with this conversation in the engine's own CLI, in a terminal; come back here when you like">⌨ continue in terminal</button>
                   )}
                   {info && info.sandbox && info.namespace && TERMINAL_PROGRAMS.map(p => (
                     <a key={p.program} role="menuitem" href={terminalHash(info.namespace, info.sandbox, { program: p.program })}

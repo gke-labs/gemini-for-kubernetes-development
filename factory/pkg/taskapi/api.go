@@ -14,6 +14,7 @@
 //	PUT  /v1/tasks/{id}/files/{name}     the applied marker, the only file a client writes
 //	POST /v1/tasks/{id}/cancel           end the task's process group
 //	     /v1/sessions[/...]              acpd's agent sessions, when the daemon hosts them
+//	POST /v1/sessions/{id}/handoff       an agent session's conversation to a terminal and back (handoff.go)
 //	     /v1/terminals[/...]             terminal sessions on PTYs the daemon owns (termd), when it hosts them
 //
 // The task directories are plain files (taskfiles.TaskFiles), which the

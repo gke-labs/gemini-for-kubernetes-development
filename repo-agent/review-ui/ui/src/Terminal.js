@@ -88,10 +88,12 @@ export function terminalRoute(hash = window.location.hash) {
 
 // terminalURL is the socket to connect to: the chat or program, and where
 // to resume.
-export function terminalURL(namespace, sandboxName, chat, offset, program) {
+export function terminalURL(namespace, sandboxName, chat, offset, program, terminal) {
     const params = new URLSearchParams();
     if (chat) params.set('chat', chat);
     if (program) params.set('program', program);
+    // An existing terminal session, attached, never started.
+    if (terminal) params.set('terminal', terminal);
     if (offset !== null && offset !== undefined) params.set('offset', String(offset));
     const q = params.toString();
     return `${terminalPath(namespace, sandboxName)}${q ? `?${q}` : ''}`;
@@ -118,7 +120,7 @@ export function ActivityMark({ activity }) {
     );
 }
 
-const SandboxTerminal = ({ namespace, sandboxName, fill, chat, program }) => {
+const SandboxTerminal = ({ namespace, sandboxName, fill, chat, program, terminal }) => {
     const terminalRef = useRef(null);
     const [status, setStatus] = useState('');
     // What the program is doing, from the daemon's state frames.
@@ -149,7 +151,7 @@ const SandboxTerminal = ({ namespace, sandboxName, fill, chat, program }) => {
             if (state.closed) return;
             setStatus(state.retry ? `reconnecting (try ${state.retry})…` : 'connecting…');
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-            const socket = new WebSocket(`${protocol}//${window.location.host}${terminalURL(namespace, sandboxName, chat, stream.offset, program)}`);
+            const socket = new WebSocket(`${protocol}//${window.location.host}${terminalURL(namespace, sandboxName, chat, stream.offset, program, terminal)}`);
             socket.binaryType = 'arraybuffer';
             state.ws = socket;
 
@@ -200,7 +202,7 @@ const SandboxTerminal = ({ namespace, sandboxName, fill, chat, program }) => {
             window.removeEventListener('resize', handleResize);
             resizeObserver.disconnect();
         };
-    }, [namespace, sandboxName, chat, program]);
+    }, [namespace, sandboxName, chat, program, terminal]);
 
     return (
         <div style={fill

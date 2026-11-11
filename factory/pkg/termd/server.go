@@ -38,7 +38,10 @@ const (
 	readTimeout  = 75 * time.Second
 )
 
-var idRE = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9._-]{0,62}$`)
+var idRE = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9._-]{0,199}$`)
+
+// resumeIDRE is an engine's conversation id: it goes on a command line.
+var resumeIDRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$`)
 
 // CreateRequest is POST /terminals.
 type CreateRequest struct {
@@ -51,6 +54,9 @@ type CreateRequest struct {
 	// Resume continues the engine's latest conversation in its working
 	// directory, else opens a new one.
 	Resume bool `json:"resume,omitempty"`
+	// ResumeID continues that conversation of the engine's (its own id:
+	// acpd's record, handed off to a terminal), rather than its latest.
+	ResumeID string `json:"resumeId,omitempty"`
 	// CWD is the working directory; empty, the workspace's checkout.
 	CWD  string `json:"cwd,omitempty"`
 	Cols int    `json:"cols,omitempty"`
@@ -144,6 +150,9 @@ func (m *Manager) spec(req CreateRequest, apiKey string) (Spec, error) {
 	if dir == "" {
 		dir = checkout(m.root)
 	}
+	if req.ResumeID != "" && !resumeIDRE.MatchString(req.ResumeID) {
+		return Spec{}, fmt.Errorf("invalid resume id %q", req.ResumeID)
+	}
 	if !filepath.IsAbs(dir) {
 		return Spec{}, fmt.Errorf("cwd %q is not absolute", dir)
 	}
@@ -171,10 +180,18 @@ func (m *Manager) spec(req CreateRequest, apiKey string) (Spec, error) {
 	case "gemini":
 		env = append(env, "GEMINI_CLI_TRUST_WORKSPACE=true")
 		argv = engineArgv("gemini --skip-trust --include-directories "+m.root, "--resume latest", req.Resume)
+		if req.ResumeID != "" {
+			argv = []string{"/bin/sh", "-c", "exec gemini --skip-trust --include-directories " + m.root + " --resume " + req.ResumeID}
+		}
 	case "claude":
 		argv = engineArgv("claude", "--continue", req.Resume)
+		if req.ResumeID != "" {
+			argv = []string{"/bin/sh", "-c", "exec claude --resume " + req.ResumeID}
+		}
 	case "agy":
-		argv = engineArgv("agy --add-dir "+m.root, "--continue", req.Resume)
+		// agy's CLI takes no conversation id: its latest in the checkout,
+		// which a conversation just handed off is.
+		argv = engineArgv("agy --add-dir "+m.root, "--continue", req.Resume || req.ResumeID != "")
 	default:
 		return Spec{}, fmt.Errorf("unknown program %q (shell, gemini, claude, agy)", program)
 	}
