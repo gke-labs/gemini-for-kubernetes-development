@@ -111,6 +111,8 @@ spec:
                 type: string
               retro:
                 properties:
+                  perPR:
+                    type: boolean
                   schedule:
                     type: string
                 type: object

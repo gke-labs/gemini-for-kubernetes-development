@@ -16,6 +16,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/fanouts"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/graphs"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/issues"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/prretros"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/prs"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/retros"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/sandbox"
@@ -25,6 +26,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/whyclosed"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/config"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/retro"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/watch/rules"
 	githubv39 "github.com/google/go-github/v39/github"
 	"k8s.io/klog/v2"
@@ -102,6 +104,10 @@ type Flags struct {
 	// RetroSchedule is when the weekly retro runs (package retros): cron's
 	// five fields or a descriptor (@weekly). Empty, it never does.
 	RetroSchedule string
+	// PRRetro runs a retro on one of overseer's PRs labelled
+	// <trigger>/retro once it closes (package prretros). Off, the label
+	// does nothing.
+	PRRetro bool
 }
 
 type Watcher struct {
@@ -133,6 +139,10 @@ type Watcher struct {
 	// user, and opens its Change as a PR (pkg/commands' watchRetro, what
 	// factory retro runs). Nil, or no RetroSchedule, no retro runs.
 	Retro func(ctx context.Context, repoURL, user string, since time.Time) error
+	// RunPRRetro runs one per-PR retro of the repository as user, and opens
+	// its Change as a PR (pkg/commands' watchPRRetro). Nil, or PRRetro
+	// off, no per-PR retro runs.
+	RunPRRetro func(ctx context.Context, repoURL, user string, run retro.PRRun) (retro.PRResult, error)
 	// RepoRules lays the repository's own watch rules (.agents/watch) over
 	// factory's (base), as the repository recipe mode says, and says where
 	// they came from ("" for none) - pkg/commands' repoWatchRules. Nil,
@@ -191,6 +201,7 @@ type Watcher struct {
 	// sandboxRules runs the rules on sandboxes (a workspace's cleanup).
 	sandboxRules *sandboxrules.Controller
 	retro        *retros.Controller
+	prRetro      *prretros.Controller
 	whyClosed    *whyclosed.Tracker
 	timeoutChan  <-chan time.Time
 }
@@ -237,6 +248,7 @@ func (w *Watcher) initComponents() {
 	w.warmWorkspace = w.newWarmWorkspaceController()
 	w.sandboxRules = w.newSandboxRulesController()
 	w.retro = w.newRetroController()
+	w.prRetro = w.newPRRetroController()
 	w.whyClosed = w.newWhyClosed()
 	w.reconciler = w.newReconciler()
 	w.chores = w.newChoreScheduler()

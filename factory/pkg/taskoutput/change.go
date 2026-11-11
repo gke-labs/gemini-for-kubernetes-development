@@ -302,6 +302,13 @@ func applyOpenPR(ctx context.Context, gh *githubv39.Client, doc *Document, dryRu
 		return err
 	}
 	if c.Fork == "" && c.Branch == "" && c.Comment != "" {
+		if _, _, _, _, err := parseItemURL(doc.Target.URL); err != nil {
+			// A task on a repository (the per-PR retro) that changed
+			// nothing: there is no issue to say why on, and its caller,
+			// which reads the Change, says it where it belongs.
+			fmt.Fprintf(out, "The task made no change; no PR. Why:\n%s\n", indent(c.Comment))
+			return nil
+		}
 		return commentUnchanged(ctx, gh, doc, c, owner, repo, dryRun, out)
 	}
 	if c.Fork == "" || c.Branch == "" {

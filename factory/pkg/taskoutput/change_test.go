@@ -972,3 +972,24 @@ func TestOpenPRUnchanged(t *testing.T) {
 		t.Errorf("an unchanged push with no comment: %v", err)
 	}
 }
+
+// A Change on a repository (the per-PR retro's) that changed nothing has
+// no issue to say why on: open-pr opens nothing and posts nothing, and
+// leaves the comment to the caller.
+func TestOpenPRUnchangedOnRepository(t *testing.T) {
+	doc, err := Wrap("Change", "change:\n  comment: |\n    The feedback was taste.\n", Target{URL: "https://github.com/o/r"}, Source{Task: "retro-pr-1", Recipe: "retro-pr"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := doc.SetPushed(Pushed{Unchanged: true, Base: "b0", Head: "b0"}); err != nil {
+		t.Fatal(err)
+	}
+	f := &fakePRs{}
+	var out bytes.Buffer
+	if err := ApplyAction(context.Background(), f.client(t), doc, "open-pr", false, &out); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.created) != 0 || len(f.issueComments) != 0 || !strings.Contains(out.String(), "The feedback was taste.") {
+		t.Errorf("created %d, comments %q:\n%s", len(f.created), f.issueComments, out.String())
+	}
+}

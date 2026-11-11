@@ -386,6 +386,12 @@ func newOverseerSandboxFromOverseer(o *overseerv1alpha1.Overseer, name, namespac
 			"value": o.Spec.Retro.Schedule,
 		})
 	}
+	if o.Spec.Retro.PerPR {
+		env = append(env, map[string]interface{}{
+			"name":  "WATCH_PR_RETRO",
+			"value": "true",
+		})
+	}
 	if o.Spec.GraphQLPRDetails {
 		env = append(env, map[string]interface{}{
 			"name":  "WATCH_GRAPHQL_PR_DETAILS",

@@ -25,6 +25,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/config"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/k8s"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/retro"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/watch/rules"
 	githubv39 "github.com/google/go-github/v39/github"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -507,6 +508,29 @@ func TestNewRetroController(t *testing.T) {
 		w := newTestWatcher(t, t.TempDir())
 		w.RetroSchedule, w.Retro = tc.schedule, tc.retro
 		if got := w.newRetroController() != nil; got != tc.want {
+			t.Errorf("%s: controller %t, want %t", name, got, tc.want)
+		}
+	}
+}
+
+// The per-PR retro runs only when it is on, with a way to run it and a
+// queue directory to keep what it started.
+func TestNewPRRetroController(t *testing.T) {
+	run := func(context.Context, string, string, retro.PRRun) (retro.PRResult, error) {
+		return retro.PRResult{}, nil
+	}
+	for name, tc := range map[string]struct {
+		on   bool
+		run  func(context.Context, string, string, retro.PRRun) (retro.PRResult, error)
+		want bool
+	}{
+		"on":        {true, run, true},
+		"off":       {false, run, false},
+		"no runner": {true, nil, false},
+	} {
+		w := newTestWatcher(t, t.TempDir())
+		w.PRRetro, w.RunPRRetro = tc.on, tc.run
+		if got := w.newPRRetroController() != nil; got != tc.want {
 			t.Errorf("%s: controller %t, want %t", name, got, tc.want)
 		}
 	}

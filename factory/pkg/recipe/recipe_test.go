@@ -2260,3 +2260,56 @@ func TestRecipeOnSandboxes(t *testing.T) {
 		t.Error("a recipe on issues runs on sandboxes")
 	}
 }
+
+func TestBuiltinPRRetroRecipe(t *testing.T) {
+	_, rec, err := Builtin("retro-pr")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !rec.RunsOn(OnRepo) || rec.RunsOn(OnIssue) || rec.RunsOn(OnPR) || rec.TaskType != "retro-pr" ||
+		rec.As != "coder" || rec.Sandbox.Prefix != "retropr" ||
+		rec.TaskOutput == nil || rec.TaskOutput.Kind != "Change" || rec.TaskOutput.Optional {
+		t.Fatalf("unexpected retro-pr recipe metadata: on=%v taskType=%q as=%q prefix=%q output=%+v",
+			rec.On, rec.TaskType, rec.As, rec.Sandbox.Prefix, rec.TaskOutput)
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "staged-dir"), []byte("/task/staged"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, disclose := range []string{"true", "false"} {
+		std := map[string]string{"repo_owner": "o", "repo_name": "r", "disclose": disclose}
+		inputs, err := rec.ResolveInputs(std, map[string]string{
+			"original_pr":     "42",
+			"original_pr_url": "https://github.com/o/r/pull/42",
+			"labels":          "overseer",
+		})
+		if err != nil {
+			t.Fatalf("disclose=%s ResolveInputs: %v", disclose, err)
+		}
+		if err := rec.CheckRender(inputs); err != nil {
+			t.Fatalf("disclose=%s CheckRender: %v", disclose, err)
+		}
+		var asks strings.Builder
+		for i, s := range rec.Start.Steps {
+			if s.Ask == "" {
+				continue
+			}
+			out, err := render(s.Label(i), s.Ask, templateData{Inputs: inputs, Steps: map[string]*StepResult{}}, dir)
+			if err != nil {
+				t.Fatalf("disclose=%s step %s: %v", disclose, s.Label(i), err)
+			}
+			asks.WriteString(out)
+		}
+		got := asks.String()
+		if !strings.Contains(got, "pull request #42") || !strings.Contains(got, "/task/staged") {
+			t.Errorf("disclose=%s rendered asks missing expected PR/staged text:\n%s", disclose, got)
+		}
+		wantAI := disclose == "true"
+		if gotAI := strings.Contains(got, "AI coding agent"); gotAI != wantAI {
+			t.Errorf("disclose=%s AI disclosure = %t, want %t", disclose, gotAI, wantAI)
+		}
+	}
+	if _, err := rec.ResolveInputs(map[string]string{"repo_owner": "o", "repo_name": "r", "disclose": "true"}, nil); err == nil {
+		t.Error("resolved retro-pr without required original_pr")
+	}
+}
