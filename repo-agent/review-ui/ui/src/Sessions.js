@@ -712,10 +712,13 @@ export default function Sessions({ namespace, active = true }) {
             <StartBox boards={boards} onStarted={onStarted} onOpen={select} onLaunched={onLaunched} autoFocus />
           </div>
         ) : open.terminal ? (
-          // An engine's CLI: its terminal, live, here.
+          // An engine's CLI: its terminal, live, here. Attached by its
+          // own id: the row is that terminal, and opening it by program
+          // would start another one beside it (a handoff's is not
+          // agent-<program>).
           <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', backgroundColor: '#1e1e1e' }}>
             <SandboxTerminal key={rowKey(open)} namespace={open.overseer ? `overseer-${open.overseer}` : namespace}
-              sandboxName={open.sandbox} chat={open.chat || ''} program={open.chat ? '' : open.program} fill />
+              sandboxName={open.sandbox} terminal={open.terminal} fill />
           </div>
         ) : (
           <>

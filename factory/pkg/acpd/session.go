@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/acp"
@@ -345,6 +346,12 @@ func (s *Session) spawn(ctx context.Context, engine Engine, cfg SessionConfig) e
 	}
 	cmd := exec.CommandContext(ctx, engine.Command, args...)
 	cmd.Dir = cfg.CWD
+	// The engine in a process group of its own, ended as one: gemini
+	// relaunches itself as a child node process, and killing only the
+	// process acpd started left that child running on the conversation
+	// (and holding stderr open, so Wait never returned).
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error { return killGroup(cmd.Process) }
 	// The pod's environment — the project an overseer configured, the Go
 	// caches the warm workspace restores, TMPDIR — less anything that
 	// looks like a credential (InheritedEnv), then what acpd sets itself.
@@ -978,12 +985,22 @@ func (s *Session) Close() error {
 	s.mu.Unlock()
 	s.cancel()
 	if s.cmd != nil && s.cmd.Process != nil {
-		_ = s.cmd.Process.Kill()
+		_ = killGroup(s.cmd.Process)
 	}
 	if s.engineLog != nil {
 		_ = s.engineLog.Close()
 	}
 	return s.transcript.Close()
+}
+
+// killGroup ends the engine and everything it started: its process group
+// (spawn puts it in one of its own), or the process alone when the group
+// is gone.
+func killGroup(p *os.Process) error {
+	if err := syscall.Kill(-p.Pid, syscall.SIGKILL); err == nil {
+		return nil
+	}
+	return p.Kill()
 }
 
 func knownEngines() string {

@@ -198,6 +198,30 @@ func TestARunningTasksSessionIsNotTheMembersToStart(t *testing.T) {
 	}
 }
 
+// A conversation handed to the engine's CLI refuses the view's create; the
+// stream says so, which is what turns the view to that terminal and its
+// way back, instead of closing quietly and reconnecting for ever.
+func TestATaskSessionInATerminalSaysSo(t *testing.T) {
+	acp := &fakeSessions{createStatus: http.StatusConflict, createError: "the conversation is in a terminal; bring it back to the view first"}
+	r := taskSessionTestServer(t, acp, true, []*unstructured.Unstructured{issueSandboxCR("alice", 1)},
+		researchPod("alice", issueSandbox, "10.1.2.3", corev1.PodRunning))
+	srv := httptest.NewServer(r)
+	t.Cleanup(srv.Close)
+	conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(srv.URL, "http")+"/api/task-session-events/"+issueSandbox+"/"+planTask, nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	var frame researchFrame
+	if err := conn.ReadJSON(&frame); err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if frame.Type != researchFrameClosed || !strings.Contains(frame.Error, "in a terminal") {
+		t.Errorf("frame = %+v, want closed with the terminal's refusal", frame)
+	}
+}
+
 // planDoc is a plan's task output from planTask's session saying what.
 func planDoc(what string) string {
 	return "apiVersion: factory.gemini.google.com/v1alpha1\nkind: Plan\n" +

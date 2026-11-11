@@ -418,6 +418,29 @@ describe('helpers', () => {
     });
 });
 
+// A terminal row is attached by its own id: opening the session's handoff
+// terminal by its program would start a second CLI (agent-gemini) beside it.
+test('a terminal row attaches its terminal, and starts none', async () => {
+  const sockets = [];
+  global.WebSocket = class { constructor(url) { this.url = url; sockets.push(this); } send() {} close() {} };
+  global.ResizeObserver = class { observe() {} disconnect() {} };
+  const handoff = { sandbox: 'rsch-kcc-3f2a', terminal: 'handoff-recipe-research-abc', program: 'gemini', state: 'idle', pod: 'running', updatedAt: now };
+  global.fetch.mockImplementation((url) => {
+    if (url === '/api/sessions') return Promise.resolve({ ok: true, json: () => Promise.resolve({ sessions: [...FEED.sessions, handoff] }) });
+    return Promise.resolve({ ok: false, status: 404, json: () => Promise.resolve({}), text: () => Promise.resolve('') });
+  });
+  await render();
+  const row = Array.from(container.querySelectorAll('button[title]')).find(b => b.title.includes('rsch-kcc-3f2a') && !b.title.includes('reconciler'));
+  await act(async () => { row.click(); });
+  await flush();
+  expect(sockets.length).toBeGreaterThan(0);
+  const url = sockets[sockets.length - 1].url;
+  expect(url).toContain('terminal=handoff-recipe-research-abc');
+  expect(url).not.toContain('program=');
+  delete global.WebSocket;
+  delete global.ResizeObserver;
+});
+
 // An engine terminal's row: keyed by its terminal, its state in words
 // with what the program said.
 test('terminal rows', () => {

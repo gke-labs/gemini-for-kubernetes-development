@@ -92,8 +92,10 @@ type fakeSessions struct {
 	live map[string]acpd.Session
 	// promptStatus overrides the prompt reply, for the busy case.
 	promptStatus int
-	// createStatus overrides the create reply, for a refused create.
+	// createStatus overrides the create reply, for a refused create;
+	// createError is its message (a running task's refusal when empty).
 	createStatus int
+	createError  string
 	// session is what GET answers for an existing session, when set.
 	session *acpd.Session
 	// transcript is what the event stream serves.
@@ -201,8 +203,12 @@ func (f *fakeSessions) handler() http.Handler {
 		f.createBody = string(body)
 		if status := f.createStatus; status != 0 {
 			f.mu.Unlock()
+			msg := f.createError
+			if msg == "" {
+				msg = "task is running: only the task may start its session"
+			}
 			w.WriteHeader(status)
-			_, _ = w.Write([]byte(`{"error":"task is running: only the task may start its session"}`))
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
 			return
 		}
 		f.sessionExists = true
