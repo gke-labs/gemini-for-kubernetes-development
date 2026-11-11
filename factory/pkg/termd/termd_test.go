@@ -239,6 +239,19 @@ func TestSpec(t *testing.T) {
 			t.Errorf("%s resume script %q, want a fallback to a new conversation", program, script)
 		}
 	}
+	// agy takes the key only on the gemini model provider; without the
+	// setting it asks for a browser sign-in. Both of its commands get it,
+	// and no key means no setting (it would only make it fail sooner).
+	spec, err := m.spec(CreateRequest{Program: "agy", Resume: true}, "k")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if script := spec.Argv[len(spec.Argv)-1]; strings.Count(script, `--settings '{"modelProvider":"gemini"}'`) != 2 {
+		t.Errorf("agy script %q, want the gemini model provider on both commands", script)
+	}
+	if spec, _ := m.spec(CreateRequest{Program: "agy"}, ""); strings.Contains(spec.Argv[len(spec.Argv)-1], "modelProvider") {
+		t.Errorf("agy without a key %q, want no model provider setting", spec.Argv)
+	}
 }
 
 func contains(xs []string, x string) bool {
