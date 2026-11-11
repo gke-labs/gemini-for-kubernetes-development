@@ -447,14 +447,15 @@ func TestParseStart(t *testing.T) {
 		{"```factory-graph\ngraph: ../x\n```", "bare name"},
 		{"```factory-graph\nsource: plan\nparams: {a: b}\n```", "take none"},
 		{"```factory-graph\ngraph: two\n", "not closed"},
+		{"```factory-graph\ngraph: two\npr-labels: ['']\n```", "not a label name"},
 	} {
 		if _, err := ParseStart(tc.body); err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("%q: %v, want %q", tc.body, err, tc.want)
 		}
 	}
-	s := Start{Graph: "kcc-greenfield", Params: map[string]string{"kind": "Foo", "version": "v1alpha1"}}
+	s := Start{Graph: "kcc-greenfield", Params: map[string]string{"kind": "Foo", "version": "v1alpha1"}, PRLabels: []string{"overseer/auto-merge"}}
 	got, err := ParseStart(s.StartBlock())
-	if err != nil || got.Graph != s.Graph || got.Params["kind"] != "Foo" || got.Params["version"] != "v1alpha1" {
+	if err != nil || got.Graph != s.Graph || got.Params["kind"] != "Foo" || got.Params["version"] != "v1alpha1" || !slices.Equal(got.PRLabels, s.PRLabels) {
 		t.Errorf("round trip: %+v, %v", got, err)
 	}
 }
@@ -484,5 +485,46 @@ func TestSyncLabelledWithoutAStartBlock(t *testing.T) {
 	opts.Issue = 101
 	if p := sync(t, f, opts); p.Unstarted || len(statusComments(f, 101)) != 0 {
 		t.Errorf("an unlabelled issue: Unstarted %v, comments %v", p.Unstarted, statusComments(f, 101))
+	}
+}
+
+// pr-labels end to end: a template graph's start block names a label the
+// overseer allows; the bot PR fixing its open child gets it, the status
+// warns of one it does not allow, the record survives in the status
+// comment, and taking the label out of the block takes it off the PR.
+func TestSyncPRLabels(t *testing.T) {
+	f := graphtest.New()
+	f.Files[".agents/graphs/one.yaml"] = `apiVersion: factory.gemini.google.com/v1alpha1
+kind: IssueGraph
+metadata: {name: one}
+spec:
+  steps:
+    - {id: controller, title: Controller, body: c}
+`
+	start := "```factory-graph\ngraph: one\npr-labels: [overseer/auto-merge, lgtm]\n```\n"
+	f.Issues[100] = &graphtest.Issue{Title: "Kind", Body: start, Author: "alice", Assoc: "MEMBER", Open: true}
+	opts := Options{Issue: 100, Trigger: "overseer", BotLogin: "watcher", Pool: []string{"hopper-coder-bot"}, AllowedPRLabels: []string{"overseer/auto-merge"}}
+	sync(t, f, opts)
+	c := childOf(f, 100, "controller")
+	if c == 0 {
+		t.Fatal("no child")
+	}
+	f.Issues[300] = &graphtest.Issue{Title: "PR", Body: fmt.Sprintf("Fixes #%d", c), Author: "hopper-coder-bot", IsPR: true, Open: true, Labels: []string{"overseer"}}
+	f.Issues[301] = &graphtest.Issue{Title: "someone's PR", Body: fmt.Sprintf("Fixes #%d", c), Author: "mallory", IsPR: true, Open: true}
+	f.Issues[c].Refs = []int{300, 301}
+	p := sync(t, f, opts)
+	if !slices.Contains(f.Issues[300].Labels, "overseer/auto-merge") || slices.Contains(f.Issues[300].Labels, "lgtm") {
+		t.Fatalf("bot PR labels %v", f.Issues[300].Labels)
+	}
+	if len(f.Issues[301].Labels) != 0 {
+		t.Errorf("a PR outside the pool was labelled %v", f.Issues[301].Labels)
+	}
+	if !strings.Contains(p.Status, "`lgtm`") {
+		t.Errorf("the status does not name the refused label:\n%s", p.Status)
+	}
+	f.Issues[100].Body = "```factory-graph\ngraph: one\n```\n"
+	sync(t, f, opts)
+	if slices.Contains(f.Issues[300].Labels, "overseer/auto-merge") || !slices.Contains(f.Issues[300].Labels, "overseer") {
+		t.Errorf("after the block dropped it, PR labels %v", f.Issues[300].Labels)
 	}
 }

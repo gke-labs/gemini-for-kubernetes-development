@@ -64,6 +64,10 @@ type Observed struct {
 	// Grouped is the start block's grouped: consecutive steps share one
 	// PR (Spec.GroupPrev).
 	Grouped bool
+	// PRLabels are the start block's pr-labels, AllowedPRLabels the ones
+	// the overseer lets a start block put on PRs (Options.AllowedPRLabels):
+	// only a label in both is applied.
+	PRLabels, AllowedPRLabels []string
 }
 
 // Parent is the graph's parent issue, as observed.
@@ -110,6 +114,16 @@ type Child struct {
 	// an open child, MergedBotPR's. See WorkPR.
 	MergedPR       int
 	MergedPRLabels []string
+	// OpenPRs are, for an open child, the open bot PRs that fix it (their
+	// body says so: "Fixes #n"), with their labels: where the start block's
+	// pr-labels go.
+	OpenPRs []PRRef
+}
+
+// PRRef is a PR as observed: its number and labels.
+type PRRef struct {
+	Number int
+	Labels []string
 }
 
 // WorkPR is the PR carrying the child's step's work, and its labels, for a
@@ -158,6 +172,10 @@ type Result struct {
 	// (and the watcher may not create): the pass's writes went without
 	// them, and the status names them, for someone to create.
 	MissingLabels []string
+	// RefusedPRLabels are the start block's pr-labels the overseer does
+	// not allow (Observed.AllowedPRLabels): applied to nothing, and named
+	// by the status.
+	RefusedPRLabels []string
 	// IssuesURL is where the repository's issues are
 	// (https://github.com/<owner>/<repo>/issues/), from the parent's page:
 	// the diagram links each step's issue there. Empty: no links.
@@ -192,6 +210,10 @@ const (
 	// ActMarkGroupPRReady marks a group's PR ready for review when the
 	// group's last step closed needing no change: no push of its marks it.
 	ActMarkGroupPRReady = "mark-group-pr-ready"
+	// ActAddPRLabels and ActRemovePRLabels keep the start block's pr-labels
+	// on the open PRs carrying the children's work.
+	ActAddPRLabels    = "add-pr-labels"
+	ActRemovePRLabels = "remove-pr-labels"
 )
 
 // Action is one write a pass makes. Every action is safe to repeat.
@@ -365,6 +387,11 @@ func Reconcile(o Observed) Result {
 			}
 		}
 	}
+	// The start block's pr-labels on the open PRs carrying the children's
+	// work (a child a merged PR completes has none left open).
+	var prActions []Action
+	prActions, r.State.PRLabels, r.RefusedPRLabels = prLabels(o, ids, canonical)
+	r.Actions = append(r.Actions, prActions...)
 	// Who is handed down from now on: the parent's humans as they are, so
 	// one taken off the parent and put back is handed down again.
 	r.State.Inherited = slices.Clone(o.Parent.Humans)
@@ -665,6 +692,78 @@ This step of #%d's plan waits for a decision: no bot works on it until a person 
 - close it as not planned to skip the step.
 
 The steps after it start once it is closed.`, parent, trigger, trigger, trigger, trigger, trigger)
+}
+
+// prLabels decides the start block's pr-labels on the open PRs fixing the
+// open children: each PR gets the allowed ones it lacks, and loses those the
+// graph put there (State.PRLabels) that the block no longer names. It
+// returns the actions, what the graph has put on each PR from now on - what
+// it recorded and still wants, and what it adds now; a label a person put
+// on first is not recorded, so never taken off - and the labels refused.
+// A PR no longer open (merged, closed) or no longer fixing an open child
+// drops out of the record: nothing is taken off it.
+func prLabels(o Observed, ids []string, canonical map[string]Child) ([]Action, map[int][]string, []string) {
+	var want, refused []string
+	for _, l := range o.PRLabels {
+		switch {
+		case containsFold(want, l) || containsFold(refused, l):
+		case containsFold(o.AllowedPRLabels, l):
+			want = append(want, l)
+		default:
+			refused = append(refused, l)
+		}
+	}
+	type openPR struct {
+		step   string
+		labels []string
+	}
+	prs := map[int]openPR{}
+	var numbers []int
+	for _, id := range ids {
+		c, ok := canonical[id]
+		if !ok || !c.Open {
+			continue
+		}
+		for _, pr := range c.OpenPRs {
+			if _, seen := prs[pr.Number]; !seen {
+				prs[pr.Number] = openPR{step: id, labels: pr.Labels}
+				numbers = append(numbers, pr.Number)
+			}
+		}
+	}
+	slices.Sort(numbers)
+	var actions []Action
+	record := map[int][]string{}
+	for _, n := range numbers {
+		pr := prs[n]
+		var keep, drop []string
+		for _, l := range o.State.PRLabels[n] {
+			switch {
+			case containsFold(want, l):
+				keep = append(keep, l)
+			case containsFold(pr.labels, l):
+				drop = append(drop, l)
+			}
+		}
+		if missing := missingLabels(pr.labels, want); len(missing) > 0 {
+			actions = append(actions, Action{Kind: ActAddPRLabels, Step: pr.step, Issue: n, Labels: missing})
+			for _, l := range missing {
+				if !containsFold(keep, l) {
+					keep = append(keep, l)
+				}
+			}
+		}
+		if len(drop) > 0 {
+			actions = append(actions, Action{Kind: ActRemovePRLabels, Step: pr.step, Issue: n, Labels: drop})
+		}
+		if len(keep) > 0 {
+			record[n] = keep
+		}
+	}
+	if len(record) == 0 {
+		record = nil
+	}
+	return actions, record, refused
 }
 
 // childLabels are the labels a step's child is created with, by what it

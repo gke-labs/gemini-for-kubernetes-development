@@ -50,6 +50,9 @@ type Config struct {
 	MinNumber int
 	// DryRun logs each pass's actions and writes nothing.
 	DryRun bool
+	// AllowedPRLabels are the labels a start block's pr-labels may put on
+	// PRs (graph.Options.AllowedPRLabels).
+	AllowedPRLabels []string
 }
 
 // Deps holds the collaborators of a Controller.
@@ -156,7 +159,7 @@ func (c *Controller) sync(ctx context.Context, n int) {
 	p, err := graph.Sync(ctx, c.gh, graph.Options{
 		Issue: n, Trigger: c.cfg.TriggerLabel, BotLogin: c.cfg.GitHubLogin,
 		Pool: c.cfg.Pool, Members: c.cfg.Members, MaxDepth: c.cfg.MaxDepth, DryRun: c.cfg.DryRun,
-		StepReady: c.stepReady, MarkReadyAs: c.markReadyAs,
+		StepReady: c.stepReady, MarkReadyAs: c.markReadyAs, AllowedPRLabels: c.cfg.AllowedPRLabels,
 		Logf: func(format string, args ...any) {
 			klog.Infof("issue graph #%d: "+format, append([]any{n}, args...)...)
 		},

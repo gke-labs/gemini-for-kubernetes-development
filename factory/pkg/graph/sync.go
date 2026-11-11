@@ -76,6 +76,10 @@ type Options struct {
 	// group's PR is its first step's bot's. Nil: the watcher's own client
 	// tries (GitHub.MarkPullRequestReady).
 	MarkReadyAs func(ctx context.Context, pr int, author string) error
+	// AllowedPRLabels are the labels a start block's pr-labels may put on
+	// the PRs carrying a graph's work (an overseer's graphPRLabels): any
+	// other it names is refused, and the status says so. Empty, none.
+	AllowedPRLabels []string
 }
 
 // ErrNoStepReady is StepReady's answer when it cannot judge (the watch
@@ -210,6 +214,8 @@ func Observe(ctx context.Context, gh GitHub, opts Options) (*Pass, *githubv39.Is
 	o.Source = start.SourceName()
 	o.Params = start.Params
 	o.Grouped = start.Grouped
+	o.PRLabels = start.PRLabels
+	o.AllowedPRLabels = opts.AllowedPRLabels
 	o.Spec, p.Version, o.SpecErr = readSteps(ctx, gh, start, comments, opts)
 	if o.SpecErr == nil {
 		o.Spec, o.SpecErr = start.WithGates(o.Spec)
@@ -383,9 +389,13 @@ func observeChildren(ctx context.Context, gh GitHub, opts Options, o *Observed) 
 			if err != nil {
 				return err
 			}
+			fixes := fixesRE(n)
 			for _, r := range refs {
 				if r.IsPR && r.Merged && isBot(r.Author) {
 					c.MergedBotPR, c.MergedPRLabels = r.Number, r.Labels
+				}
+				if r.IsPR && r.Open && isBot(r.Author) && fixes.MatchString(r.Body) {
+					c.OpenPRs = append(c.OpenPRs, PRRef{Number: r.Number, Labels: r.Labels})
 				}
 			}
 			if o.Grouped && o.Spec != nil && o.Spec.GroupNext(m.Step) != "" && c.MergedBotPR == 0 {
@@ -448,7 +458,7 @@ func keepExistingLabels(ctx context.Context, gh GitHub, p *Pass, labels []string
 // for the next step (opts.StepReady, else its head's checks green); nil for
 // none. Only a step another continues reads it.
 func groupPR(ctx context.Context, gh GitHub, opts Options, n int, refs []github.IssueRef) (*GroupPR, error) {
-	fixes := regexp.MustCompile(fmt.Sprintf(`(?i)\b(fix(es|ed)?|close[sd]?|resolve[sd]?)\s+#%d\b`, n))
+	fixes := fixesRE(n)
 	var found *github.IssueRef
 	for i, r := range refs {
 		if r.IsPR && r.Open && slices.ContainsFunc(opts.Pool, func(b string) bool { return strings.EqualFold(b, r.Author) }) &&
@@ -477,6 +487,12 @@ func groupPR(ctx context.Context, gh GitHub, opts Options, n int, refs []github.
 		return nil, err
 	}
 	return &GroupPR{Number: found.Number, Author: found.Author, Labels: found.Labels, Ready: green}, nil
+}
+
+// fixesRE matches a PR body that closes issue n ("Fixes #n", as a fix's
+// PR says).
+func fixesRE(n int) *regexp.Regexp {
+	return regexp.MustCompile(fmt.Sprintf(`(?i)\b(fix(es|ed)?|close[sd]?|resolve[sd]?)\s+#%d\b`, n))
 }
 
 // checksGreen is whether a commit's checks all passed: at least one check
@@ -595,14 +611,14 @@ func applyOne(ctx context.Context, gh GitHub, opts Options, p *Pass, a Action) e
 			return opts.MarkReadyAs(ctx, a.Issue, a.As)
 		}
 		return gh.MarkPullRequestReady(ctx, a.Issue)
-	case ActRemoveChildLabels:
+	case ActRemoveChildLabels, ActRemovePRLabels:
 		for _, l := range a.Labels {
 			if err := gh.RemoveLabel(ctx, a.Issue, l); err != nil && !github.IsNotFound(err) {
 				return err
 			}
 		}
 		return nil
-	case ActAddChildLabels, ActAddParentLabels:
+	case ActAddChildLabels, ActAddParentLabels, ActAddPRLabels:
 		return addLabels(ctx, gh, p, a.Issue, a.Labels)
 	case ActAddChildAssignees:
 		// Not the pass's failure - the rest of the graph goes on - but not
@@ -659,6 +675,10 @@ func describe(a Action, dryRun bool) string {
 		return fmt.Sprintf("%smark #%d ready for review (its group's last step, %s, closed without a push of its own%s)", would, a.Issue, a.Step, as)
 	case ActRemoveChildLabels:
 		return fmt.Sprintf("%sunlabel #%d (step %s, in its group's PR) %s", would, a.Issue, a.Step, strings.Join(a.Labels, ", "))
+	case ActAddPRLabels:
+		return fmt.Sprintf("%slabel PR #%d (step %s's, the start block's pr-labels) %s", would, a.Issue, a.Step, strings.Join(a.Labels, ", "))
+	case ActRemovePRLabels:
+		return fmt.Sprintf("%sunlabel PR #%d (step %s's, no longer in the start block's pr-labels) %s", would, a.Issue, a.Step, strings.Join(a.Labels, ", "))
 	case ActAddChildAssignees:
 		return fmt.Sprintf("%sassign #%d (step %s) to %s, from the parent", would, a.Issue, a.Step, strings.Join(a.Assignees, ", "))
 	case ActAddParentLabels:

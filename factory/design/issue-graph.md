@@ -159,7 +159,7 @@ spec:
 | `checkpoint` | `stop`, `replan` or both: when the step is done, the reconciler stops the graph, has the plan revised, or both (§4.8). |
 | `no-change` | `ok`: the step's fix may rightly need no PR (its work already done, say). A fix that commits nothing and says why closes the step's issue as completed, and the graph goes on; the issue's marker carries `nochange=ok`. Unset, such a fix's issue stays open for a person: an unexpected no-op may be a wrong conclusion. Fix steps only. |
 | `group-gate` | With the parent's `grouped: true`, the group's PR ends with this step and must merge before any step after it starts (§4.9). Without `grouped` it changes nothing. |
-| `requires` | Optional `labels: {all: [...], any: [...]}`: beyond its `after` steps being done (or in its group's PR), the step starts only once the PR carrying each `after` step's work has every `all` label and, when `any` is given, one of `any` (§4.10). Needs `after`; not on `finally`. |
+| `requires` | Optional `labels: {all: [...], any: [...]}`: beyond its `after` steps being done (or in its group's PR), the step starts only once the PR carrying each `after` step's work has every `all` label and, when `any` is given, one of `any` (§4.11). Needs `after`; not on `finally`. |
 
 A child closed as not planned or as a duplicate is treated as done: its step is `Skipped` and the graph moves on (§5.5). To stop a graph instead, add the stop label to the parent or close it.
 
@@ -282,7 +282,25 @@ Not given, the graph's `group-gate` steps gate. Given, the list replaces them: e
 - **Grouping a graph already running.** Markers are written when a child is created, so a step created before `grouped: true` was added has none of the above, and its PR opens as a normal one, possibly handed to people already (`<trigger>/ready-for-human`). The group still finds it (the PR fixes the step's child). The step check counts a `ready-for-human` PR as one the ready rule would run on, so the next step starts. That step's `open-pr`, run as the PR's author, makes the PR a draft again and takes the label off; the group's last step marks it ready as usual (KCC #15000, #15068).
 - **When the PR merges**, every step child it fixes closes, and the graph goes on as usual.
 
-### 4.10 Label prerequisites (`requires`)
+### 4.10 Labels for the children's PRs (`pr-labels`)
+
+The parent can have labels put on the PRs that carry its graph's work, for as long as its block names them:
+
+```factory-graph
+graph: kcc-greenfield
+grouped: true
+pr-labels: [overseer/auto-merge]   # e.g. opt every PR of this graph in to the merge rules
+params:
+  kind: SpannerInstanceConfig
+```
+
+- **Which PRs.** The open bot PRs that fix an open child (their body says `Fixes #<child>`): a grouped graph's shared PR, or each step's own. They are read from the child's cross-references, which every pass reads already. A merged PR has completed its child and is no longer looked at.
+- **Only what the overseer allows.** The overseer's `graphPRLabels` (factory config `graphPRLabels`) lists the labels a block may name. Anything else is refused: put on nothing, and named in the status comment. Unset, a block puts no labels on PRs. Anyone who can edit the parent's body could otherwise have the watcher label PRs `lgtm` or `approved`.
+- **The block is the switch.** Each pass adds the labels a PR lacks, so a label taken off a PR by hand comes back while the block names it. To hold back one PR, use the rules' own opt-out (`do-not-merge/hold` for the merge rules).
+- **It takes off only what it put on.** The graph state records, per PR, the labels the graph added. When the block stops naming one, the reconciler takes it off those PRs. A label a person put on a PR before the graph did is not recorded, and stays.
+- **Children are not labelled.** The PR inherits its closing issues' labels (`inherit-labels`), so a label on a child would come back to the PR whatever the block said.
+
+### 4.11 Label prerequisites (`requires`)
 
 A step can wait on a judgement of the work before it, made outside the graph - an assessment rule, a person - by naming labels that work's PR must carry:
 
