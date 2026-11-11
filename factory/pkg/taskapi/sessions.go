@@ -110,6 +110,14 @@ func (s *Server) HostSessions(sessions *acpd.Server, tokens *Tokens) {
 // (termd.Manager.Handler).
 func (s *Server) HostTerminals(terminals *termd.Manager) {
 	s.terminals = terminals
+	if s.sessions != nil {
+		// A conversation handed to a terminal is the terminal's while it
+		// runs (handoff.go).
+		s.sessions.SetHandoffTerminal(func(id string) bool {
+			t, ok := terminals.Get(acpd.HandoffTerminalID(id))
+			return ok && !t.Info().Exited
+		})
+	}
 }
 
 // taskSessions is what acpd asks about the server's tasks.

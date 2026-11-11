@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -115,7 +116,19 @@ func (s *Server) daemonTerminal(ctx context.Context, ws *websocket.Conn, base, n
 		writeText("\r\n[could not start the terminal: " + err.Error() + "]\r\n")
 		return
 	}
+	s.attachDaemonTerminal(ctx, ws, base, namespace, name, req.ID, offset)
+}
 
+// terminalIDRE is a termd session id the browser may name (?terminal=).
+var terminalIDRE = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9._-]{0,199}$`)
+
+// attachDaemonTerminal proxies ws to the daemon's terminal session id from
+// offset ("" for all of it).
+func (s *Server) attachDaemonTerminal(ctx context.Context, ws *websocket.Conn, base, namespace, name, id, offset string) {
+	writeText := func(msg string) {
+		_ = ws.WriteMessage(websocket.BinaryMessage, []byte(msg))
+	}
+	req := terminalCreate{ID: id}
 	attach := "ws" + strings.TrimPrefix(base, "http") + "/v1/terminals/" + url.PathEscape(req.ID) + "/attach"
 	if n, err := strconv.ParseInt(offset, 10, 64); err == nil && n >= 0 {
 		attach += "?offset=" + strconv.FormatInt(n, 10)

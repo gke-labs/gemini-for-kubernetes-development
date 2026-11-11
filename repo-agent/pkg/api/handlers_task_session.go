@@ -372,6 +372,42 @@ func (s *Server) forceStopTaskSession(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
+// handoffTaskSession moves the task's conversation between this view and
+// the engine's CLI in a terminal ({"to": "terminal"|"view"}): one process
+// drives it at a time, so the daemon stops the one before starting the
+// other (factory's acpd/handoff.go). To the terminal answers the terminal
+// session to attach to (the terminal route's ?terminal=); back to the view,
+// the next open loads the conversation with the terminal's turns.
+func (s *Server) handoffTaskSession(c *gin.Context) {
+	conn, ok := s.resolveTaskSession(c)
+	if !ok {
+		return
+	}
+	var req struct {
+		To string `json:"to"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || (req.To != "terminal" && req.To != "view") {
+		c.JSON(http.StatusBadRequest, gin.H{"error": `to is "terminal" or "view"`})
+		return
+	}
+	ctx := c.Request.Context()
+	apiKey := ""
+	if req.To == "terminal" {
+		key, err := s.engineAPIKeyFrom(ctx, conn.namespace, conn.keySecret)
+		if err != nil {
+			researchError(c, err)
+			return
+		}
+		apiKey = key
+	}
+	terminal, err := conn.client.Handoff(ctx, conn.task, req.To, true, apiKey)
+	if err != nil {
+		researchError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"terminal": terminal, "namespace": conn.namespace, "sandbox": conn.sandbox.GetName()})
+}
+
 func (s *Server) setTaskSessionMode(c *gin.Context) {
 	conn, ok := s.resolveTaskSession(c)
 	if !ok {

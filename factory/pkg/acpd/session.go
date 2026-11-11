@@ -159,6 +159,9 @@ type SessionConfig struct {
 	// commands inherit: facts a recipe gives it (a workflow's
 	// SESSION_ID), never credentials. CheckEnv says what is allowed.
 	Env map[string]string
+	// Handoff is the session's hand-off marker (handoff.go), zero for none:
+	// handed back from a terminal, the load writes the terminal's turns.
+	Handoff Handoff
 	// AutoApprove answers permission requests as they arrive instead of
 	// waiting for a user.
 	//
@@ -223,6 +226,9 @@ type Session struct {
 	// what the engine sends in between is the conversation it replays,
 	// which the transcript already has.
 	replaying atomic.Bool
+	// keep, set by a load handed back from a terminal, writes the replayed
+	// turns that are the terminal's (handoff.go).
+	keep *replayKeep
 
 	permissionTimeout time.Duration
 
@@ -517,6 +523,12 @@ func (s *Session) load(ctx context.Context, init *acp.InitializeResponse, cfg Se
 	s.acpSessionID = rec.ACPSessionID
 	s.loaded = true
 	_ = s.transcript.AppendValue(KindSessionLoaded, map[string]string{"acpSessionId": rec.ACPSessionID})
+	// Back from a terminal: what the engine replays past the turns the
+	// transcript had is what was said there. The marker is spent.
+	if h := cfg.Handoff; h.ACPSessionID == rec.ACPSessionID && h.To != "" {
+		s.keep = &replayKeep{skip: h.UserTurns}
+		_ = os.Remove(filepath.Join(cfg.Dir, HandoffFile))
+	}
 	return resp.Modes, true
 }
 
@@ -700,6 +712,11 @@ func (s *Session) onNotification(method string, params json.RawMessage) {
 	// acpd sets after a load is answered, but nothing replayed is
 	// written: the transcript has it from when it happened.
 	if s.replaying.Load() {
+		if s.keep != nil {
+			if data, err := json.Marshal(notif.Update); err == nil {
+				s.keep.update(s.transcript, notif.Update.SessionUpdateKind, data)
+			}
+		}
 		return
 	}
 	data, err := json.Marshal(notif.Update)
@@ -852,6 +869,9 @@ func (s *Session) Prompt(text string) error {
 	// StartSession sends next; notifications are dispatched in wire order,
 	// so what arrives from here on is this turn's.
 	s.replaying.Store(false)
+	if s.keep != nil {
+		s.keep.end(s.transcript)
+	}
 
 	if err := s.transcript.AppendValue(KindUserPrompt, map[string]string{"text": text}); err != nil {
 		s.mu.Lock()
