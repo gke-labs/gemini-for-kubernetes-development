@@ -620,6 +620,7 @@ func TestTerminalClaimLaunchesTheTerminalRecipe(t *testing.T) {
 	g.Expect(launched[0].Inputs).To(gomega.BeEmpty(), "a terminal asks nothing")
 	g.Expect(launched[0].Engine).To(gomega.Equal("claude"))
 	g.Expect(launched[0].Session).To(gomega.Equal(testSession))
+	g.Expect(launched[0].Detached).To(gomega.BeFalse(), "a terminal's setup is followed to its end, so its run is recorded Completed")
 
 	req = researchRequest(testSession, time.Now().Add(-time.Minute), kickoff)
 	req.Spec.Research.Terminal = true

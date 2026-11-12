@@ -249,7 +249,11 @@ func (r *Reconciler) ensureResearchClaims(ctx context.Context, work *workState, 
 			}
 			opts.User = bot
 		}
-		opts.Session, opts.Detached = claim.sessionID, true
+		// Research's task is the conversation, so it is left running
+		// (detached). A terminal's is only its setup: followed to its
+		// end, it is recorded Completed, which is what tells the board
+		// the CLI can be opened - a detached run stays Running for good.
+		opts.Session, opts.Detached = claim.sessionID, !claim.terminal
 		opts.Inputs = inputs
 		// The member's pick, else the board's, read at launch like a
 		// task's engine: switching the board changes the next session,
