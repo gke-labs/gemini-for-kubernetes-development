@@ -251,8 +251,14 @@ gemini board on the same repo before recommending defaults.
 - **Image**: a Go binary from `antigravity.google/cli/install.sh`, installed
   to `/usr/local/bin`; `AGY_CLI_DISABLE_AUTO_UPDATE=true` (exactly "true")
   stops it replacing itself in running pods.
-- **acpd**: agy has no ACP mode; acpd runs Google's separate
-  `agy_acp_server`, baked into the image at `/opt/agy-acp-server` (#1673).
+- **acpd**: runs agy's own ACP server, `agy acp --add-dir /workspaces`.
+  It keeps conversations where the CLI does (`~/.gemini/antigravity-cli`),
+  so a session handed to a terminal opens there (`agy --conversation
+  <id>`) and comes back with the terminal's turns. It replaced Google's
+  separate `agy_acp_server` (#1673), whose store the CLI could not read.
+  agy offers `default`, `accept-edits` and `plan` (no yolo): a request for
+  gemini's yolo or autoEdit gets accept-edits (`Engine.ModeAliases`), and
+  AutoApprove answers the rest.
 - **repo-agent**: the CRD enum is `gemini;claude;antigravity`, and the engine
   picker, icon (#1671, #1675) and research sessions (#1674) offer it. A task
   records the engine it ran on and the board reads it (#1677).

@@ -131,6 +131,25 @@ func TestSessionStartsInTheModeTheCallerAsked(t *testing.T) {
 	}
 }
 
+// A mode asked for by another engine's name gets the engine's nearest
+// (Engine.ModeAliases): research asks agy for gemini's yolo.
+func TestAModeByAnotherEnginesNameGetsItsAlias(t *testing.T) {
+	registerFakeEngine(t)
+	aliased := Engines["fake-modes"]
+	aliased.ModeAliases = map[string]string{"accept-all": GeminiModeYolo}
+	Engines["fake-aliased"] = aliased
+	t.Cleanup(func() { delete(Engines, "fake-aliased") })
+	_, ts := newTestServer(t)
+
+	got := decodeSession(t, create(t, ts, "s1", "fake-aliased", "accept-all"), http.StatusCreated)
+	if got.Mode != GeminiModeYolo || got.ModeError != "" {
+		t.Errorf("session mode = %q (%q), want %q", got.Mode, got.ModeError, GeminiModeYolo)
+	}
+	if echo := promptAndReadEcho(t, ts, "s1", "hello"); !strings.Contains(echo, "mode:yolo") {
+		t.Errorf("engine is not in the alias: %s", echo)
+	}
+}
+
 func TestAnEngineThatRefusesTheModeStillGetsASession(t *testing.T) {
 	registerFakeEngine(t)
 	_, ts := newTestServer(t)

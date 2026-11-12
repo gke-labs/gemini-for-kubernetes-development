@@ -154,7 +154,7 @@ func TestAntigravityEngineIsConfiguredForACP(t *testing.T) {
 		t.Fatal("antigravity engine is not registered")
 	}
 	if engine.APIKeyEnv != "GEMINI_API_KEY" {
-		t.Errorf("APIKeyEnv = %q; agy_acp_server's gemini-api-key method reads GEMINI_API_KEY", engine.APIKeyEnv)
+		t.Errorf("APIKeyEnv = %q; agy's gemini-api-key method reads GEMINI_API_KEY", engine.APIKeyEnv)
 	}
 	// The server also advertises oauth methods that block for minutes
 	// on a browser sign-in. The engine default is what keeps
@@ -163,17 +163,15 @@ func TestAntigravityEngineIsConfiguredForACP(t *testing.T) {
 	if got := chooseAuthMethod(advertised, "", engine.AuthMethodID); got != "gemini-api-key" {
 		t.Errorf("chooseAuthMethod picked %q, want gemini-api-key", got)
 	}
-	var ipv6 bool
-	for _, arg := range engine.Args {
-		if arg == "--enforce_kernel_ipv6_support=false" {
-			ipv6 = true
-		}
+	// agy's own ACP server, whose store is the CLI's: a handed-off
+	// conversation is the CLI's to open.
+	if engine.Command != "agy" || len(engine.Args) == 0 || engine.Args[0] != "acp" {
+		t.Errorf("antigravity runs %s %v, want agy acp", engine.Command, engine.Args)
 	}
-	if !ipv6 {
-		t.Errorf("antigravity args %v: without --enforce_kernel_ipv6_support=false the server aborts in a pod", engine.Args)
-	}
-	if !filepath.IsAbs(engine.Command) {
-		t.Errorf("Command %q is not absolute; the server is installed under /opt, not on PATH", engine.Command)
+	// Research asks for yolo, which agy does not offer; its nearest is
+	// accept-edits (AutoApprove answers the rest).
+	if got := engine.ModeAliases[GeminiModeYolo]; got != "accept-edits" {
+		t.Errorf("antigravity yolo alias = %q, want accept-edits", got)
 	}
 }
 

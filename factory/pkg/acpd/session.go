@@ -48,16 +48,15 @@ type Engine struct {
 	// Retry recognises the engine's stderr line about a retried model
 	// call (see KindEngineRetry). Nil: the engine's retries are not shown.
 	Retry RetryParser
+	// ModeAliases are the engine's nearest modes to ones its callers ask
+	// for by another engine's name (research asks for gemini's yolo):
+	// used when the engine does not offer the mode asked for. A mode it
+	// offers is always its own.
+	ModeAliases map[string]string
 }
 
-// AntigravityACPServer is Google's agy_acp_server, which the antigravity
-// engine runs: agy itself has no ACP mode. It is a separate download with
-// its own harness, installed into the image by
-// images/factory-golang/Dockerfile, which pins the version and digest.
-const AntigravityACPServer = "/opt/agy-acp-server/agy_acp_server.par"
-
-// Engines is the set acpd knows how to start. gemini speaks ACP natively
-// and antigravity through Google's separate server; claude is absent
+// Engines is the set acpd knows how to start. gemini and antigravity (agy)
+// speak ACP natively; claude is absent
 // rather than broken on purpose, so the failure is "unknown engine" at
 // session create rather than a hang on a handshake that will never
 // complete.
@@ -83,19 +82,27 @@ var Engines = map[string]Engine{
 		Retry:     geminiRetry,
 	},
 	"antigravity": {
-		Command: AntigravityACPServer,
-		Args: []string{
-			"--uid=",
-			// It checks for an IPv6 loopback at start and aborts without
-			// one, and pod network namespaces have no ::1.
-			"--enforce_kernel_ipv6_support=false",
-		},
-		APIKeyEnv: "GEMINI_API_KEY",
-		// It also advertises oauth-personal and oauth-business, which
-		// wait minutes for a browser sign-in and stall the whole server
-		// while they do. Naming the key method keeps chooseAuthMethod
-		// away from them.
+		// agy's own ACP server, not Google's separate agy_acp_server: it
+		// keeps its conversations where agy's CLI does
+		// (~/.gemini/antigravity-cli), so a conversation handed to a
+		// terminal is the CLI's to open (agy --conversation <id>) and
+		// one handed back loads here with the terminal's turns.
+		// agy_acp_server's store was its own, which the CLI cannot read.
+		// /workspaces is added for the task directory a recipe writes
+		// its outputs to, outside the checkout.
+		Command: "agy",
+		Args:    []string{"acp", "--add-dir", "/workspaces"},
+		// agy reads the key over ACP's gemini-api-key method. It also
+		// advertises oauth-personal and oauth-business, which wait for a
+		// browser sign-in nobody here can give; naming the key method
+		// keeps chooseAuthMethod away from them.
+		APIKeyEnv:    "GEMINI_API_KEY",
 		AuthMethodID: "gemini-api-key",
+		// agy offers default, accept-edits and plan: no yolo (its auto
+		// needs an OS sandbox the pod has not got). accept-edits is the
+		// nearest, and a session that wants no prompts at all has
+		// AutoApprove answer the rest, as it does for gemini's shell guard.
+		ModeAliases: map[string]string{GeminiModeYolo: "accept-edits", GeminiModeAutoEdit: "accept-edits", "auto_edit": "accept-edits"},
 	},
 }
 
@@ -266,8 +273,10 @@ type Session struct {
 	// counts them all, written to RetriesFile in dir.
 	retry      *EngineRetry
 	parseRetry RetryParser
-	retries    EngineRetries
-	dir        string
+	// modeAliases are the engine's (Engine.ModeAliases).
+	modeAliases map[string]string
+	retries     EngineRetries
+	dir         string
 
 	cancel context.CancelFunc
 	done   chan struct{}
@@ -374,6 +383,7 @@ func (s *Session) spawn(ctx context.Context, engine Engine, cfg SessionConfig) e
 	// flooding what the user reads. Only its retried model calls reach
 	// the transcript, as markers.
 	s.parseRetry = engine.Retry
+	s.modeAliases = engine.ModeAliases
 	s.dir = cfg.Dir
 	s.retries = loadRetries(cfg.Dir)
 	cmd.Stderr = &lineWriter{w: engineLog, onLine: s.onEngineLine}
@@ -587,7 +597,11 @@ func (s *Session) SetMode(ctx context.Context, modeID string, autoApprove bool) 
 		return fmt.Errorf("mode is required")
 	}
 	if !s.offersMode(modeID) {
-		return fmt.Errorf("engine does not offer mode %q (offers: %s)", modeID, s.modeIDs())
+		alias, ok := s.modeAliases[modeID]
+		if !ok || !s.offersMode(alias) {
+			return fmt.Errorf("engine does not offer mode %q (offers: %s)", modeID, s.modeIDs())
+		}
+		modeID = alias
 	}
 	if err := s.client.SetSessionMode(ctx, acp.SetSessionModeRequest{
 		SessionID: s.acpSessionID,
