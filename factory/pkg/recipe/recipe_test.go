@@ -2260,3 +2260,32 @@ func TestRecipeOnSandboxes(t *testing.T) {
 		t.Error("a recipe on issues runs on sandboxes")
 	}
 }
+
+// terminal is research's sandbox and setup, asking nothing: the member's
+// conversation is the engine CLI's, in a terminal.
+func TestBuiltinTerminal(t *testing.T) {
+	_, rec, err := Builtin("terminal")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, research, err := Builtin("research")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if credentialsOf(rec) != CredentialsFull || rec.TaskType != "terminal" {
+		t.Fatalf("terminal = credentials %q, task-type %q", rec.Credentials, rec.TaskType)
+	}
+	if *rec.Sandbox != *research.Sandbox {
+		t.Errorf("terminal's sandbox %+v, want research's %+v", *rec.Sandbox, *research.Sandbox)
+	}
+	var uses []string
+	for _, s := range rec.Start.Steps {
+		if s.Ask != "" {
+			t.Errorf("terminal asks %q", s.Ask)
+		}
+		uses = append(uses, s.Uses)
+	}
+	if strings.Join(uses, ",") != "setup-git,setup-repo,configure-engine" {
+		t.Errorf("terminal's steps %v", uses)
+	}
+}

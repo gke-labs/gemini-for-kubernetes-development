@@ -115,6 +115,28 @@ at a time (`pkg/acpd/handoff.go`, `pkg/taskapi/handoff.go`,
   what follows them, as turns of their own. Those are the ones made in
   the terminal.
 
+## A session that is a terminal
+
+The board's Sessions page starts a session as either kind: **Rich** (the
+session view, `factory recipe research`) or **Terminal** (the engine's
+CLI, free-form). A terminal session gets research's sandbox — `rsch-…`,
+the repository cloned, git and gh as the member, the engine configured —
+from `factory recipe terminal`, which runs research's setup and asks
+nothing. The board's Request says `terminal: true`; the controller runs
+that recipe instead of research's, on the picked engine, claude included
+(a CLI needs no acpd).
+
+What the member typed in the box is the CLI's first prompt: the
+controller leaves it on the sandbox (`terminal-prompt`), and the board
+creates the terminal (`agent-<program>`) with `prompt` the first time it
+is opened — a new conversation, the prompt an argument of its own
+(`gemini -i`, `claude <prompt>`, `agy -i`) — and removes it then, so a CLI
+started again does not ask it again. An empty box is a bare CLI.
+
+The session is one row, keyed by its session id as research's: the row
+asked for becomes the sandbox's, whose setup run says it is starting,
+and then its terminal's, with the terminal's state.
+
 ## The emulator
 
 Two, behind one interface (`emulator`, `pkg/termd/emulator.go`):

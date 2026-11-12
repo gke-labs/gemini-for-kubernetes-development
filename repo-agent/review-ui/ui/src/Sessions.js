@@ -76,9 +76,31 @@ export function apiBaseOf(row) {
   return row && row.overseer ? `/api/overseers/${row.overseer}` : '/api';
 }
 
+// settingUp says a terminal session's sandbox is still being made: asked
+// for, or its setup run still running.
+function settingUp(row) {
+  return !!row.requested || ((row.runs || [])[0] || {}).status === 'running';
+}
+
+// terminalReady says a terminal session's sandbox is set up and running,
+// so its CLI can be opened. Not the row's state: a CLI at work is
+// "working" too.
+export function terminalReady(row) {
+  return !!row.terminal && !settingUp(row) && row.pod === 'running';
+}
+
+// terminalTarget is how a terminal row's terminal is opened: the
+// launcher's own (agent-<program>) by its program, which starts it when
+// it is not running (a terminal session's first open); any other by its
+// id, attached only.
+export function terminalTarget(row) {
+  return row.program && row.terminal === `agent-${row.program}` ? { program: row.program } : { terminal: row.terminal };
+}
+
 // rowTitle is what a row is called: a research conversation's name, else
 // its recipe's label.
 export function rowTitle(row) {
+  if (row.recipe === 'terminal') return row.title || 'terminal';
   if (row.recipe === 'research' || row.requested) return row.title || 'untitled research';
   return row.label || row.recipe || row.task;
 }
@@ -272,6 +294,10 @@ export function pickSuggestion(suggestions, text) {
 // daemon has no claude engine yet.
 export const SESSION_ENGINES = ['gemini', 'antigravity'];
 
+// TERMINAL_ENGINES are the engines a terminal session runs the CLI of:
+// claude too, since a CLI needs no session daemon.
+export const TERMINAL_ENGINES = ['gemini', 'claude', 'antigravity'];
+
 // sessionEngine is the engine a session on a board with engine runs on by
 // default: a claude board's runs on gemini, as research always has.
 export function sessionEngine(engine) {
@@ -298,11 +324,17 @@ export function StartBox({ boards, onStarted, onOpen, onLaunched, autoFocus }) {
   // The engine the session runs on: the board's until one is picked, and
   // the board's again when the repository changes.
   const [pickedEngine, setPickedEngine] = useState('');
-  const engine = pickedEngine || sessionEngine(board && board.engine);
+  // Rich is the session view; Terminal the engine's CLI in a terminal,
+  // the box its first prompt (empty, a bare CLI).
+  const [mode, setMode] = useStored('sessions.mode', 'rich');
+  const terminal = mode === 'terminal';
+  const engines = terminal ? TERMINAL_ENGINES : SESSION_ENGINES;
+  const boardEngine = terminal && TERMINAL_ENGINES.includes(board && board.engine) ? board.engine : sessionEngine(board && board.engine);
+  const engine = engines.includes(pickedEngine) ? pickedEngine : boardEngine;
   const repo = board ? repoFromURL(board.repoURL) : '';
 
   // The issue or PR named in the box, the board it is on, and its row.
-  const ref = useMemo(() => parseItemRef(topic), [topic]);
+  const ref = useMemo(() => (terminal ? null : parseItemRef(topic)), [topic, terminal]);
   const target = ref ? refBoard(ref, boards, board) : null;
   const [lookup, setLookup] = useState(null); // { key, status: loading|ok|none|error, item, error }
   const feeds = useRef(new Map());
@@ -389,19 +421,22 @@ export function StartBox({ boards, onStarted, onOpen, onLaunched, autoFocus }) {
   };
 
   const start = () => {
-    if (!board || !topic.trim() || busy) return;
+    if (!board || (!terminal && !topic.trim()) || busy) return;
     setBusy(true);
     setError('');
+    const text = topic.trim();
     fetch(`/api/board/${board.name}/research`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ kind: 'topic', topic: topic.trim(), engine }),
+      body: JSON.stringify(terminal
+        ? { ...(text ? { kind: 'topic', topic: text } : {}), engine, terminal: true }
+        : { kind: 'topic', topic: text, engine }),
     })
       .then(async res => {
         const body = await res.json().catch(() => ({}));
         if (!res.ok) { setError(body.error || `could not start a session: HTTP ${res.status}`); return; }
         setTopic('');
-        onStarted({ research: body.sessionId, title: body.title || '', repo: board.repoURL });
+        onStarted({ research: body.sessionId, title: body.title || '', repo: board.repoURL, terminal });
       })
       .catch(err => setError(`could not start a session: ${err}`))
       .finally(() => setBusy(false));
@@ -416,7 +451,9 @@ export function StartBox({ boards, onStarted, onOpen, onLaunched, autoFocus }) {
       {error && <div className="warning-banner" style={{ marginBottom: '6px', cursor: 'pointer' }} onClick={() => setError('')}>{error}</div>}
       <GrowingTextarea value={topic} onChange={e => setTopic(e.target.value)} minRows={2} inputRef={boxRef}
         aria-label="Start a session"
-        placeholder={`Ask anything about ${repo || 'this repository'} — a question, a subsystem, or 'compare with …'`}
+        placeholder={terminal
+          ? `The ${engine} CLI's first prompt in ${repo || 'this repository'} — or leave empty for a bare CLI`
+          : `Ask anything about ${repo || 'this repository'} — a question, a subsystem, or 'compare with …'`}
         onKeyDown={e => {
           if (options.length && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
             e.preventDefault();
@@ -435,18 +472,29 @@ export function StartBox({ boards, onStarted, onOpen, onLaunched, autoFocus }) {
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: '2px' }}>
           <EngineIcon engine={engine} size={14} />
           <select aria-label="Engine" value={engine} onChange={e => setPickedEngine(e.target.value)}
-            title={board && board.engine === 'claude' ? 'Sessions run on gemini or antigravity: claude is not available for them yet' : 'The agent the session runs on'}
+            title={!terminal && board && board.engine === 'claude' ? 'Sessions run on gemini or antigravity: claude is not available for them yet' : 'The agent the session runs on'}
             style={{ fontSize: 'x-small', borderRadius: '12px', padding: '2px 6px', border: '1px solid var(--border-color)', background: 'var(--bg-card)', color: 'var(--text-primary)' }}>
-            {SESSION_ENGINES.map(e => <option key={e} value={e}>{e}</option>)}
+            {engines.map(e => <option key={e} value={e}>{e}</option>)}
           </select>
         </span>
-        <button type="button" style={{ ...link, opacity: prompts.onboard ? 1 : 0.5 }} disabled={!prompts.onboard || busy} onClick={() => fill('onboard')}
-          title="Puts the overview prompt in the box — read it, edit it, send it">overview</button>
-        <button type="button" style={{ ...link, opacity: prompts.activity ? 1 : 0.5 }} disabled={!prompts.activity || busy} onClick={() => fill('activity')}
-          title="Puts the recent-changes prompt in the box. The window is the first line: edit it">recent changes</button>
+        {!terminal && (
+          <>
+            <button type="button" style={{ ...link, opacity: prompts.onboard ? 1 : 0.5 }} disabled={!prompts.onboard || busy} onClick={() => fill('onboard')}
+              title="Puts the overview prompt in the box — read it, edit it, send it">overview</button>
+            <button type="button" style={{ ...link, opacity: prompts.activity ? 1 : 0.5 }} disabled={!prompts.activity || busy} onClick={() => fill('activity')}
+              title="Puts the recent-changes prompt in the box. The window is the first line: edit it">recent changes</button>
+          </>
+        )}
         <span style={{ flex: 1 }} />
+        <span role="radiogroup" aria-label="Session kind" style={{ display: 'inline-flex', border: '1px solid var(--border-color)', borderRadius: '12px', overflow: 'hidden', fontSize: 'x-small' }}>
+          {[['rich', 'Rich', 'The session view: a rendered conversation, its drafts and notes'], ['terminal', 'Terminal', "The engine's own CLI in a terminal, free-form"]].map(([m, label, title]) => (
+            <button key={m} type="button" role="radio" aria-checked={mode === m} onClick={() => setMode(m)} title={title}
+              style={{ border: 'none', padding: '2px 8px', font: 'inherit', cursor: 'pointer', background: mode === m ? 'var(--bg-card)' : 'transparent', color: mode === m ? 'var(--text-primary)' : 'var(--text-secondary)', fontWeight: mode === m ? 600 : 400 }}>
+              {label}</button>
+          ))}
+        </span>
         <span style={{ ...muted, ...small }}>⏎ start · ⇧⏎ newline</span>
-        <button className="btn btn-sm" disabled={!topic.trim() || busy} onClick={start}>{busy ? 'Requesting…' : 'Start'}</button>
+        <button className="btn btn-sm" disabled={(!terminal && !topic.trim()) || busy} onClick={start}>{busy ? 'Requesting…' : 'Start'}</button>
       </div>
       {ref && (
         <div role="listbox" aria-label="Item launcher" style={{ marginTop: '8px', borderTop: '1px solid var(--border-color)', paddingTop: '6px', fontSize: 'x-small' }}>
@@ -613,8 +661,8 @@ export default function Sessions({ namespace, active = true }) {
     window.addEventListener('mouseup', up);
   };
 
-  const onStarted = ({ research, title, repo }) => {
-    const row = { sandbox: '', research, title, recipe: 'research', label: 'Research', requested: true, state: 'working', pod: 'starting', repoURL: repo, updatedAt: new Date().toISOString() };
+  const onStarted = ({ research, title, repo, terminal }) => {
+    const row = { sandbox: '', research, title, recipe: terminal ? 'terminal' : 'research', label: terminal ? 'Terminal' : 'Research', requested: true, state: 'working', pod: 'starting', repoURL: repo, updatedAt: new Date().toISOString() };
     setPending(row);
     select(rowKey(row));
     setTimeout(load, 3000);
@@ -711,14 +759,21 @@ export default function Sessions({ namespace, active = true }) {
             )}
             <StartBox boards={boards} onStarted={onStarted} onOpen={select} onLaunched={onLaunched} autoFocus />
           </div>
+        ) : open.recipe === 'terminal' && !terminalReady(open) ? (
+          // A terminal session whose sandbox is not up to open a CLI in.
+          <div role="status" style={{ padding: '14px', ...small, ...muted }}>
+            {rowTitle(open)} · {settingUp(open) ? 'setting up the sandbox: the CLI opens here when it is ready…'
+              : open.state === 'failed' ? 'the sandbox could not be set up' : `the sandbox is ${open.pod}: wake it from ▣ to open the CLI`}
+          </div>
         ) : open.terminal ? (
           // An engine's CLI: its terminal, live, here. Attached by its
           // own id: the row is that terminal, and opening it by program
           // would start another one beside it (a handoff's is not
-          // agent-<program>).
+          // agent-<program>). The launcher's (a terminal session's) is
+          // started when it is not running yet.
           <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', backgroundColor: '#1e1e1e' }}>
             <SandboxTerminal key={rowKey(open)} namespace={open.overseer ? `overseer-${open.overseer}` : namespace}
-              sandboxName={open.sandbox} terminal={open.terminal} fill />
+              sandboxName={open.sandbox} {...terminalTarget(open)} fill />
           </div>
         ) : (
           <>

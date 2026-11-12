@@ -55,6 +55,10 @@ const (
 	// TitleAnnotation is what the session is called. Absent means the
 	// list should fall back to the first line of the transcript.
 	TitleAnnotation = "sandbox.gemini.google.com/research-title"
+	// TerminalPromptAnnotation is a terminal session's first prompt, what
+	// the member typed in the box, until the CLI is started with it: the
+	// board removes it then, so a CLI started again does not ask it again.
+	TerminalPromptAnnotation = "sandbox.gemini.google.com/terminal-prompt"
 )
 
 //go:embed onboard.txt

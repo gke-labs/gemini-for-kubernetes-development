@@ -591,3 +591,41 @@ func TestResearchWithoutAQuestionIsNotLaunched(t *testing.T) {
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 	g.Expect(researchLaunches(fake)).To(gomega.BeEmpty())
 }
+
+// A terminal session's click sets up research's sandbox with `factory
+// recipe terminal`, asking nothing; it runs the picked engine, claude
+// too (the CLI needs no session daemon); and the reconcile that settles
+// it leaves the box's text on the sandbox, the CLI's first prompt.
+func TestTerminalClaimLaunchesTheTerminalRecipe(t *testing.T) {
+	g := gomega.NewWithT(t)
+	kickoff := research.Kickoff{Kind: research.KindTopic, Topic: "fix the flaky test"}
+	req := researchRequest(testSession, time.Now().Add(-time.Minute), kickoff)
+	req.Spec.Research.Terminal, req.Spec.Research.Engine = true, "claude"
+	fake := newFakeLauncher()
+	r := newTestReconciler(fake, testGithubClient(`[]`), testBoard(nil), githubSecret(), req)
+	_, err := r.Reconcile(context.Background(), boardRequest())
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	var launched []*factorycli.RecipeOptions
+	for _, l := range fake.launches() {
+		if l.RecipeOpts != nil {
+			launched = append(launched, l.RecipeOpts)
+		}
+	}
+	g.Expect(researchLaunches(fake)).To(gomega.BeEmpty())
+	g.Expect(launched).To(gomega.HaveLen(1))
+	g.Expect(launched[0].Recipe).To(gomega.Equal("terminal"))
+	g.Expect(launched[0].Inputs).To(gomega.BeEmpty(), "a terminal asks nothing")
+	g.Expect(launched[0].Engine).To(gomega.Equal("claude"))
+	g.Expect(launched[0].Session).To(gomega.Equal(testSession))
+
+	req = researchRequest(testSession, time.Now().Add(-time.Minute), kickoff)
+	req.Spec.Research.Terminal = true
+	name := factorycli.ResearchSandboxName("repo", testSession)
+	r = newTestReconciler(newFakeLauncher(), testGithubClient(`[]`), testBoard(nil), githubSecret(), researchSandboxObj("alice", name), req)
+	_, err = r.Reconcile(context.Background(), boardRequest())
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	g.Expect(requestStatus(t, r, req).Phase).To(gomega.Equal(boardv1alpha1.RequestSucceeded))
+	annotations := sandboxAnnotations(t, r, name)
+	g.Expect(annotations[research.TerminalPromptAnnotation]).To(gomega.Equal("fix the flaky test"))
+	g.Expect(annotations[research.TitleAnnotation]).To(gomega.Equal("fix the flaky test"))
+}

@@ -85,6 +85,7 @@ spec:
                     enum:
                     - gemini
                     - antigravity
+                    - claude
                     type: string
                   kind:
                     type: string
@@ -92,6 +93,8 @@ spec:
                     type: string
                   since:
                     type: string
+                  terminal:
+                    type: boolean
                   title:
                     type: string
                   topic:

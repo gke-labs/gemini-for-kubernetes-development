@@ -17,8 +17,10 @@ limitations under the License.
 package api
 
 import (
+	"cmp"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -113,20 +115,38 @@ func (s *Server) startResearchSession(c *gin.Context) {
 	// A conversation starts with a question: `factory recipe research`
 	// asks it as the task, and there is no task without one.
 	// Engine is the agent the member picked; empty is the board's.
+	// Terminal: the engine's CLI in a terminal instead (`factory recipe
+	// terminal`), the topic, when there is one, its first prompt.
 	var body struct {
 		research.Kickoff
-		Engine string `json:"engine"`
+		Engine   string `json:"engine"`
+		Terminal bool   `json:"terminal"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body", "details": err.Error()})
 		return
 	}
 	kickoff := body.Kickoff
-	if body.Engine != "" && body.Engine != acpd.EngineGemini && body.Engine != acpd.EngineAntigravity {
+	switch {
+	case body.Terminal:
+		// The CLI needs no session daemon, so claude too; and no
+		// question: an empty box opens a bare CLI.
+		if body.Engine != "" && body.Engine != acpd.EngineGemini && body.Engine != acpd.EngineAntigravity && body.Engine != "claude" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "a terminal session runs gemini, claude or antigravity"})
+			return
+		}
+		if kickoff.Kind != "" && kickoff.Kind != research.KindTopic {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "a terminal session's first prompt is a topic"})
+			return
+		}
+		if strings.TrimSpace(kickoff.Topic) == "" {
+			kickoff.Kind, kickoff.Topic = "", ""
+			kickoff.Title = cmp.Or(kickoff.Title, "terminal")
+		}
+	case body.Engine != "" && body.Engine != acpd.EngineGemini && body.Engine != acpd.EngineAntigravity:
 		c.JSON(http.StatusBadRequest, gin.H{"error": "a research conversation runs on gemini or antigravity"})
 		return
-	}
-	if kickoff.Kind == "" {
+	case kickoff.Kind == "":
 		c.JSON(http.StatusBadRequest, gin.H{"error": "a research conversation needs a question"})
 		return
 	}
@@ -160,6 +180,7 @@ func (s *Server) startResearchSession(c *gin.Context) {
 			Since:     kickoff.Since,
 			Title:     kickoff.Title,
 			Engine:    body.Engine,
+			Terminal:  body.Terminal,
 		},
 	}); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to record research request", "details": err.Error()})
@@ -174,5 +195,6 @@ func (s *Server) startResearchSession(c *gin.Context) {
 		"namespace": namespace,
 		"repo":      repo,
 		"title":     kickoff.ResolvedTitle(),
+		"terminal":  body.Terminal,
 	})
 }

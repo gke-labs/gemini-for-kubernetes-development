@@ -15,9 +15,11 @@ import (
 
 	"github.com/gorilla/websocket"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/klog/v2"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/k8s"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/research"
 )
 
 // The sandbox card's terminal on a daemon that serves terminal sessions
@@ -33,6 +35,9 @@ type terminalCreate struct {
 	ID      string `json:"id"`
 	Program string `json:"program"`
 	Resume  bool   `json:"resume,omitempty"`
+	// Prompt opens a new conversation with it (a terminal session's
+	// first prompt, research.TerminalPromptAnnotation).
+	Prompt string `json:"prompt,omitempty"`
 }
 
 // terminalAPIKeyHeader carries the engine's key on create, as on acpd's
@@ -101,11 +106,17 @@ func (s *Server) daemonTerminal(ctx context.Context, ws *websocket.Conn, base, n
 		_ = ws.WriteMessage(websocket.BinaryMessage, []byte(msg))
 	}
 	req := terminalCreate{ID: terminalSession, Program: "shell"}
-	apiKey := ""
+	apiKey, prompt := "", ""
 	switch {
 	case program != "":
 		apiKey = s.engineAPIKey(ctx, namespace, programEngine(program), writeText)
 		req = terminalCreate{ID: "agent-" + program, Program: program, Resume: true}
+		// A terminal session's CLI starts with what the member typed in
+		// the box, once.
+		prompt = s.terminalPrompt(ctx, namespace, name)
+		if prompt != "" {
+			req.Resume, req.Prompt = false, prompt
+		}
 	case chatTask != "":
 		engine := s.sandboxTaskEngine(ctx, namespace, name)
 		apiKey = s.engineAPIKey(ctx, namespace, engine, writeText)
@@ -116,7 +127,29 @@ func (s *Server) daemonTerminal(ctx context.Context, ws *websocket.Conn, base, n
 		writeText("\r\n[could not start the terminal: " + err.Error() + "]\r\n")
 		return
 	}
+	if prompt != "" {
+		s.clearTerminalPrompt(ctx, namespace, name)
+	}
 	s.attachDaemonTerminal(ctx, ws, base, namespace, name, req.ID, offset)
+}
+
+// terminalPrompt is the first prompt a terminal session's sandbox still
+// holds for its CLI, "" when there is none (or it was used).
+func (s *Server) terminalPrompt(ctx context.Context, namespace, name string) string {
+	sb, err := s.K8sManager.Client.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, name, v1.GetOptions{})
+	if err != nil {
+		return ""
+	}
+	return sb.GetAnnotations()[research.TerminalPromptAnnotation]
+}
+
+// clearTerminalPrompt removes the first prompt once the CLI has it: a CLI
+// started again (it exited, the pod restarted) does not ask it again.
+func (s *Server) clearTerminalPrompt(ctx context.Context, namespace, name string) {
+	patch, _ := json.Marshal(map[string]any{"metadata": map[string]any{"annotations": map[string]any{research.TerminalPromptAnnotation: nil}}})
+	if _, err := s.K8sManager.Client.Resource(k8s.SandboxGVR).Namespace(namespace).Patch(ctx, name, types.MergePatchType, patch, v1.PatchOptions{}); err != nil {
+		klog.Infof("terminal: removing the first prompt from %s/%s: %v", namespace, name, err)
+	}
 }
 
 // terminalIDRE is a termd session id the browser may name (?terminal=).

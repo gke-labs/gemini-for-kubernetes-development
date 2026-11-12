@@ -11,6 +11,14 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/dynamic/fake"
+	kubernetesfake "k8s.io/client-go/kubernetes/fake"
+
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/k8s"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/research"
 )
 
 // fakeTermd is a daemon's /v1/terminals: it records the create and the
@@ -26,8 +34,10 @@ type fakeTermd struct {
 func (f *fakeTermd) server(t *testing.T) *httptest.Server {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/terminals", func(w http.ResponseWriter, r *http.Request) {
+		var created terminalCreate
+		_ = json.NewDecoder(r.Body).Decode(&created)
 		f.mu.Lock()
-		_ = json.NewDecoder(r.Body).Decode(&f.created)
+		f.created = created
 		f.mu.Unlock()
 		w.WriteHeader(http.StatusCreated)
 		_, _ = w.Write([]byte(`{}`))
@@ -145,5 +155,56 @@ func TestTerminalRow(t *testing.T) {
 	}
 	if got := terminalRowState("error"); got != "failed" {
 		t.Errorf("error state is %q, want failed", got)
+	}
+}
+
+// A terminal session's CLI starts with the box's text, a new conversation
+// rather than a resumed one, and the sandbox gives the text up then: the
+// CLI started again does not ask it again.
+func TestDaemonTerminalStartsTheFirstPromptOnce(t *testing.T) {
+	sb := sandboxCR("rsch-repo-1", nil, map[string]interface{}{research.TerminalPromptAnnotation: "fix the build"}, 1)
+	sb.SetNamespace("alice")
+	dyn := fake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{k8s.SandboxGVR: "SandboxList"})
+	if _, err := dyn.Resource(k8s.SandboxGVR).Namespace("alice").Create(context.Background(), sb, v1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	s := &Server{K8sManager: &k8s.Manager{Client: dyn, Clientset: kubernetesfake.NewClientset()}}
+	f := &fakeTermd{}
+	daemon := f.server(t)
+	open := func() terminalCreate {
+		t.Helper()
+		front := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ws, err := upgrader.Upgrade(w, r, nil)
+			if err != nil {
+				return
+			}
+			defer ws.Close()
+			s.daemonTerminal(context.Background(), ws, daemon.URL, "alice", "rsch-repo-1", "", "gemini", "")
+		}))
+		defer front.Close()
+		ws, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(front.URL, "http"), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer ws.Close()
+		_ = ws.SetReadDeadline(time.Now().Add(5 * time.Second))
+		for {
+			kind, p, err := ws.ReadMessage()
+			if err != nil {
+				t.Fatalf("reading: %v", err)
+			}
+			if kind == websocket.TextMessage && strings.Contains(string(p), `"attached"`) {
+				break
+			}
+		}
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		return f.created
+	}
+	if got := open(); got != (terminalCreate{ID: "agent-gemini", Program: "gemini", Prompt: "fix the build"}) {
+		t.Errorf("first open created %+v, want a new conversation with the prompt", got)
+	}
+	if got := open(); got != (terminalCreate{ID: "agent-gemini", Program: "gemini", Resume: true}) {
+		t.Errorf("second open created %+v, want the CLI resumed, no prompt", got)
 	}
 }
