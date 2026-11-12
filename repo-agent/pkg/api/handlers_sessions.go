@@ -151,6 +151,9 @@ func (s *Server) getSessions(c *gin.Context) {
 			Requested: true,
 			UpdatedAt: view.CreatedAt,
 		}
+		if view.Terminal {
+			row.Label, row.Recipe = "Terminal", terminalRecipe
+		}
 		if owner, repo, err := parseRepoURL(view.HTMLURL); err == nil {
 			row.Repo = owner + "/" + repo
 			row.Board = boards.byRepo[strings.ToLower(row.Repo)]
@@ -158,7 +161,7 @@ func (s *Server) getSessions(c *gin.Context) {
 		row.State = sessionState(row)
 		rows = append(rows, row)
 	}
-	rows = append(rows, s.terminalSessionRows(ctx, namespace, running)...)
+	rows = mergeTerminalRows(rows, s.terminalSessionRows(ctx, namespace, running))
 	slices.SortStableFunc(rows, func(a, b SessionRow) int {
 		return cmp.Or(strings.Compare(b.UpdatedAt, a.UpdatedAt), strings.Compare(a.Sandbox, b.Sandbox), strings.Compare(a.Task, b.Task))
 	})
@@ -282,10 +285,17 @@ func sandboxSessionRows(sb *unstructured.Unstructured, boards sessionBoards, pod
 	if len(catalog) == 0 {
 		catalog = boards.all
 	}
+	var terminal []models.RunSession
 	for _, run := range recordedRunSessions(sb, catalog) {
 		if run.Recipe == "" {
 			run.Recipe = factorycli.RunTaskType(run.Run)
 			run.Label = run.Recipe
+		}
+		// A terminal session's setup is not a conversation: the
+		// sandbox's row is its engine CLI's terminal (below).
+		if run.Recipe == terminalRecipe {
+			terminal = append(terminal, run)
+			continue
 		}
 		i, ok := index[run.Task]
 		if !ok {
@@ -310,6 +320,54 @@ func sandboxSessionRows(sb *unstructured.Unstructured, boards sessionBoards, pod
 			rows[i].Title, rows[i].Research = annotations["title"], ""
 		}
 		rows[i].UpdatedAt = maxString(newest.StartedAt, newest.EndedAt)
+	}
+	if len(terminal) > 0 {
+		rows = append(rows, terminalSandboxRow(base, terminal))
+	}
+	return rows
+}
+
+// terminalRecipe is the recipe that sets up a terminal session's sandbox
+// (factory's terminal: research's setup, asking nothing).
+const terminalRecipe = "terminal"
+
+// terminalSandboxRow is a terminal session's row: the CLI of the engine
+// its sandbox was set up for, by the terminal the launcher gives it
+// (agent-<program>), keyed by its session id as research's, so the row
+// asked for and the sandbox that serves it are one. Its setup's runs say
+// it is still starting or failed; once set up, a running pod is a CLI to
+// open (idle) until the terminal's own state says otherwise
+// (mergeTerminalRows).
+func terminalSandboxRow(base SessionRow, runs []models.RunSession) SessionRow {
+	row := base
+	row.Program = terminalProgram(row.Engine)
+	row.Terminal = "agent-" + row.Program
+	row.Recipe, row.Label = terminalRecipe, "Terminal"
+	row.Title = cmp.Or(row.Title, "terminal")
+	row.Runs = runs
+	row.Live = row.Pod == "running" && runs[0].Status != "running"
+	row.UpdatedAt = maxString(runs[0].StartedAt, runs[0].EndedAt)
+	return row
+}
+
+// mergeTerminalRows folds the live terminals into rows: a terminal
+// session's row takes its terminal's state and what it last heard, and
+// every other terminal is a row of its own.
+func mergeTerminalRows(rows, terms []SessionRow) []SessionRow {
+	key := func(r SessionRow) string { return r.Overseer + "/" + r.Sandbox + "/" + r.Terminal }
+	index := map[string]int{}
+	for i, r := range rows {
+		if r.Terminal != "" {
+			index[key(r)] = i
+		}
+	}
+	for _, t := range terms {
+		i, ok := index[key(t)]
+		if !ok {
+			rows = append(rows, t)
+			continue
+		}
+		rows[i].State, rows[i].Doing, rows[i].Live = t.State, t.Doing, true
 	}
 	return rows
 }

@@ -122,6 +122,8 @@ type researchSandboxView struct {
 	// Requested marks a session that has been asked for but has no
 	// sandbox yet: a standing claim on the board, not an object.
 	Requested bool `json:"requested,omitempty"`
+	// Terminal marks a terminal session asked for (the engine's CLI).
+	Terminal bool `json:"terminal,omitempty"`
 	// Paused is a sandbox scaled to zero: the conversation's transcript
 	// survives on the PVC but the engine is gone, so resuming means a
 	// fresh session over the same history.
@@ -266,6 +268,7 @@ func (s *Server) requestedResearchSessions(ctx context.Context, namespace string
 			CreatedAt: req.CreationTimestamp.UTC().Format(time.RFC3339),
 			Title:     kickoff.ResolvedTitle(),
 			Requested: true,
+			Terminal:  spec.Terminal,
 		})
 	}
 	return out, titles

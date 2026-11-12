@@ -28,6 +28,9 @@ type terminalInfo struct {
 // listTerminals is the pod's daemon's terminal sessions, false when it
 // serves none or cannot be reached. A var for the tests.
 var listTerminals = func(ctx context.Context, s *Server, pod *corev1.Pod) ([]terminalInfo, bool) {
+	if s.ACPD == nil {
+		return nil, false
+	}
 	base, ok := s.ACPD.Terminals(ctx, pod)
 	if !ok {
 		return nil, false
@@ -52,9 +55,6 @@ var listTerminals = func(ctx context.Context, s *Server, pod *corev1.Pod) ([]ter
 // keyed namespace/sandbox (the member's namespace and every overseer's the
 // member may see).
 func (s *Server) terminalSessionRows(ctx context.Context, namespace string, running map[string]*corev1.Pod) []SessionRow {
-	if s.ACPD == nil {
-		return nil
-	}
 	ctx, cancel := context.WithTimeout(ctx, researchLiveTimeout)
 	defer cancel()
 	var (

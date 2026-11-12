@@ -57,6 +57,10 @@ type CreateRequest struct {
 	// ResumeID continues that conversation of the engine's (its own id:
 	// acpd's record, handed off to a terminal), rather than its latest.
 	ResumeID string `json:"resumeId,omitempty"`
+	// Prompt opens a new conversation of the engine's with this as its
+	// first prompt, interactive from there (a session started from the
+	// board's box); it is never resumed. Engines only.
+	Prompt string `json:"prompt,omitempty"`
 	// CWD is the working directory; empty, the workspace's checkout.
 	CWD  string `json:"cwd,omitempty"`
 	Cols int    `json:"cols,omitempty"`
@@ -201,6 +205,23 @@ func (m *Manager) spec(req CreateRequest, apiKey string) (Spec, error) {
 		argv = engineArgv(cmd, "--continue", req.Resume || req.ResumeID != "")
 	default:
 		return Spec{}, fmt.Errorf("unknown program %q (shell, gemini, claude, agy)", program)
+	}
+	if req.Prompt != "" {
+		// The prompt is an argument of its own, never shell text.
+		switch program {
+		case "gemini":
+			argv = []string{"gemini", "--skip-trust", "--include-directories", m.root, "-i", req.Prompt}
+		case "claude":
+			argv = []string{"claude", req.Prompt}
+		case "agy":
+			argv = []string{"agy"}
+			if apiKey != "" {
+				argv = append(argv, "--settings", `{"modelProvider":"gemini"}`)
+			}
+			argv = append(argv, "--add-dir", m.root, "-i", req.Prompt)
+		default:
+			return Spec{}, fmt.Errorf("a %s session takes no prompt", program)
+		}
 	}
 	if apiKey != "" {
 		switch program {

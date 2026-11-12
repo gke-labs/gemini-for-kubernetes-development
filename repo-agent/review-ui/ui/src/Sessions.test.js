@@ -8,7 +8,7 @@ jest.mock('xterm', () => ({ Terminal: class { open() {} write() {} dispose() {} 
 jest.mock('xterm-addon-fit', () => ({ FitAddon: class { fit() {} } }));
 
 const Sessions = require('./Sessions').default;
-const { apiBaseOf, parseItemRef, refBoard, itemSuggestions, pickSuggestion, orderedRows, visibleRows, rowDoing, rowKey, sessionsRoute } = require('./Sessions');
+const { apiBaseOf, parseItemRef, refBoard, itemSuggestions, pickSuggestion, orderedRows, visibleRows, rowDoing, rowKey, sessionsRoute, terminalReady, terminalTarget } = require('./Sessions');
 
 const act = React.act || domAct;
 global.IS_REACT_ACT_ENVIRONMENT = true;
@@ -206,6 +206,73 @@ describe('the engine chip', () => {
     });
     test('the pick is what is sent', async () => {
         expect((await startWith('gemini', 'antigravity')).sent).toBe('antigravity');
+    });
+});
+
+describe('a terminal session', () => {
+    const post = () => {
+        const call = global.fetch.mock.calls.find(c => c[0] === '/api/board/g4k/research');
+        return call && JSON.parse(call[1].body);
+    };
+    const setValue = (el, v) => {
+        const set = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el), 'value').set;
+        set.call(el, v);
+        el.dispatchEvent(new Event(el.tagName === 'SELECT' ? 'change' : 'input', { bubbles: true }));
+    };
+    const radio = (label) => Array.from(container.querySelectorAll('[role="radio"]')).find(b => b.textContent === label);
+    const renderClaudeBoard = async () => {
+        global.fetch = jest.fn((url, opts) => {
+            if (url === '/api/sessions') return Promise.resolve({ ok: true, json: () => Promise.resolve({ sessions: [] }) });
+            if (url === '/api/boards') return Promise.resolve({ ok: true, json: () => Promise.resolve([{ name: 'g4k', repoURL: 'https://github.com/gke-labs/g4k', engine: 'claude' }]) });
+            if (url === '/api/board/g4k/research' && opts && opts.method === 'POST') {
+                return Promise.resolve({ ok: true, json: () => Promise.resolve({ sessionId: 't1', title: 'terminal', terminal: true }) });
+            }
+            return Promise.resolve({ ok: false, status: 404, json: () => Promise.resolve({}), text: () => Promise.resolve('') });
+        });
+        await act(async () => { root.render(<Sessions namespace="alice" />); });
+        await flush();
+    };
+
+    test('Terminal starts the engine CLI: claude offered, an empty box a bare CLI, the canned prompts gone', async () => {
+        await renderClaudeBoard();
+        expect(radio('Rich').getAttribute('aria-checked')).toBe('true');
+        expect(button('Start').disabled).toBe(true);
+        await act(async () => { radio('Terminal').click(); });
+        const chip = container.querySelector('select[aria-label="Engine"]');
+        expect(Array.from(chip.options).map(o => o.value)).toEqual(['gemini', 'claude', 'antigravity']);
+        expect(chip.value).toBe('claude');
+        expect(button('overview')).toBeUndefined();
+        expect(button('Start').disabled).toBe(false);
+        await act(async () => { button('Start').click(); });
+        await flush();
+        expect(post()).toEqual({ engine: 'claude', terminal: true });
+        expect(window.location.hash).toBe('#/sessions/research/t1');
+        expect(container.textContent).toContain('setting up the sandbox');
+        // The choice is kept for the next session.
+        expect(localStorage.getItem('sessions.mode')).toContain('terminal');
+    });
+
+    test('the box is the CLI\'s first prompt, and a #ref in it is text, not the launcher', async () => {
+        await renderClaudeBoard();
+        await act(async () => { radio('Terminal').click(); });
+        await act(async () => { setValue(container.querySelector('textarea[aria-label="Start a session"]'), 'fix #12'); });
+        expect(container.querySelector('[aria-label="Item launcher"]')).toBeNull();
+        await act(async () => { button('Start').click(); });
+        await flush();
+        expect(post()).toEqual({ kind: 'topic', topic: 'fix #12', engine: 'claude', terminal: true });
+    });
+});
+
+describe('terminal rows', () => {
+    test('a terminal session opens once set up and running, its CLI by its program', () => {
+        const row = { sandbox: 'rsch-x', research: 'r', terminal: 'agent-claude', program: 'claude', recipe: 'terminal', pod: 'running', runs: [{ status: 'done' }] };
+        expect(terminalReady(row)).toBe(true);
+        expect(terminalReady({ ...row, state: 'working' })).toBe(true);
+        expect(terminalReady({ ...row, runs: [{ status: 'running' }] })).toBe(false);
+        expect(terminalReady({ ...row, pod: 'paused' })).toBe(false);
+        expect(terminalReady({ research: 'r', recipe: 'terminal', requested: true })).toBe(false);
+        expect(terminalTarget(row)).toEqual({ program: 'claude' });
+        expect(terminalTarget({ ...row, terminal: 'handoff-recipe-research-1', program: 'gemini' })).toEqual({ terminal: 'handoff-recipe-research-1' });
     });
 });
 

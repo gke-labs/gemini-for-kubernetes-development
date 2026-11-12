@@ -75,6 +75,9 @@ type researchClaim struct {
 	kickoff research.Kickoff
 	// engine is the agent the member picked, empty for the board's.
 	engine string
+	// terminal: the session is the engine's CLI in a terminal (`factory
+	// recipe terminal`), the kickoff's topic its first prompt.
+	terminal bool
 }
 
 // researchKey is the runner's single-flight key. The sandbox name
@@ -150,11 +153,16 @@ func (r *Reconciler) ensureResearchClaims(ctx context.Context, work *workState, 
 		}
 		// The question is what the recipe's start asks. A canned kind is
 		// asked as the text it renders to, which is also what the board's
-		// fill controls put in the box.
-		topic, err := researchTopic(claim.kickoff, work)
-		if err != nil {
-			logger.Info("research claim has no question to ask", "session", claim.sessionID, "reason", err.Error())
-			continue
+		// fill controls put in the box. A terminal asks nothing: its
+		// topic is the CLI's, when the member opens it.
+		recipeName, inputs := "terminal", map[string]string(nil)
+		if !claim.terminal {
+			topic, err := researchTopic(claim.kickoff, work)
+			if err != nil {
+				logger.Info("research claim has no question to ask", "session", claim.sessionID, "reason", err.Error())
+				continue
+			}
+			recipeName, inputs = "research", map[string]string{"topic": topic}
 		}
 		// The member's token: the session runs as them (research is
 		// credentials: full), so git and gh in it work as the member.
@@ -162,13 +170,17 @@ func (r *Reconciler) ensureResearchClaims(ctx context.Context, work *workState, 
 		if err != nil {
 			continue
 		}
-		opts := r.recipeOptions(work, "research", claim.member, "", fmt.Sprintf("https://github.com/%s/%s", work.owner, work.repo), token, factorycli.ResearchRunName(claim.sessionID))
+		opts := r.recipeOptions(work, recipeName, claim.member, "", fmt.Sprintf("https://github.com/%s/%s", work.owner, work.repo), token, factorycli.ResearchRunName(claim.sessionID))
 		opts.Session, opts.Detached = claim.sessionID, true
-		opts.Inputs = map[string]string{"topic": topic}
+		opts.Inputs = inputs
 		// The member's pick, else the board's, read at launch like a
 		// task's engine: switching the board changes the next session,
-		// not the ones already running.
+		// not the ones already running. A terminal's CLI needs no session
+		// daemon, so it runs claude too.
 		opts.Engine = acpd.ResearchEngineFor(cmp.Or(claim.engine, boardEngine(work.board)))
+		if claim.terminal {
+			opts.Engine = cmp.Or(claim.engine, boardEngine(work.board), acpd.EngineGemini)
+		}
 		// A cold image pull and a fresh PVC, and short enough that a
 		// wedged create becomes a failure rather than a permanent
 		// "starting". Deliberately no secret: mounting the member secret
@@ -181,7 +193,7 @@ func (r *Reconciler) ensureResearchClaims(ctx context.Context, work *workState, 
 		opts.WorkspaceDiskSize = ""
 		opts.Sandbox = factorycli.SandboxSize{StorageClass: opts.Sandbox.StorageClass}
 		if r.Factory.StartRecipe(key, opts) {
-			logger.Info("launched factory recipe research", "session", claim.sessionID, "board", work.board.Name)
+			logger.Info("launched factory recipe "+recipeName, "session", claim.sessionID, "board", work.board.Name)
 		}
 	}
 }
@@ -214,7 +226,13 @@ func researchTopic(k research.Kickoff, work *workState) (string, error) {
 // on the claim at that point is lost.
 func (r *Reconciler) stampResearchTitle(ctx context.Context, work *workState, claim researchClaim) {
 	title := claim.kickoff.ResolvedTitle()
-	if title == "" {
+	// A terminal's first prompt goes with it: the board starts the CLI
+	// with it, and removes it then.
+	prompt := ""
+	if claim.terminal {
+		prompt = strings.TrimSpace(claim.kickoff.Topic)
+	}
+	if title == "" && prompt == "" {
 		return
 	}
 	sb := work.findSandbox(claim.member, factorycli.ResearchSandboxName(work.repo, claim.sessionID))
@@ -225,11 +243,18 @@ func (r *Reconciler) stampResearchTitle(ctx context.Context, work *workState, cl
 	if annotations == nil {
 		annotations = map[string]string{}
 	}
-	// Only ever written once: a member's rename wins.
+	// Only ever written once: a member's rename wins, and a prompt once
+	// used is not asked again.
 	if annotations[research.TitleAnnotation] != "" {
 		return
 	}
+	if title == "" {
+		title = "terminal"
+	}
 	annotations[research.TitleAnnotation] = title
+	if prompt != "" {
+		annotations[research.TerminalPromptAnnotation] = prompt
+	}
 	sb.SetAnnotations(annotations)
 	if err := r.Update(ctx, sb); err != nil {
 		log.FromContext(ctx).Error(err, "unable to record the research title", "session", claim.sessionID)

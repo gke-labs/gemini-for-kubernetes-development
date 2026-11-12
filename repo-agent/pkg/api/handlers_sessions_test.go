@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	corev1 "k8s.io/api/core/v1"
@@ -221,5 +222,57 @@ func TestSessionsCarryTheOverseersTheMemberMaySee(t *testing.T) {
 	}
 	if len(got.Sessions) != 1 || got.Sessions[0].Overseer != "" {
 		t.Errorf("?overseers=false: %+v", got.Sessions)
+	}
+}
+
+// A terminal session's sandbox is one row: its engine CLI's terminal
+// (agent-<program>), keyed by its session as research's, not its setup's
+// run. Set up and not opened, it is idle; its terminal running, it says
+// what the terminal says.
+func TestATerminalSessionIsItsTerminal(t *testing.T) {
+	const id = "0f0e0d0c-0b0a-4908-8706-050403020100"
+	sb := legacyResearchSandboxCR("alice", id, "repo", false)
+	now := time.Now().UTC()
+	run, _ := json.Marshal(factorycli.RecordedRun{Name: factorycli.ResearchRunName(id), Task: "recipe-terminal-1", Recipe: "terminal", State: "Completed", StartedAt: now, EndedAt: &now})
+	annotations := sb.GetAnnotations()
+	annotations["sandbox.gemini.google.com/terminal-run"] = string(run)
+	annotations[annoTaskEngine] = "claude"
+	sb.SetAnnotations(annotations)
+	pod := researchPod("alice", sb.GetName(), "10.0.0.1", corev1.PodRunning)
+
+	rows := listSessions(t, sessionsTestServer(t, &fakeSessions{}, []*unstructured.Unstructured{sb}, pod))
+	if len(rows) != 1 {
+		t.Fatalf("got %d rows, want 1: %+v", len(rows), rows)
+	}
+	row := rows[0]
+	if row.Terminal != "agent-claude" || row.Program != "claude" || row.Research != id || row.Task != "" || row.Label != "Terminal" || row.State != "idle" {
+		t.Errorf("row: %+v", row)
+	}
+
+	prev := listTerminals
+	t.Cleanup(func() { listTerminals = prev })
+	listTerminals = func(context.Context, *Server, *corev1.Pod) ([]terminalInfo, bool) {
+		return []terminalInfo{
+			{ID: "agent-claude", Program: "claude", State: "needs-you", Message: "Allow edit?"},
+			{ID: "agent-gemini", Program: "gemini", State: "idle"},
+		}, true
+	}
+	rows = listSessions(t, sessionsTestServer(t, &fakeSessions{}, []*unstructured.Unstructured{sb}, pod))
+	if len(rows) != 2 {
+		t.Fatalf("got %d rows, want the session's and the other terminal's: %+v", len(rows), rows)
+	}
+	for _, row := range rows {
+		switch row.Terminal {
+		case "agent-claude":
+			if row.Research != id || row.State != "needs-you" || row.Doing != "Allow edit?" || !row.Live {
+				t.Errorf("the session's row: %+v", row)
+			}
+		case "agent-gemini":
+			if row.Research != "" {
+				t.Errorf("the other terminal's row: %+v", row)
+			}
+		default:
+			t.Errorf("row: %+v", row)
+		}
 	}
 }

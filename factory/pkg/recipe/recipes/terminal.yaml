@@ -1,0 +1,30 @@
+# factory recipe terminal --url <repository> [--session ID]: a sandbox of
+# its own (one per session) for the member to work in through an engine's
+# CLI in a terminal: the board's Sessions page, + New, Terminal.
+#
+# It is research's sandbox and research's setup without research's
+# question: the repository cloned, git and gh working as the member
+# (credentials: full; origin their fork when one can be made, upstream the
+# repository), the engine configured. It asks nothing. The conversation is
+# the CLI's, which the board starts in the sandbox's daemon (termd) when
+# the member opens it, with what they typed in the box as its first prompt.
+name: terminal
+label: Terminal
+on: [repo]
+as: coder
+credentials: full
+sandbox:
+  prefix: rsch              # research's: rsch-<repo>-<hash of --sandbox-key>, one per session
+  cpu-request: "4"          # a session builds and tests the whole repository
+  cpu-limit: "8"
+  memory-request: 12Gi
+  memory-limit: 16Gi
+  ephemeral-storage: 10Gi   # GKE Autopilot's most
+  disk: 40Gi
+task-type: terminal
+
+start:
+  steps:
+    - uses: setup-git
+    - uses: setup-repo
+    - uses: configure-engine

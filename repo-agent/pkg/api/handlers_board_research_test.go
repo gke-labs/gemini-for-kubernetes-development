@@ -284,3 +284,35 @@ func TestStartResearchSessionCarriesThePickedEngine(t *testing.T) {
 		}
 	}
 }
+
+// A terminal session runs any engine's CLI, claude too, and needs no
+// question: an empty box is a bare CLI, named "terminal".
+func TestStartTerminalSession(t *testing.T) {
+	for body, want := range map[string]boardv1alpha1.ResearchRequest{
+		`{"terminal":true,"engine":"claude"}`:                      {Engine: "claude", Terminal: true, Title: "terminal"},
+		`{"terminal":true,"kind":"topic","topic":"fix the build"}`: {Kind: "topic", Topic: "fix the build", Terminal: true},
+		`{"terminal":true,"kind":"topic","topic":"  "}`:            {Terminal: true, Title: "terminal"},
+	} {
+		_, r, dyn := boardTestServer(t, map[string]string{}, boardCR())
+		req, _ := http.NewRequest("POST", "/board/myboard/research", strings.NewReader(body))
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusAccepted || !strings.Contains(w.Body.String(), `"terminal":true`) {
+			t.Fatalf("%s: %d %s", body, w.Code, w.Body.String())
+		}
+		got := *theRequest(t, dyn, "alice").Spec.Research
+		got.SessionID = ""
+		if got != want {
+			t.Errorf("%s: request %+v, want %+v", body, got, want)
+		}
+	}
+	for _, body := range []string{`{"terminal":true,"engine":"vim"}`, `{"terminal":true,"kind":"onboard"}`} {
+		_, r, _ := boardTestServer(t, map[string]string{}, boardCR())
+		req, _ := http.NewRequest("POST", "/board/myboard/research", strings.NewReader(body))
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("%s: status = %d, want 400", body, w.Code)
+		}
+	}
+}

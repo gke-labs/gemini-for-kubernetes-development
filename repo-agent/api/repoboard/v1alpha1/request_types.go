@@ -200,10 +200,18 @@ type ResearchRequest struct {
 
 	// Engine is the agent the member picked for the conversation. Empty
 	// means the board's (a claude board's research runs on gemini: the
-	// session daemon has no claude engine).
+	// session daemon has no claude engine). claude only with Terminal:
+	// the CLI needs no session daemon.
 	// +kubebuilder:validation:Optional
-	// +kubebuilder:validation:Enum=gemini;antigravity
+	// +kubebuilder:validation:Enum=gemini;antigravity;claude
 	Engine string `json:"engine,omitempty"`
+
+	// Terminal makes the session the engine's CLI in a terminal rather
+	// than a conversation in the session view: the sandbox is set up as
+	// research's (`factory recipe terminal`) and asks nothing; Topic, when
+	// set, is the CLI's first prompt.
+	// +kubebuilder:validation:Optional
+	Terminal bool `json:"terminal,omitempty"`
 }
 
 // RequestSpec is the click: who made it, on what, and with what

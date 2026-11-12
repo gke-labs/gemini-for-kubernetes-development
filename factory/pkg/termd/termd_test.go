@@ -254,6 +254,37 @@ func TestSpec(t *testing.T) {
 	}
 }
 
+// A prompt opens a new conversation with it, as an argument of its own
+// (no shell to quote it through), and is never resumed.
+func TestSpecPrompt(t *testing.T) {
+	m := NewManager(t.TempDir())
+	prompt := `why "this"; $(rm -rf /)`
+	for program, want := range map[string][]string{
+		"gemini": {"gemini", "-i", prompt},
+		"claude": {"claude", prompt},
+		"agy":    {"agy", "--settings", `{"modelProvider":"gemini"}`, "-i", prompt},
+	} {
+		spec, err := m.spec(CreateRequest{Program: program, Resume: true, Prompt: prompt}, "k")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if spec.Argv[0] != program || spec.Argv[len(spec.Argv)-1] != prompt {
+			t.Errorf("%s argv %q, want %s ... %q", program, spec.Argv, program, prompt)
+		}
+		for _, w := range want {
+			if !contains(spec.Argv, w) {
+				t.Errorf("%s argv %q, want %q in it", program, spec.Argv, w)
+			}
+		}
+		if contains(spec.Argv, "--continue") || contains(spec.Argv, "--resume") {
+			t.Errorf("%s argv %q resumes", program, spec.Argv)
+		}
+	}
+	if _, err := m.spec(CreateRequest{Program: "shell", Prompt: "x"}, ""); err == nil {
+		t.Error("a shell took a prompt")
+	}
+}
+
 func contains(xs []string, x string) bool {
 	for _, v := range xs {
 		if v == x {
