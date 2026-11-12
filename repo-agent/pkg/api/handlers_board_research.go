@@ -121,6 +121,9 @@ func (s *Server) startResearchSession(c *gin.Context) {
 		research.Kickoff
 		Engine   string `json:"engine"`
 		Terminal bool   `json:"terminal"`
+		// Overseer starts it in that overseer's namespace instead,
+		// shared with everyone it allows, as its coder bot.
+		Overseer string `json:"overseer"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body", "details": err.Error()})
@@ -155,10 +158,26 @@ func (s *Server) startResearchSession(c *gin.Context) {
 		return
 	}
 	repoURL, _, _ := unstructured.NestedString(board.Object, "spec", "repoURL")
-	_, repo, err := parseRepoURL(repoURL)
+	owner, repo, err := parseRepoURL(repoURL)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid repoURL on board"})
 		return
+	}
+	// A shared session: the overseer must watch this repository and allow
+	// the member (the controller checks again before it launches).
+	sessionNamespace := namespace
+	if body.Overseer != "" {
+		ov, err := s.K8sManager.GetOverseer(ctx, body.Overseer)
+		if !safeTaskName.MatchString(body.Overseer) || err != nil || !s.overseerAllows(c, ov) {
+			c.JSON(http.StatusForbidden, gin.H{"error": "no such overseer, or it does not allow you"})
+			return
+		}
+		ovURL, _, _ := unstructured.NestedString(ov.Object, "spec", "repoURL")
+		if ovOwner, ovRepo, err := parseRepoURL(ovURL); err != nil || !strings.EqualFold(ovOwner, owner) || !strings.EqualFold(ovRepo, repo) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("overseer %s does not watch %s/%s", body.Overseer, owner, repo)})
+			return
+		}
+		sessionNamespace = "overseer-" + body.Overseer
 	}
 
 	// The id is minted here rather than by the caller: it names the
@@ -181,6 +200,7 @@ func (s *Server) startResearchSession(c *gin.Context) {
 			Title:     kickoff.Title,
 			Engine:    body.Engine,
 			Terminal:  body.Terminal,
+			Overseer:  body.Overseer,
 		},
 	}); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to record research request", "details": err.Error()})
@@ -192,7 +212,8 @@ func (s *Server) startResearchSession(c *gin.Context) {
 	c.JSON(http.StatusAccepted, gin.H{
 		"sessionId": sessionID,
 		"sandbox":   factorycli.ResearchSandboxName(repo, sessionID),
-		"namespace": namespace,
+		"namespace": sessionNamespace,
+		"overseer":  body.Overseer,
 		"repo":      repo,
 		"title":     kickoff.ResolvedTitle(),
 		"terminal":  body.Terminal,

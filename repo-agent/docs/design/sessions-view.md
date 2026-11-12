@@ -153,6 +153,27 @@ sandbox…"), and the row appears under Working. It posts to the board's
 research route, `POST /api/board/:board/research`, until step 4 replaces
 it.
 
+### Shared in an overseer's namespace
+
+A session is the member's, in their namespace, unless the **Where** chip
+says otherwise: it appears when an overseer the member is allowed on
+(`overseerAllows`: admin, its allowlist, or push on its repository)
+watches the selected repository, and offers `mine` or `shared · <name>`.
+Shared, the session lives in `overseer-<name>` and everyone that overseer
+allows sees it on their Sessions page and can drive it (the overseer
+routes already serve its prompt, permissions, handoff and terminal).
+
+It runs as the overseer's **coder** bot (`spec.roles.coder.users[0]`,
+its `user-<login>` secret there; the namespace's factory-user when it has
+no coder), never as the member who started it: git, gh and the engine are
+the bot's, whoever types. The click is the board's research Request with
+`research.overseer`; the API checks the overseer allows the member and
+watches the repository, and the board controller checks again (the
+Request is the member's to write) before it launches `factory recipe
+research|terminal --namespace overseer-<name> --user <coder>`. A refused
+claim fails its Request saying why. Rich and Terminal both work there;
+writes the overseer routes do not serve (Save notes, revises) do not.
+
 ## API
 
 - `GET /api/sessions`: the rows. Every sandbox in the member's namespace,

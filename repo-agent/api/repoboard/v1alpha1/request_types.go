@@ -212,6 +212,15 @@ type ResearchRequest struct {
 	// set, is the CLI's first prompt.
 	// +kubebuilder:validation:Optional
 	Terminal bool `json:"terminal,omitempty"`
+
+	// Overseer makes the session the overseer's, in its namespace
+	// (overseer-<name>), shared with everyone it allows: it runs as the
+	// overseer's coder bot rather than the member. The overseer must
+	// watch the board's repository and allow the member.
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	// +kubebuilder:validation:MaxLength=50
+	Overseer string `json:"overseer,omitempty"`
 }
 
 // RequestSpec is the click: who made it, on what, and with what

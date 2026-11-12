@@ -263,6 +263,47 @@ describe('a terminal session', () => {
     });
 });
 
+describe('a shared session', () => {
+    const render = async (overseers) => {
+        global.fetch = jest.fn((url, opts) => {
+            if (url === '/api/sessions') return Promise.resolve({ ok: true, json: () => Promise.resolve({ sessions: [] }) });
+            if (url === '/api/boards') return Promise.resolve({ ok: true, json: () => Promise.resolve([{ name: 'g4k', repoURL: 'https://github.com/gke-labs/g4k' }]) });
+            if (url === '/api/overseers') return Promise.resolve({ ok: true, json: () => Promise.resolve(overseers) });
+            if (url === '/api/board/g4k/research' && opts && opts.method === 'POST') {
+                return Promise.resolve({ ok: true, json: () => Promise.resolve({ sessionId: 's1', title: 'q', overseer: 'g4k-ov' }) });
+            }
+            return Promise.resolve({ ok: false, status: 404, json: () => Promise.resolve({}), text: () => Promise.resolve('') });
+        });
+        await act(async () => { root.render(<Sessions namespace="alice" />); });
+        await flush();
+    };
+    const setValue = (el, v) => {
+        const set = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el), 'value').set;
+        set.call(el, v);
+        el.dispatchEvent(new Event(el.tagName === 'SELECT' ? 'change' : 'input', { bubbles: true }));
+    };
+
+    test('an overseer of the repository is offered, and picking it starts the session there', async () => {
+        await render([
+            { metadata: { name: 'g4k-ov' }, spec: { repoURL: 'https://github.com/gke-labs/g4k.git' } },
+            { metadata: { name: 'kcc' }, spec: { repoURL: 'https://github.com/GoogleCloudPlatform/k8s-config-connector' } },
+        ]);
+        const where = container.querySelector('select[aria-label="Where"]');
+        expect(Array.from(where.options).map(o => o.textContent)).toEqual(['mine', 'shared · g4k-ov']);
+        await act(async () => { setValue(where, 'g4k-ov'); });
+        await act(async () => { setValue(container.querySelector('textarea[aria-label="Start a session"]'), 'q'); });
+        await act(async () => { button('Start').click(); });
+        await flush();
+        const call = global.fetch.mock.calls.find(c => c[0] === '/api/board/g4k/research');
+        expect(JSON.parse(call[1].body)).toEqual({ kind: 'topic', topic: 'q', engine: 'gemini', overseer: 'g4k-ov' });
+    });
+
+    test('no overseer of the repository, no choice: the session is the member\'s', async () => {
+        await render([{ metadata: { name: 'kcc' }, spec: { repoURL: 'https://github.com/GoogleCloudPlatform/k8s-config-connector' } }]);
+        expect(container.querySelector('select[aria-label="Where"]')).toBeNull();
+    });
+});
+
 describe('terminal rows', () => {
     test('a terminal session opens once set up and running, its CLI by its program', () => {
         const row = { sandbox: 'rsch-x', research: 'r', terminal: 'agent-claude', program: 'claude', recipe: 'terminal', pod: 'running', runs: [{ status: 'done' }] };

@@ -23,6 +23,8 @@ import (
 	"strings"
 	"testing"
 
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+
 	boardv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repoboard/v1alpha1"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/factorycli"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/research"
@@ -313,6 +315,56 @@ func TestStartTerminalSession(t *testing.T) {
 		r.ServeHTTP(w, req)
 		if w.Code != http.StatusBadRequest {
 			t.Errorf("%s: status = %d, want 400", body, w.Code)
+		}
+	}
+}
+
+// apiOverseer is an overseer of repoURL allowing the logins listed.
+func apiOverseer(name, repoURL string, allowlisted ...string) *unstructured.Unstructured {
+	users := []interface{}{}
+	for _, u := range allowlisted {
+		users = append(users, u)
+	}
+	return &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "overseer.gemini.google.com/v1alpha1",
+		"kind":       "Overseer",
+		"metadata":   map[string]interface{}{"name": name},
+		"spec":       map[string]interface{}{"repoURL": repoURL, "allowlistedUsers": users},
+	}}
+}
+
+// A session shared in an overseer's namespace: the overseer must allow the
+// member and watch the board's repository; the click names it.
+func TestStartSharedSessionInAnOverseer(t *testing.T) {
+	repoURL, _, _ := unstructured.NestedString(boardCR().Object, "spec", "repoURL")
+	_, r, dyn := boardTestServer(t, map[string]string{}, boardCR(), apiOverseer("kcc", repoURL, "alice"))
+	req, _ := http.NewRequest("POST", "/board/myboard/research", strings.NewReader(`{"kind":"topic","topic":"q","overseer":"kcc"}`))
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusAccepted || !strings.Contains(w.Body.String(), `"namespace":"overseer-kcc"`) {
+		t.Fatalf("%d %s", w.Code, w.Body.String())
+	}
+	if got := theRequest(t, dyn, "alice").Spec.Research.Overseer; got != "kcc" {
+		t.Errorf("overseer = %q, want kcc", got)
+	}
+
+	for name, tc := range map[string]struct {
+		ov   *unstructured.Unstructured
+		want int
+	}{
+		"not allowed":  {apiOverseer("kcc", repoURL), http.StatusForbidden},
+		"another repo": {apiOverseer("kcc", "https://github.com/other/repo", "alice"), http.StatusBadRequest},
+		"none":         {apiOverseer("other", repoURL, "alice"), http.StatusForbidden},
+	} {
+		_, r, dyn := boardTestServer(t, map[string]string{}, boardCR(), tc.ov)
+		req, _ := http.NewRequest("POST", "/board/myboard/research", strings.NewReader(`{"kind":"topic","topic":"q","overseer":"kcc"}`))
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		if w.Code != tc.want {
+			t.Errorf("%s: %d %s, want %d", name, w.Code, w.Body.String(), tc.want)
+		}
+		if filed := filedRequests(t, dyn, "alice"); len(filed) != 0 {
+			t.Errorf("%s: a refused click must file nothing, got %+v", name, filed)
 		}
 	}
 }

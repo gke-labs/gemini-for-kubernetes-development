@@ -122,7 +122,13 @@ func (s *Server) getSessions(c *gin.Context) {
 		rows = append(rows, sandboxSessionRows(sb, boards, podState(sb, pods))...)
 	}
 	if c.Query("overseers") != "false" {
-		rows = append(rows, s.overseerSessionRows(c, boards, podsIn)...)
+		for _, row := range s.overseerSessionRows(c, boards, podsIn) {
+			// A session shared in an overseer's namespace is served too.
+			if row.Research != "" {
+				exists[row.Research] = true
+			}
+			rows = append(rows, row)
+		}
 	}
 	s.attachSessionLiveState(ctx, rows, func(row SessionRow) *corev1.Pod {
 		ns := namespace
@@ -153,6 +159,9 @@ func (s *Server) getSessions(c *gin.Context) {
 		}
 		if view.Terminal {
 			row.Label, row.Recipe = "Terminal", terminalRecipe
+		}
+		if view.Overseer != "" {
+			row.Overseer, row.Board = view.Overseer, ""
 		}
 		if owner, repo, err := parseRepoURL(view.HTMLURL); err == nil {
 			row.Repo = owner + "/" + repo

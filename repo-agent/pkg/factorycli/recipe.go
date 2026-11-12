@@ -38,6 +38,10 @@ type RecipeOptions struct {
 	// Namespace the task (and its sandbox) runs in; factory resolves the
 	// task identity from the factory-user Secret in this namespace.
 	Namespace string
+	// User runs it as that bot (factory --user: the user-<login> Secret in
+	// Namespace, not factory-user) - an overseer's, for a session shared
+	// in its namespace.
+	User string
 	// NewSession opens a new conversation of the recipe's session instead
 	// of continuing it (factory --new-session).
 	NewSession bool
@@ -151,6 +155,9 @@ func recipeArgs(opts RecipeOptions, timeout time.Duration) []string {
 	)
 	if opts.Session != "" {
 		args = append(args, "--sandbox-key", opts.Session)
+	}
+	if opts.User != "" {
+		args = append(args, "--user", opts.User)
 	}
 	if opts.Detached {
 		args = append(args, "--detached")

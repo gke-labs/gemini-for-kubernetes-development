@@ -33,6 +33,7 @@ package api
 // another member's conversation by naming it.
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -124,6 +125,8 @@ type researchSandboxView struct {
 	Requested bool `json:"requested,omitempty"`
 	// Terminal marks a terminal session asked for (the engine's CLI).
 	Terminal bool `json:"terminal,omitempty"`
+	// Overseer is the overseer a session asked for is shared in.
+	Overseer string `json:"overseer,omitempty"`
 	// Paused is a sandbox scaled to zero: the conversation's transcript
 	// survives on the PVC but the engine is gone, so resuming means a
 	// fresh session over the same history.
@@ -262,13 +265,14 @@ func (s *Server) requestedResearchSessions(ctx context.Context, namespace string
 		out = append(out, researchSandboxView{
 			SessionID: spec.SessionID,
 			Sandbox:   factorycli.ResearchSandboxName(repo, spec.SessionID),
-			Namespace: namespace,
+			Namespace: cmp.Or(overseerNamespace(spec.Overseer), namespace),
 			Repo:      repo,
 			HTMLURL:   repoURL,
 			CreatedAt: req.CreationTimestamp.UTC().Format(time.RFC3339),
 			Title:     kickoff.ResolvedTitle(),
 			Requested: true,
 			Terminal:  spec.Terminal,
+			Overseer:  spec.Overseer,
 		})
 	}
 	return out, titles
@@ -660,4 +664,13 @@ func (s *Server) researchBoard(ctx context.Context, view researchSandboxView) (*
 		}
 	}
 	return nil, fmt.Errorf("no board in %s for %s/%s", view.Namespace, owner, repo)
+}
+
+// overseerNamespace is the overseer's namespace (overseer-<name>), "" for
+// none.
+func overseerNamespace(overseer string) string {
+	if overseer == "" {
+		return ""
+	}
+	return "overseer-" + overseer
 }
