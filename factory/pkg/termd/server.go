@@ -191,7 +191,14 @@ func (m *Manager) spec(req CreateRequest, apiKey string) (Spec, error) {
 	case "agy":
 		// agy's CLI takes no conversation id: its latest in the checkout,
 		// which a conversation just handed off is.
-		argv = engineArgv("agy --add-dir "+m.root, "--continue", req.Resume || req.ResumeID != "")
+		cmd := "agy --add-dir " + m.root
+		if apiKey != "" {
+			// agy reads GEMINI_API_KEY only on the gemini model provider
+			// (agy 1.1.13); without it, it asks for a browser sign-in.
+			// Session-only (--settings is never saved).
+			cmd = `agy --settings '{"modelProvider":"gemini"}' --add-dir ` + m.root
+		}
+		argv = engineArgv(cmd, "--continue", req.Resume || req.ResumeID != "")
 	default:
 		return Spec{}, fmt.Errorf("unknown program %q (shell, gemini, claude, agy)", program)
 	}
