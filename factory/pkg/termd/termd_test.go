@@ -285,6 +285,20 @@ func TestSpecPrompt(t *testing.T) {
 	}
 }
 
+// A conversation handed off to agy's CLI is opened by its id (acpd runs
+// agy's own ACP server, whose store is the CLI's), not its latest.
+func TestSpecAgyResumesTheHandedOffConversation(t *testing.T) {
+	m := NewManager(t.TempDir())
+	spec, err := m.spec(CreateRequest{Program: "agy", ResumeID: "8708ebeb-ad4b-446c-b608-fd21d222655f"}, "k")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"agy", "--settings", `{"modelProvider":"gemini"}`, "--add-dir", m.root, "--conversation", "8708ebeb-ad4b-446c-b608-fd21d222655f"}
+	if strings.Join(spec.Argv, "|") != strings.Join(want, "|") {
+		t.Errorf("argv %q, want %q", spec.Argv, want)
+	}
+}
+
 func contains(xs []string, x string) bool {
 	for _, v := range xs {
 		if v == x {

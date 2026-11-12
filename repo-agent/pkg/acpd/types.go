@@ -24,7 +24,7 @@ import (
 const APIKeyHeader = "X-Engine-Api-Key"
 
 // Engine names an agent binary acpd knows how to spawn. gemini and
-// antigravity (Google's agy_acp_server) are registered server-side; an
+// antigravity (agy acp) are registered server-side; an
 // unknown engine fails at create. Both read the same GEMINI_API_KEY.
 const (
 	EngineGemini      = "gemini"

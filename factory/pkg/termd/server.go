@@ -193,8 +193,6 @@ func (m *Manager) spec(req CreateRequest, apiKey string) (Spec, error) {
 			argv = []string{"/bin/sh", "-c", "exec claude --resume " + req.ResumeID}
 		}
 	case "agy":
-		// agy's CLI takes no conversation id: its latest in the checkout,
-		// which a conversation just handed off is.
 		cmd := "agy --add-dir " + m.root
 		if apiKey != "" {
 			// agy reads GEMINI_API_KEY only on the gemini model provider
@@ -202,7 +200,17 @@ func (m *Manager) spec(req CreateRequest, apiKey string) (Spec, error) {
 			// Session-only (--settings is never saved).
 			cmd = `agy --settings '{"modelProvider":"gemini"}' --add-dir ` + m.root
 		}
-		argv = engineArgv(cmd, "--continue", req.Resume || req.ResumeID != "")
+		argv = engineArgv(cmd, "--continue", req.Resume)
+		if req.ResumeID != "" {
+			// A conversation handed off from acpd, which runs agy's own
+			// ACP server and so keeps it where the CLI does. The id is an
+			// argument of its own, never shell text.
+			argv = []string{"agy"}
+			if apiKey != "" {
+				argv = append(argv, "--settings", `{"modelProvider":"gemini"}`)
+			}
+			argv = append(argv, "--add-dir", m.root, "--conversation", req.ResumeID)
+		}
 	default:
 		return Spec{}, fmt.Errorf("unknown program %q (shell, gemini, claude, agy)", program)
 	}
