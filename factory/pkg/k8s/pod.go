@@ -15,10 +15,13 @@ import (
 )
 
 // sandboxPodPoll is how often SandboxPod looks for the sandbox's pod, and
-// sandboxPodWait how long it looks before giving up.
+// sandboxPodWait how long it looks before giving up. A new sandbox on a full
+// Autopilot cluster waits for a node to be added, then its disk and a 2GB
+// image: 6-8 minutes is common (KCC #15498: scheduled after 5.5m, ready
+// after 7m), so the wait leaves room for that.
 var (
 	sandboxPodPoll = 3 * time.Second
-	sandboxPodWait = 6 * time.Minute
+	sandboxPodWait = 10 * time.Minute
 )
 
 // PodStartTimeout begins the error SandboxPod returns when no pod became
