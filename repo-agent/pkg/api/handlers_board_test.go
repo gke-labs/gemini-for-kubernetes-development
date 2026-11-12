@@ -290,9 +290,10 @@ func boardTestServerWithRT(t *testing.T, ghResponses map[string]string, objs ...
 	boardSnapshotCache.Unlock()
 	gvrSandbox := schema.GroupVersionResource{Group: "agents.x-k8s.io", Version: "v1alpha1", Resource: "sandboxes"}
 	dynamicClient := fake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{
-		gvrSandbox:   "SandboxList",
-		repoBoardGVR: "RepoBoardList",
-		requestGVR:   "RequestList",
+		gvrSandbox:      "SandboxList",
+		repoBoardGVR:    "RepoBoardList",
+		requestGVR:      "RequestList",
+		k8s.OverseerGVR: "OverseerList",
 	})
 	generateNames(dynamicClient)
 	// Seed via explicit Create: the fake's kind->resource guesser pluralizes
@@ -306,6 +307,8 @@ func boardTestServerWithRT(t *testing.T, ghResponses map[string]string, objs ...
 			gvr = repoBoardGVR
 		case "Request":
 			gvr = requestGVR
+		case "Overseer":
+			gvr = k8s.OverseerGVR
 		}
 		if _, err := dynamicClient.Resource(gvr).Namespace(u.GetNamespace()).Create(context.Background(), u, v1.CreateOptions{}); err != nil {
 			t.Fatalf("seed %s: %v", u.GetName(), err)

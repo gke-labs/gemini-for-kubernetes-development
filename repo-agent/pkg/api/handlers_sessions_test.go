@@ -16,6 +16,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/acpd"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/factorycli"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/k8s"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/research"
 )
 
 // sessionsTestServer serves GET /api/sessions (researchTestServer's) over
@@ -274,5 +275,40 @@ func TestATerminalSessionIsItsTerminal(t *testing.T) {
 		default:
 			t.Errorf("row: %+v", row)
 		}
+	}
+}
+
+// A session shared in an overseer's namespace is listed once: asked for,
+// as the overseer's (not the member's) starting row; served, as the
+// overseer's row that every member it allows sees.
+func TestASharedSessionIsTheOverseers(t *testing.T) {
+	const id = "1a2b3c4d-0b0a-4908-8706-050403020100"
+	seed := func(t *testing.T, sandboxes ...*unstructured.Unstructured) *gin.Engine {
+		r, dyn := researchTestServer(t, nil, sandboxes)
+		ov := &unstructured.Unstructured{Object: map[string]interface{}{
+			"apiVersion": "overseer.gemini.google.com/v1alpha1", "kind": "Overseer",
+			"metadata": map[string]interface{}{"name": "kcc"},
+			"spec":     map[string]interface{}{"repoURL": "https://github.com/kubernetes/" + researchRepo, "allowlistedUsers": []interface{}{"alice"}},
+		}}
+		if _, err := dyn.Resource(k8s.OverseerGVR).Create(context.Background(), ov, v1.CreateOptions{}); err != nil {
+			t.Fatal(err)
+		}
+		seedResearchClick(t, dyn, "alice", id, research.Kickoff{Kind: research.KindTopic, Topic: "what is shared?"})
+		reqs, _ := dyn.Resource(requestGVR).Namespace("alice").List(context.Background(), v1.ListOptions{})
+		click := reqs.Items[0]
+		_ = unstructured.SetNestedField(click.Object, "kcc", "spec", "research", "overseer")
+		if _, err := dyn.Resource(requestGVR).Namespace("alice").Update(context.Background(), &click, v1.UpdateOptions{}); err != nil {
+			t.Fatal(err)
+		}
+		return r
+	}
+
+	rows := listSessions(t, seed(t))
+	if len(rows) != 1 || !rows[0].Requested || rows[0].Overseer != "kcc" || rows[0].Research != id {
+		t.Fatalf("asked for: %+v", rows)
+	}
+	rows = listSessions(t, seed(t, researchSandboxCR("overseer-kcc", id, researchRepo, false)))
+	if len(rows) != 1 || rows[0].Requested || rows[0].Overseer != "kcc" || rows[0].Research != id {
+		t.Fatalf("served: %+v", rows)
 	}
 }

@@ -211,6 +211,7 @@ func researchClaimFrom(req *boardv1alpha1.Request) (researchClaim, bool) {
 		},
 		engine:   spec.Engine,
 		terminal: spec.Terminal,
+		overseer: spec.Overseer,
 	}, true
 }
 
@@ -349,8 +350,11 @@ func (r *Reconciler) settle(ctx context.Context, work *workState, req *boardv1al
 		// so settling on existence retires the click while the session is
 		// still a pod with an empty disk, and an interrupted launch then
 		// has nothing standing to make anyone go back and finish it.
-		if sb := researchSandboxDone(work, claim.member, claim.sessionID); sb != nil {
+		if sb := researchSandboxDone(work, claim.namespace(), claim.sessionID); sb != nil {
 			return served(sb.GetName())
+		}
+		if why := work.researchRefused[claim.sessionID]; why != "" {
+			return requestOutcome{phase: boardv1alpha1.RequestFailed, reason: "NotAllowed", message: why}
 		}
 		if researchClaimExpired(claim, now) {
 			return requestOutcome{

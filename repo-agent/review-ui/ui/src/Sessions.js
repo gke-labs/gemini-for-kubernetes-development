@@ -331,6 +331,24 @@ export function StartBox({ boards, onStarted, onOpen, onLaunched, autoFocus }) {
   const engines = terminal ? TERMINAL_ENGINES : SESSION_ENGINES;
   const boardEngine = terminal && TERMINAL_ENGINES.includes(board && board.engine) ? board.engine : sessionEngine(board && board.engine);
   const engine = engines.includes(pickedEngine) ? pickedEngine : boardEngine;
+  // Where the session lives: the member's namespace, or shared in the
+  // namespace of an overseer of the repository (one they are allowed on),
+  // run as its coder bot, for everyone it allows.
+  const [overseers, setOverseers] = useState([]);
+  useEffect(() => {
+    let live = true;
+    fetch('/api/overseers')
+      .then(res => (res.ok ? res.json() : []))
+      .then(list => { if (live) setOverseers(Array.isArray(list) ? list : []); })
+      .catch(() => {});
+    return () => { live = false; };
+  }, []);
+  const repoKey = (url) => (repoFromURL(url || '') || '').toLowerCase();
+  const sharedIn = overseers
+    .filter(o => board && repoKey(o.spec && o.spec.repoURL) && repoKey(o.spec && o.spec.repoURL) === repoKey(board.repoURL))
+    .map(o => o.metadata && o.metadata.name).filter(Boolean);
+  const [pickedWhere, setPickedWhere] = useState('');
+  const where = sharedIn.includes(pickedWhere) ? pickedWhere : '';
   const repo = board ? repoFromURL(board.repoURL) : '';
 
   // The issue or PR named in the box, the board it is on, and its row.
@@ -428,15 +446,18 @@ export function StartBox({ boards, onStarted, onOpen, onLaunched, autoFocus }) {
     fetch(`/api/board/${board.name}/research`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(terminal
-        ? { ...(text ? { kind: 'topic', topic: text } : {}), engine, terminal: true }
-        : { kind: 'topic', topic: text, engine }),
+      body: JSON.stringify({
+        ...(terminal
+          ? { ...(text ? { kind: 'topic', topic: text } : {}), engine, terminal: true }
+          : { kind: 'topic', topic: text, engine }),
+        ...(where ? { overseer: where } : {}),
+      }),
     })
       .then(async res => {
         const body = await res.json().catch(() => ({}));
         if (!res.ok) { setError(body.error || `could not start a session: HTTP ${res.status}`); return; }
         setTopic('');
-        onStarted({ research: body.sessionId, title: body.title || '', repo: board.repoURL, terminal });
+        onStarted({ research: body.sessionId, title: body.title || '', repo: board.repoURL, terminal, overseer: where });
       })
       .catch(err => setError(`could not start a session: ${err}`))
       .finally(() => setBusy(false));
@@ -469,6 +490,14 @@ export function StartBox({ boards, onStarted, onOpen, onLaunched, autoFocus }) {
           style={{ fontSize: 'x-small', borderRadius: '12px', padding: '2px 6px', border: '1px solid var(--border-color)', background: 'var(--bg-card)', color: 'var(--text-primary)' }}>
           {boards.map(b => <option key={b.name} value={b.name}>▣ {repoFromURL(b.repoURL) || b.name}</option>)}
         </select>
+        {sharedIn.length > 0 && (
+          <select aria-label="Where" value={where} onChange={e => setPickedWhere(e.target.value)}
+            title="Yours, in your namespace; or shared in an overseer's namespace, run as its bot, for everyone it allows"
+            style={{ fontSize: 'x-small', borderRadius: '12px', padding: '2px 6px', border: '1px solid var(--border-color)', background: 'var(--bg-card)', color: 'var(--text-primary)' }}>
+            <option value="">mine</option>
+            {sharedIn.map(name => <option key={name} value={name}>shared · {name}</option>)}
+          </select>
+        )}
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: '2px' }}>
           <EngineIcon engine={engine} size={14} />
           <select aria-label="Engine" value={engine} onChange={e => setPickedEngine(e.target.value)}
@@ -661,8 +690,8 @@ export default function Sessions({ namespace, active = true }) {
     window.addEventListener('mouseup', up);
   };
 
-  const onStarted = ({ research, title, repo, terminal }) => {
-    const row = { sandbox: '', research, title, recipe: terminal ? 'terminal' : 'research', label: terminal ? 'Terminal' : 'Research', requested: true, state: 'working', pod: 'starting', repoURL: repo, updatedAt: new Date().toISOString() };
+  const onStarted = ({ research, title, repo, terminal, overseer }) => {
+    const row = { sandbox: '', research, title, recipe: terminal ? 'terminal' : 'research', label: terminal ? 'Terminal' : 'Research', requested: true, state: 'working', pod: 'starting', repoURL: repo, updatedAt: new Date().toISOString(), ...(overseer ? { overseer } : {}) };
     setPending(row);
     select(rowKey(row));
     setTimeout(load, 3000);

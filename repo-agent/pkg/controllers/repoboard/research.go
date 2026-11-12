@@ -31,11 +31,16 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+
+	"github.com/google/go-github/v39/github"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/acpd"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/factorycli"
@@ -78,6 +83,65 @@ type researchClaim struct {
 	// terminal: the session is the engine's CLI in a terminal (`factory
 	// recipe terminal`), the kickoff's topic its first prompt.
 	terminal bool
+	// overseer: the session is that overseer's, in its namespace, shared
+	// with everyone it allows and run as its coder bot.
+	overseer string
+}
+
+// namespace is where the claim's sandbox is: the overseer's for a shared
+// session, else the member's.
+func (c researchClaim) namespace() string {
+	if c.overseer != "" {
+		return overseerNamespacePrefix + c.overseer
+	}
+	return c.member
+}
+
+// overseerNamespacePrefix names an overseer's namespace: overseer-<name>.
+const overseerNamespacePrefix = "overseer-"
+
+var overseerGVK = schema.GroupVersionKind{Group: "overseer.gemini.google.com", Version: "v1alpha1", Kind: "Overseer"}
+
+// overseerSession is the bot a session shared in claim's overseer's
+// namespace runs as - its coder role's first user, "" for none (factory
+// then takes the namespace's factory-user) - or why it may not be
+// started: the overseer must watch this board's repository and allow the
+// member, as the API's overseerAllows (its allowlist, or push on its
+// repository). Checked here as well as at the click: the Request is the
+// member's to write.
+func (r *Reconciler) overseerSession(ctx context.Context, work *workState, claim researchClaim) (string, error) {
+	ov := &unstructured.Unstructured{}
+	ov.SetGroupVersionKind(overseerGVK)
+	if err := r.Get(ctx, types.NamespacedName{Name: claim.overseer}, ov); err != nil {
+		return "", fmt.Errorf("overseer %s: %w", claim.overseer, err)
+	}
+	repoURL, _, _ := unstructured.NestedString(ov.Object, "spec", "repoURL")
+	owner, repo, err := parseRepoURL(repoURL)
+	if err != nil || !strings.EqualFold(owner, work.owner) || !strings.EqualFold(repo, work.repo) {
+		return "", fmt.Errorf("overseer %s does not watch %s/%s", claim.overseer, work.owner, work.repo)
+	}
+	allowed, _, _ := unstructured.NestedStringSlice(ov.Object, "spec", "allowlistedUsers")
+	if !slices.ContainsFunc(allowed, func(login string) bool { return strings.EqualFold(login, claim.member) }) {
+		newClient := r.NewGithubClient
+		if newClient == nil {
+			newClient = func(ctx context.Context, r *Reconciler, ns string) (*github.Client, string, error) {
+				return r.memberGithubClient(ctx, ns)
+			}
+		}
+		gh, _, err := newClient(ctx, r, claim.member)
+		if err != nil {
+			return "", fmt.Errorf("checking %s's access to %s/%s: %w", claim.member, work.owner, work.repo, err)
+		}
+		got, _, err := gh.Repositories.Get(ctx, work.owner, work.repo)
+		if err != nil || !got.GetPermissions()["push"] {
+			return "", fmt.Errorf("overseer %s does not allow %s: not on its allowlist, and no push access to %s/%s", claim.overseer, claim.member, work.owner, work.repo)
+		}
+	}
+	users, _, _ := unstructured.NestedStringSlice(ov.Object, "spec", "roles", "coder", "users")
+	if len(users) > 0 {
+		return users[0], nil
+	}
+	return "", nil
 }
 
 // researchKey is the runner's single-flight key. The sandbox name
@@ -116,7 +180,7 @@ func researchSandboxDone(work *workState, member, sessionID string) *unstructure
 
 // researchClaimServed: the sandbox for this session is built and ready.
 func (r *Reconciler) researchClaimServed(claim researchClaim, work *workState) bool {
-	return researchSandboxDone(work, claim.member, claim.sessionID) != nil
+	return researchSandboxDone(work, claim.namespace(), claim.sessionID) != nil
 }
 
 // researchClaimExpired reports whether the claim has outlived its TTL.
@@ -132,7 +196,7 @@ func researchClaimExpired(claim researchClaim, now time.Time) bool {
 func (r *Reconciler) ensureResearchClaims(ctx context.Context, work *workState, claims []researchClaim) {
 	logger := log.FromContext(ctx)
 	for _, claim := range claims {
-		key := researchKey(claim.member, work.repo, claim.sessionID)
+		key := researchKey(claim.namespace(), work.repo, claim.sessionID)
 		// Served is checked before running, and the order is load-bearing.
 		// The pass that settles Requests reads the same receipt and runs
 		// later in this very reconcile, so the claim is gone by the next
@@ -170,7 +234,21 @@ func (r *Reconciler) ensureResearchClaims(ctx context.Context, work *workState, 
 		if err != nil {
 			continue
 		}
-		opts := r.recipeOptions(work, recipeName, claim.member, "", fmt.Sprintf("https://github.com/%s/%s", work.owner, work.repo), token, factorycli.ResearchRunName(claim.sessionID))
+		opts := r.recipeOptions(work, recipeName, claim.namespace(), "", fmt.Sprintf("https://github.com/%s/%s", work.owner, work.repo), token, factorycli.ResearchRunName(claim.sessionID))
+		// Shared in an overseer's namespace: as its coder bot (the
+		// member's token still makes factory's host-side reads).
+		if claim.overseer != "" {
+			bot, err := r.overseerSession(ctx, work, claim)
+			if err != nil {
+				logger.Info("not starting a shared session", "session", claim.sessionID, "overseer", claim.overseer, "reason", err.Error())
+				if work.researchRefused == nil {
+					work.researchRefused = map[string]string{}
+				}
+				work.researchRefused[claim.sessionID] = err.Error()
+				continue
+			}
+			opts.User = bot
+		}
 		opts.Session, opts.Detached = claim.sessionID, true
 		opts.Inputs = inputs
 		// The member's pick, else the board's, read at launch like a
@@ -235,7 +313,7 @@ func (r *Reconciler) stampResearchTitle(ctx context.Context, work *workState, cl
 	if title == "" && prompt == "" {
 		return
 	}
-	sb := work.findSandbox(claim.member, factorycli.ResearchSandboxName(work.repo, claim.sessionID))
+	sb := work.findSandbox(claim.namespace(), factorycli.ResearchSandboxName(work.repo, claim.sessionID))
 	if sb == nil {
 		return
 	}

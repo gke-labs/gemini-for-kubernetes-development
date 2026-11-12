@@ -137,6 +137,9 @@ func tokenKey(token string) string {
 //+kubebuilder:rbac:groups=board.gemini.google.com,resources=requests,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=board.gemini.google.com,resources=requests/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=agents.x-k8s.io,resources=sandboxes,verbs=get;list;watch;create;update;patch;delete
+// overseers: a session shared in an overseer's namespace runs as its coder
+// bot, and only for a repository it watches (overseerSession).
+//+kubebuilder:rbac:groups=overseer.gemini.google.com,resources=overseers,verbs=get
 //+kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch
 // The factory CLI runs under this ServiceAccount: it creates each sandbox's
 // -lb Service, waits on the pod, and execs the task inside it, or reaches
@@ -222,7 +225,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	// reconcile.
 	namespaces := map[string]bool{board.Namespace: true}
 	for _, claim := range mail.research {
-		namespaces[claim.member] = true
+		namespaces[claim.namespace()] = true
 	}
 	for _, req := range mail.applies {
 		namespaces[req.Spec.Member] = true
@@ -306,6 +309,11 @@ type workState struct {
 	repo      string
 	discToken string // discovery-identity token (reads only)
 	sandboxes []*unstructured.Unstructured
+	// researchRefused is why a research claim for an overseer's session
+	// was not launched (ensureResearchClaims), by session id: the
+	// settling pass, later in the same reconcile, fails its Request with
+	// it rather than leaving it to expire.
+	researchRefused map[string]string
 	// requests are every click filed against this board, settled and
 	// not, oldest first. The standing ones drive the launch passes; the
 	// settled ones are receipts waiting to be collected.

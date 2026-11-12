@@ -18,6 +18,8 @@ package repoboard
 
 import (
 	"context"
+	"fmt"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -29,6 +31,7 @@ import (
 
 	boardv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repoboard/v1alpha1"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/acpd"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/factorycli"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/research"
 )
@@ -628,4 +631,90 @@ func TestTerminalClaimLaunchesTheTerminalRecipe(t *testing.T) {
 	annotations := sandboxAnnotations(t, r, name)
 	g.Expect(annotations[research.TerminalPromptAnnotation]).To(gomega.Equal("fix the flaky test"))
 	g.Expect(annotations[research.TitleAnnotation]).To(gomega.Equal("fix the flaky test"))
+}
+
+// testOverseer is an overseer of repoURL with alice on its allowlist and
+// coder-bot as its coder.
+func testOverseer(name, repoURL string, allowlisted ...string) *unstructured.Unstructured {
+	ov := &unstructured.Unstructured{Object: map[string]interface{}{
+		"spec": map[string]interface{}{
+			"repoURL": repoURL,
+			"roles":   map[string]interface{}{"coder": map[string]interface{}{"users": []interface{}{"coder-bot"}}},
+		},
+	}}
+	if len(allowlisted) > 0 {
+		users := []interface{}{}
+		for _, u := range allowlisted {
+			users = append(users, u)
+		}
+		_ = unstructured.SetNestedSlice(ov.Object, users, "spec", "allowlistedUsers")
+	}
+	ov.SetGroupVersionKind(overseerGVK)
+	ov.SetName(name)
+	return ov
+}
+
+// A session shared in an overseer's namespace: launched there, as the
+// overseer's coder bot, and served by the sandbox there.
+func TestOverseerClaimLaunchesInItsNamespaceAsItsCoder(t *testing.T) {
+	g := gomega.NewWithT(t)
+	req := researchRequest(testSession, time.Now().Add(-time.Minute), aQuestion)
+	req.Spec.Research.Overseer = "kcc"
+	fake := newFakeLauncher()
+	r := newTestReconciler(fake, testGithubClient(`[]`), testBoard(nil), githubSecret(), testOverseer("kcc", "https://github.com/test/repo", "Alice"), req)
+	_, err := r.Reconcile(context.Background(), boardRequest())
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	launches := researchLaunches(fake)
+	g.Expect(launches).To(gomega.HaveLen(1))
+	opts := launches[0].ResearchOpts
+	g.Expect(opts.Namespace).To(gomega.Equal("overseer-kcc"))
+	g.Expect(opts.User).To(gomega.Equal("coder-bot"))
+	g.Expect(launches[0].Key).To(gomega.Equal("overseer-kcc/" + factorycli.ResearchSandboxName("repo", testSession)))
+
+	name := factorycli.ResearchSandboxName("repo", testSession)
+	req = researchRequest(testSession, time.Now().Add(-time.Minute), aQuestion)
+	req.Spec.Research.Overseer = "kcc"
+	r = newTestReconciler(newFakeLauncher(), testGithubClient(`[]`), testBoard(nil), githubSecret(), testOverseer("kcc", "https://github.com/test/repo", "alice"), researchSandboxObj("overseer-kcc", name), req)
+	_, err = r.Reconcile(context.Background(), boardRequest())
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	g.Expect(requestStatus(t, r, req).Phase).To(gomega.Equal(boardv1alpha1.RequestSucceeded))
+}
+
+// An overseer of another repository is not this board's to share a
+// session in: nothing is launched, and the click fails saying why.
+func TestOverseerClaimForAnotherRepoFails(t *testing.T) {
+	g := gomega.NewWithT(t)
+	req := researchRequest(testSession, time.Now().Add(-time.Minute), aQuestion)
+	req.Spec.Research.Overseer = "kcc"
+	fake := newFakeLauncher()
+	r := newTestReconciler(fake, testGithubClient(`[]`), testBoard(nil), githubSecret(), testOverseer("kcc", "https://github.com/other/repo", "alice"), req)
+	_, err := r.Reconcile(context.Background(), boardRequest())
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	g.Expect(researchLaunches(fake)).To(gomega.BeEmpty())
+	status := requestStatus(t, r, req)
+	g.Expect(status.Phase).To(gomega.Equal(boardv1alpha1.RequestFailed))
+	g.Expect(status.Message).To(gomega.ContainSubstring("does not watch test/repo"))
+}
+
+// Off the overseer's allowlist, push access to its repository is what
+// allows a member, as the API's overseerAllows.
+func TestOverseerClaimNeedsPushOffTheAllowlist(t *testing.T) {
+	for push, wantLaunch := range map[bool]bool{true: true, false: false} {
+		g := gomega.NewWithT(t)
+		gh := clients.NewGitHubClientFromHTTP(&http.Client{Transport: &mockRoundTripper{responses: map[string]func() *http.Response{
+			"https://api.github.com/user":                                           jsonResp(`{"login": "alice"}`),
+			"https://api.github.com/repos/test/repo/issues?per_page=100&state=open": jsonResp(`[]`),
+			"https://api.github.com/repos/test/repo":                                jsonResp(fmt.Sprintf(`{"permissions": {"push": %t}}`, push)),
+		}}})
+		req := researchRequest(testSession, time.Now().Add(-time.Minute), aQuestion)
+		req.Spec.Research.Overseer = "kcc"
+		fake := newFakeLauncher()
+		r := newTestReconciler(fake, gh, testBoard(nil), githubSecret(), testOverseer("kcc", "https://github.com/test/repo"), req)
+		_, err := r.Reconcile(context.Background(), boardRequest())
+		g.Expect(err).NotTo(gomega.HaveOccurred())
+		g.Expect(len(researchLaunches(fake)) == 1).To(gomega.Equal(wantLaunch), "push %t", push)
+		if !wantLaunch {
+			g.Expect(requestStatus(t, r, req).Message).To(gomega.ContainSubstring("does not allow alice"))
+		}
+	}
 }
