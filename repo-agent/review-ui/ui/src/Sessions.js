@@ -788,22 +788,34 @@ export default function Sessions({ namespace, active = true }) {
             )}
             <StartBox boards={boards} onStarted={onStarted} onOpen={select} onLaunched={onLaunched} autoFocus />
           </div>
-        ) : open.recipe === 'terminal' && !terminalReady(open) ? (
-          // A terminal session whose sandbox is not up to open a CLI in.
-          <div role="status" style={{ padding: '14px', ...small, ...muted }}>
-            {rowTitle(open)} · {settingUp(open) ? 'setting up the sandbox: the CLI opens here when it is ready…'
-              : open.state === 'failed' ? 'the sandbox could not be set up' : `the sandbox is ${open.pod}: wake it from ▣ to open the CLI`}
-          </div>
-        ) : open.terminal ? (
-          // An engine's CLI: its terminal, live, here. Attached by its
-          // own id: the row is that terminal, and opening it by program
-          // would start another one beside it (a handoff's is not
-          // agent-<program>). The launcher's (a terminal session's) is
-          // started when it is not running yet.
-          <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', backgroundColor: '#1e1e1e' }}>
-            <SandboxTerminal key={rowKey(open)} namespace={open.overseer ? `overseer-${open.overseer}` : namespace}
-              sandboxName={open.sandbox} {...terminalTarget(open)} fill />
-          </div>
+        ) : open.terminal || open.recipe === 'terminal' ? (
+          // A terminal session, or another engine terminal: its name and
+          // the sandbox strip (▣: wake, pause, logs, delete) over the CLI,
+          // live, here - or over why it cannot be opened yet.
+          <>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 14px 0', fontSize: 'small' }}>
+              <strong style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{rowTitle(open)}</strong>
+              <span style={{ ...small, ...muted }}>{open.program ? `${open.program} CLI` : 'terminal'}{open.overseer ? ` · shared in ${open.overseer}` : ''}</span>
+              <span style={{ flex: 1 }} />
+              <button type="button" className="btn btn-sm" aria-label="Close" title="Close (Esc)" onClick={() => select('')}>✕</button>
+            </div>
+            {open.sandbox && <SessionStrip row={open} rows={all} onOpen={x => select(rowKey(x))} onCard={(name) => setCard({ name, apiBase: apiBaseOf(open) })} />}
+            {open.recipe === 'terminal' && !terminalReady(open) ? (
+              <div role="status" style={{ padding: '14px', ...small, ...muted }}>
+                {settingUp(open) ? 'setting up the sandbox: the CLI opens here when it is ready…'
+                  : open.state === 'failed' ? 'the sandbox could not be set up' : `the sandbox is ${open.pod}: wake it from ▣ to open the CLI`}
+              </div>
+            ) : (
+              // Attached by its own id: the row is that terminal, and
+              // opening it by program would start another one beside it
+              // (a handoff's is not agent-<program>). The launcher's (a
+              // terminal session's) is started when it is not running yet.
+              <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', backgroundColor: '#1e1e1e', marginTop: '8px' }}>
+                <SandboxTerminal key={rowKey(open)} namespace={open.overseer ? `overseer-${open.overseer}` : namespace}
+                  sandboxName={open.sandbox} {...terminalTarget(open)} fill />
+              </div>
+            )}
+          </>
         ) : (
           <>
             <SessionStrip row={open} rows={all} onOpen={x => select(rowKey(x))} onCard={(name) => setCard({ name, apiBase: apiBaseOf(open) })} />

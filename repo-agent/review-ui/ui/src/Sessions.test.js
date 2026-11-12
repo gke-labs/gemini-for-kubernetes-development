@@ -304,6 +304,31 @@ describe('a shared session', () => {
     });
 });
 
+describe('a terminal session open', () => {
+    test('has its name, the sandbox strip (▣ opens the card: wake, pause, delete) and ✕ over the CLI', async () => {
+        global.WebSocket = class { constructor(url) { this.url = url; } send() {} close() {} };
+        global.ResizeObserver = class { observe() {} disconnect() {} };
+        const row = { sandbox: 'rsch-g4k-1', research: 'r1', title: 'fix the build', terminal: 'agent-agy', program: 'agy', engine: 'antigravity', recipe: 'terminal', label: 'Terminal', pod: 'running', live: true, state: 'idle', repo: 'gke-labs/g4k', updatedAt: now, runs: [{ recipe: 'terminal', status: 'done' }] };
+        global.fetch.mockImplementation((url) => {
+            if (url === '/api/sessions') return Promise.resolve({ ok: true, json: () => Promise.resolve({ sessions: [row] }) });
+            return Promise.resolve({ ok: false, status: 404, json: () => Promise.resolve({}), text: () => Promise.resolve('') });
+        });
+        await render();
+        const listed = Array.from(container.querySelectorAll('button[title]')).find(b => b.title.startsWith('fix the build'));
+        await act(async () => { listed.click(); });
+        await flush();
+        expect(container.textContent).toContain('agy CLI');
+        const card = button('▣ rsch-g4k-1');
+        expect(card).toBeDefined();
+        expect(container.querySelector('button[aria-label="Close"]')).not.toBeNull();
+        await act(async () => { card.click(); });
+        await flush();
+        expect(fetched().some(u => typeof u === 'string' && u.includes('/sandbox-card/rsch-g4k-1'))).toBe(true);
+        delete global.WebSocket;
+        delete global.ResizeObserver;
+    });
+});
+
 describe('terminal rows', () => {
     test('a terminal session opens once set up and running, its CLI by its program', () => {
         const row = { sandbox: 'rsch-x', research: 'r', terminal: 'agent-claude', program: 'claude', recipe: 'terminal', pod: 'running', runs: [{ status: 'done' }] };
