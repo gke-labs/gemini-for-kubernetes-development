@@ -143,6 +143,13 @@ type OverseerSpec struct {
 	// +kubebuilder:validation:Optional
 	OverseerMemoryLimit string `json:"overseerMemoryLimit,omitempty"`
 
+	// OverseerCPURequest and OverseerCPULimit are the overseer pod's own CPU
+	// request and limit (e.g. "1000m", "4"); unset, 1000m and 2000m.
+	// +kubebuilder:validation:Optional
+	OverseerCPURequest string `json:"overseerCPURequest,omitempty"`
+	// +kubebuilder:validation:Optional
+	OverseerCPULimit string `json:"overseerCPULimit,omitempty"`
+
 	// SandboxEvictionAge defines the age threshold for idle sandbox eviction (e.g. "7d", "24h").
 	// +kubebuilder:validation:Optional
 	// +kubebuilder:default="7d"

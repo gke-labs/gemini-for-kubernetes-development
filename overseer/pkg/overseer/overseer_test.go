@@ -360,25 +360,29 @@ func TestBuildSandboxManifest_RepoRecipe(t *testing.T) {
 	}
 }
 
-// The overseer pod's memory is 1Gi requested, 2Gi limit unless the Overseer
-// says otherwise (overseerMemoryRequest, overseerMemoryLimit).
-func TestOverseerPodMemory(t *testing.T) {
-	memory := func(o *overseerv1alpha1.Overseer) (string, string) {
+// The overseer pod's resources are 1000m CPU / 1Gi requested and 2000m /
+// 2Gi limits unless the Overseer says otherwise (overseerCPURequest,
+// overseerCPULimit, overseerMemoryRequest, overseerMemoryLimit).
+func TestOverseerPodResources(t *testing.T) {
+	resources := func(o *overseerv1alpha1.Overseer) string {
 		t.Helper()
 		manifest := newOverseerSandboxFromOverseer(o, "test-overseer", "overseer-system", false)
 		containers, _, _ := unstructured.NestedSlice(manifest.Object, "spec", "podTemplate", "spec", "containers")
 		c := containers[0].(map[string]interface{})
-		req, _, _ := unstructured.NestedString(c, "resources", "requests", "memory")
-		lim, _, _ := unstructured.NestedString(c, "resources", "limits", "memory")
-		return req, lim
+		get := func(path ...string) string {
+			v, _, _ := unstructured.NestedString(c, append([]string{"resources"}, path...)...)
+			return v
+		}
+		return get("requests", "cpu") + " " + get("requests", "memory") + " / " + get("limits", "cpu") + " " + get("limits", "memory")
 	}
 	o := &overseerv1alpha1.Overseer{}
 	o.Name = "kcc"
-	if req, lim := memory(o); req != "1Gi" || lim != "2Gi" {
-		t.Errorf("default memory %s/%s, want 1Gi/2Gi", req, lim)
+	if got, want := resources(o), "1000m 1Gi / 2000m 2Gi"; got != want {
+		t.Errorf("default resources %q, want %q", got, want)
 	}
+	o.Spec.OverseerCPURequest, o.Spec.OverseerCPULimit = "2", "4"
 	o.Spec.OverseerMemoryRequest, o.Spec.OverseerMemoryLimit = "3Gi", "6Gi"
-	if req, lim := memory(o); req != "3Gi" || lim != "6Gi" {
-		t.Errorf("set memory %s/%s, want 3Gi/6Gi", req, lim)
+	if got, want := resources(o), "2 3Gi / 4 6Gi"; got != want {
+		t.Errorf("set resources %q, want %q", got, want)
 	}
 }

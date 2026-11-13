@@ -71,6 +71,10 @@ spec:
               minNumber:
                 format: int32
                 type: integer
+              overseerCPULimit:
+                type: string
+              overseerCPURequest:
+                type: string
               overseerMemoryLimit:
                 type: string
               overseerMemoryRequest:
