@@ -71,6 +71,14 @@ spec:
               minNumber:
                 format: int32
                 type: integer
+              overseerCPULimit:
+                type: string
+              overseerCPURequest:
+                type: string
+              overseerMemoryLimit:
+                type: string
+              overseerMemoryRequest:
+                type: string
               pollInterval:
                 default: 30m
                 type: string

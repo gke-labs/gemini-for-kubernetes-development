@@ -359,3 +359,30 @@ func TestBuildSandboxManifest_RepoRecipe(t *testing.T) {
 		t.Errorf("replace: %v %v", env["FACTORY_REPO_RECIPE_MODE"], env["FACTORY_REPO_RECIPE_COMMIT"])
 	}
 }
+
+// The overseer pod's resources are 1000m CPU / 1Gi requested and 2000m /
+// 2Gi limits unless the Overseer says otherwise (overseerCPURequest,
+// overseerCPULimit, overseerMemoryRequest, overseerMemoryLimit).
+func TestOverseerPodResources(t *testing.T) {
+	resources := func(o *overseerv1alpha1.Overseer) string {
+		t.Helper()
+		manifest := newOverseerSandboxFromOverseer(o, "test-overseer", "overseer-system", false)
+		containers, _, _ := unstructured.NestedSlice(manifest.Object, "spec", "podTemplate", "spec", "containers")
+		c := containers[0].(map[string]interface{})
+		get := func(path ...string) string {
+			v, _, _ := unstructured.NestedString(c, append([]string{"resources"}, path...)...)
+			return v
+		}
+		return get("requests", "cpu") + " " + get("requests", "memory") + " / " + get("limits", "cpu") + " " + get("limits", "memory")
+	}
+	o := &overseerv1alpha1.Overseer{}
+	o.Name = "kcc"
+	if got, want := resources(o), "1000m 1Gi / 2000m 2Gi"; got != want {
+		t.Errorf("default resources %q, want %q", got, want)
+	}
+	o.Spec.OverseerCPURequest, o.Spec.OverseerCPULimit = "2", "4"
+	o.Spec.OverseerMemoryRequest, o.Spec.OverseerMemoryLimit = "3Gi", "6Gi"
+	if got, want := resources(o), "2 3Gi / 4 6Gi"; got != want {
+		t.Errorf("set resources %q, want %q", got, want)
+	}
+}
