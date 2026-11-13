@@ -397,6 +397,13 @@ func Reconcile(o Observed) Result {
 	// one taken off the parent and put back is handed down again.
 	r.State.Inherited = slices.Clone(o.Parent.Humans)
 	r.Steps = statuses(s, ids, canonical, o.Grouped)
+	// A step whose open child waits for a person - a fix that was blocked,
+	// or a then: ask step - says so in the status.
+	for i, ss := range r.Steps {
+		if c, ok := canonical[ss.ID]; ok && c.Open && ss.Waiting == "" && containsFold(c.Labels, o.Trigger+"/"+NeedsHumanLabel) {
+			r.Steps[i].Waiting = fmt.Sprintf("a person (#%d is labelled %s/%s)", c.Number, o.Trigger, NeedsHumanLabel)
+		}
+	}
 	state := map[string]string{}
 	for _, ss := range r.Steps {
 		state[ss.ID] = ss.State
