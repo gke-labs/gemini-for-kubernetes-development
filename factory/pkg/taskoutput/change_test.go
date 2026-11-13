@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -116,6 +117,8 @@ type fakePRs struct {
 	// issueBody is o/r#7's body; closed, whether it was closed.
 	issueBody   string
 	issueClosed bool
+	// issueLabels are the labels added to o/r#7.
+	issueLabels []string
 }
 
 func (f *fakePRs) client(t *testing.T) *githubv39.Client {
@@ -184,6 +187,12 @@ func (f *fakePRs) client(t *testing.T) *githubv39.Client {
 			state = "closed"
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "state": state, "body": f.issueBody})
+	})
+	mux.HandleFunc("/repos/o/r/issues/7/labels", func(w http.ResponseWriter, r *http.Request) {
+		var add []string
+		_ = json.NewDecoder(r.Body).Decode(&add)
+		f.issueLabels = append(f.issueLabels, add...)
+		fmt.Fprint(w, `[]`)
 	})
 	mux.HandleFunc("/repos/o/r/issues/7/comments", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {
@@ -961,6 +970,49 @@ func TestOpenPRUnchanged(t *testing.T) {
 	}
 	if other.issueClosed {
 		t.Error("a step without no-change: ok was closed")
+	}
+
+	// Blocked: the work is undone and the agent could not do it. Even a
+	// no-change: ok step is not closed; it is labelled needs-human and
+	// stop (the deployment's trigger), and the comment says how to go on.
+	// Applied again, it is labelled again and still not closed.
+	const blockedWhy = "change:\n  comment: |\n    A maintainer must decide how to model the dependency.\n  blocked: true   # ONLY if the work is still undone\n"
+	blocked, err := Wrap("Change", blockedWhy, Target{URL: issueURL}, Source{Task: "fix-4", Recipe: "fix"})
+	if err != nil {
+		t.Fatalf("Wrap blocked: %v", err)
+	}
+	if err := blocked.SetPushed(Pushed{Unchanged: true, Base: "b0", Head: "b0"}); err != nil {
+		t.Fatalf("SetPushed blocked: %v", err)
+	}
+	kctx := WithTriggerLabel(ctx, "kcc")
+	held := &fakePRs{issueBody: step.issueBody}
+	out.Reset()
+	if err := ApplyAction(kctx, held.client(t), blocked, "open-pr", false, &out); err != nil {
+		t.Fatal(err)
+	}
+	if held.issueClosed {
+		t.Error("a blocked no-change step was closed as completed")
+	}
+	if want := []string{"kcc/needs-human", "kcc/stop"}; !slices.Equal(held.issueLabels, want) {
+		t.Errorf("blocked labels = %v, want %v", held.issueLabels, want)
+	}
+	if len(held.issueComments) != 1 || !strings.HasPrefix(held.issueComments[0], "A maintainer must decide") || !strings.Contains(held.issueComments[0], "take `kcc/stop` off") {
+		t.Errorf("blocked comment = %q", held.issueComments)
+	}
+	heldAgain := &fakePRs{issueBody: held.issueBody, issueComments: held.issueComments}
+	if err := ApplyAction(kctx, heldAgain.client(t), blocked, "open-pr", false, &out); err != nil {
+		t.Fatal(err)
+	}
+	if heldAgain.issueClosed || len(heldAgain.issueComments) != 1 || len(heldAgain.issueLabels) != 2 {
+		t.Errorf("re-applied blocked: closed %v, comments %d, labels %v", heldAgain.issueClosed, len(heldAgain.issueComments), heldAgain.issueLabels)
+	}
+	// An ordinary issue whose fix was blocked waits for a person too.
+	plain := &fakePRs{}
+	if err := ApplyAction(ctx, plain.client(t), blocked, "open-pr", false, &out); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"overseer/needs-human", "overseer/stop"}; plain.issueClosed || !slices.Equal(plain.issueLabels, want) {
+		t.Errorf("blocked ordinary issue: closed %v, labels %v", plain.issueClosed, plain.issueLabels)
 	}
 
 	// No commit and no why: the push is refused, and the task fails.
