@@ -359,3 +359,26 @@ func TestBuildSandboxManifest_RepoRecipe(t *testing.T) {
 		t.Errorf("replace: %v %v", env["FACTORY_REPO_RECIPE_MODE"], env["FACTORY_REPO_RECIPE_COMMIT"])
 	}
 }
+
+// The overseer pod's memory is 1Gi requested, 2Gi limit unless the Overseer
+// says otherwise (overseerMemoryRequest, overseerMemoryLimit).
+func TestOverseerPodMemory(t *testing.T) {
+	memory := func(o *overseerv1alpha1.Overseer) (string, string) {
+		t.Helper()
+		manifest := newOverseerSandboxFromOverseer(o, "test-overseer", "overseer-system", false)
+		containers, _, _ := unstructured.NestedSlice(manifest.Object, "spec", "podTemplate", "spec", "containers")
+		c := containers[0].(map[string]interface{})
+		req, _, _ := unstructured.NestedString(c, "resources", "requests", "memory")
+		lim, _, _ := unstructured.NestedString(c, "resources", "limits", "memory")
+		return req, lim
+	}
+	o := &overseerv1alpha1.Overseer{}
+	o.Name = "kcc"
+	if req, lim := memory(o); req != "1Gi" || lim != "2Gi" {
+		t.Errorf("default memory %s/%s, want 1Gi/2Gi", req, lim)
+	}
+	o.Spec.OverseerMemoryRequest, o.Spec.OverseerMemoryLimit = "3Gi", "6Gi"
+	if req, lim := memory(o); req != "3Gi" || lim != "6Gi" {
+		t.Errorf("set memory %s/%s, want 3Gi/6Gi", req, lim)
+	}
+}

@@ -461,6 +461,13 @@ func newOverseerSandboxFromOverseer(o *overseerv1alpha1.Overseer, name, namespac
 	if ephemeralStorage == "" {
 		ephemeralStorage = "10Gi"
 	}
+	memoryRequest, memoryLimit := o.Spec.OverseerMemoryRequest, o.Spec.OverseerMemoryLimit
+	if memoryRequest == "" {
+		memoryRequest = "1Gi"
+	}
+	if memoryLimit == "" {
+		memoryLimit = "2Gi"
+	}
 
 	diskSize := o.Spec.WorkspaceDiskSize
 	if diskSize == "" {
@@ -482,12 +489,12 @@ func newOverseerSandboxFromOverseer(o *overseerv1alpha1.Overseer, name, namespac
 				"resources": map[string]interface{}{
 					"requests": map[string]interface{}{
 						"cpu":               "1000m",
-						"memory":            "1Gi",
+						"memory":            memoryRequest,
 						"ephemeral-storage": ephemeralStorage,
 					},
 					"limits": map[string]interface{}{
 						"cpu":               "2000m",
-						"memory":            "2Gi",
+						"memory":            memoryLimit,
 						"ephemeral-storage": ephemeralStorage,
 					},
 				},

@@ -133,6 +133,16 @@ type OverseerSpec struct {
 	// +kubebuilder:validation:Optional
 	SandboxMemoryLimit string `json:"sandboxMemoryLimit,omitempty"`
 
+	// OverseerMemoryRequest and OverseerMemoryLimit are the overseer pod's
+	// own memory request and limit (e.g. "2Gi", "4Gi"); unset, 1Gi and 2Gi.
+	// The watcher itself is small; the end of each cycle, when run.sh
+	// commits and pushes the queue in the repository's clone, is what a
+	// large repository can push past the limit (OOMKilled).
+	// +kubebuilder:validation:Optional
+	OverseerMemoryRequest string `json:"overseerMemoryRequest,omitempty"`
+	// +kubebuilder:validation:Optional
+	OverseerMemoryLimit string `json:"overseerMemoryLimit,omitempty"`
+
 	// SandboxEvictionAge defines the age threshold for idle sandbox eviction (e.g. "7d", "24h").
 	// +kubebuilder:validation:Optional
 	// +kubebuilder:default="7d"
