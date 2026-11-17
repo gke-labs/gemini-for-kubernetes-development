@@ -2,6 +2,7 @@ package graph
 
 import (
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 )
@@ -64,6 +65,9 @@ type Observed struct {
 	// Grouped is the start block's grouped: consecutive steps share one
 	// PR (Spec.GroupPrev).
 	Grouped bool
+	// Done are the start block's done steps, as read: their receipts, and
+	// for a PR receipt whether it merged and its labels.
+	Done map[string]Receipt
 }
 
 // Parent is the graph's parent issue, as observed.
@@ -114,6 +118,19 @@ type Child struct {
 	// body says so: "Fixes #n"), with their labels: where the parent's
 	// labels the template names (Spec.PRLabelsFromParent) go.
 	OpenPRs []PRRef
+	// Before is, for a step the start block lists as done (and that has no
+	// child), its receipt: the step stands for work done outside the graph,
+	// no issue of its own (Number 0).
+	Before string
+}
+
+// Receipt is a done step's receipt as observed: the PR that did its work
+// (0 for ReceiptMaster), whether it is a merged PR, and its labels.
+type Receipt struct {
+	Text   string
+	PR     int
+	Merged bool
+	Labels []string
 }
 
 // PRRef is a PR as observed: its number and labels.
@@ -185,6 +202,8 @@ type StepStatus struct {
 	// Waiting says what a Pending step whose after steps are done waits
 	// for: the labels its requires names, on the PR missing them.
 	Waiting string
+	// Before is a step done outside the graph's receipt (Child.Before).
+	Before string
 }
 
 // Kinds of action (Action.Kind).
@@ -302,6 +321,22 @@ func Reconcile(o Observed) Result {
 	}
 	slices.Sort(r.Orphans)
 	slices.SortFunc(duplicates, func(a, b Action) int { return a.Issue - b.Issue })
+
+	// Steps done outside the graph (the start block's done): succeeded,
+	// with no child - unless one exists already, which wins. A PR receipt
+	// must be a merged PR; its labels are what a later step's requires
+	// checks.
+	for _, id := range slices.Sorted(maps.Keys(o.Done)) {
+		rc := o.Done[id]
+		if _, has := canonical[id]; has {
+			continue
+		}
+		if rc.PR > 0 && !rc.Merged {
+			r.Phase, r.Reason = PhaseInvalid, fmt.Sprintf("done: %s: #%d is not a merged pull request", id, rc.PR)
+			return r
+		}
+		canonical[id] = Child{Linked: true, MergedPR: rc.PR, MergedPRLabels: rc.Labels, Before: rc.Text}
+	}
 
 	r.Steps = statuses(s, ids, canonical, o.Grouped)
 
@@ -439,7 +474,9 @@ func Reconcile(o Observed) Result {
 	}
 	children := map[string]StepRef{}
 	for id, c := range canonical {
-		children[id] = StepRef{Issue: c.Number}
+		if c.Number > 0 { // a step done outside the graph has no issue
+			children[id] = StepRef{Issue: c.Number}
+		}
 	}
 	for i, ss := range r.Steps {
 		if ss.State != StepReady || active >= s.ActiveLimit() {
@@ -625,7 +662,7 @@ func statuses(s *Spec, ids []string, canonical map[string]Child, grouped bool) [
 				v = StepPending
 			}
 		}
-		ss := StepStatus{ID: id, State: v, Child: canonical[id].Number, Waiting: waiting}
+		ss := StepStatus{ID: id, State: v, Child: canonical[id].Number, Waiting: waiting, Before: canonical[id].Before}
 		if pr := canonical[id].GroupPR; pr != nil {
 			ss.PR = pr.Number
 		}

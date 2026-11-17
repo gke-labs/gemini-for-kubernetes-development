@@ -2,13 +2,16 @@ package graph
 
 import (
 	"fmt"
+	"maps"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 
 	githubv39 "github.com/google/go-github/v39/github"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/watch/rules"
+	"gopkg.in/yaml.v3"
 )
 
 // StartKey is the comment key a start block is posted under, when a rule
@@ -35,6 +38,59 @@ type Start struct {
 	// list gates none: the steps in a line are one PR. Not given (nil),
 	// the steps' group-gate decides.
 	Gates []string `yaml:"gates,omitempty"`
+	// Done are steps whose work is already on the default branch, done
+	// outside this graph, with a receipt each: the merged PR that did it
+	// ("#123"), or ReceiptMaster when no one PR did. Such a step gets no
+	// child: it counts as succeeded, and the steps after it start. A step
+	// that has a child already keeps it (the child wins).
+	Done Done `yaml:"done,omitempty"`
+}
+
+// ReceiptMaster is a done step's receipt when its work is on the default
+// branch but no one PR did it.
+const ReceiptMaster = "master"
+
+// Done is a start block's done steps, step id to receipt. The block may
+// write it as a list of step ids (each ReceiptMaster) or as a map.
+type Done map[string]string
+
+var receiptRE = regexp.MustCompile(`^#[1-9][0-9]*$`)
+
+// UnmarshalYAML reads a list of step ids or a map of step id to receipt.
+func (d *Done) UnmarshalYAML(n *yaml.Node) error {
+	out := Done{}
+	switch n.Kind {
+	case yaml.SequenceNode:
+		var ids []string
+		if err := n.Decode(&ids); err != nil {
+			return err
+		}
+		for _, id := range ids {
+			out[id] = ReceiptMaster
+		}
+	case yaml.MappingNode:
+		var m map[string]string
+		if err := n.Decode(&m); err != nil {
+			return err
+		}
+		for id, r := range m {
+			out[id] = strings.TrimSpace(r)
+		}
+	default:
+		return fmt.Errorf("done: a list of steps, or a map of step to receipt (#<PR> or %s)", ReceiptMaster)
+	}
+	*d = out
+	return nil
+}
+
+// PR is a receipt's PR number, 0 for ReceiptMaster.
+func (d Done) PR(step string) int {
+	r := d[step]
+	if !receiptRE.MatchString(r) {
+		return 0
+	}
+	n, _ := strconv.Atoi(r[1:])
+	return n
 }
 
 // SourceName is what a child's marker records: the template's name, or
@@ -92,6 +148,14 @@ func (s *Start) validate() error {
 	case s.Gates != nil && !s.Grouped:
 		return fmt.Errorf("gates are a grouped graph's (grouped: true); without it every step is its own PR")
 	}
+	for id, r := range s.Done {
+		if strings.TrimSpace(id) == "" {
+			return fmt.Errorf("done: a step with no name")
+		}
+		if r != ReceiptMaster && !receiptRE.MatchString(r) {
+			return fmt.Errorf("done: %s: the receipt %q is neither a merged PR (#123) nor %s", id, r, ReceiptMaster)
+		}
+	}
 	return nil
 }
 
@@ -120,6 +184,19 @@ func (s Start) WithGates(spec *Spec) (*Spec, error) {
 	return &out, nil
 }
 
+// checkDone is whether the block's done steps are all steps of spec.
+func (s Start) checkDone(spec *Spec) error {
+	if spec == nil {
+		return nil
+	}
+	for _, id := range slices.Sorted(maps.Keys(s.Done)) {
+		if id != FinallyID && spec.Step(id) == nil {
+			return fmt.Errorf("done: %s is not a step of the graph", id)
+		}
+	}
+	return nil
+}
+
 // StartBlock renders a start block, as the start command posts it.
 func (s Start) StartBlock() string {
 	var b strings.Builder
@@ -134,6 +211,12 @@ func (s Start) StartBlock() string {
 	}
 	if s.Gates != nil {
 		fmt.Fprintf(&b, "gates: [%s]\n", strings.Join(s.Gates, ", "))
+	}
+	if len(s.Done) > 0 {
+		b.WriteString("done:\n")
+		for _, id := range slices.Sorted(maps.Keys(s.Done)) {
+			fmt.Fprintf(&b, "  %s: %q\n", id, s.Done[id])
+		}
 	}
 	if len(s.Params) > 0 {
 		b.WriteString("params:\n")

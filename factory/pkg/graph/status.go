@@ -63,6 +63,9 @@ func RenderStatus(source string, version int, s *Spec, r Result) string {
 				issue = fmt.Sprintf("#%d", st.Child)
 			}
 			state := stateIcon(st.State)
+			if st.Before != "" {
+				state = "✅ Done before the graph (" + st.Before + ")"
+			}
 			if st.Waiting != "" {
 				state += " · waiting: " + st.Waiting
 			}
@@ -116,6 +119,9 @@ func renderDiagram(s *Spec, r Result) string {
 		var notes []string
 		if st.Child > 0 {
 			notes = append(notes, fmt.Sprintf("#%d", st.Child))
+		}
+		if st.Before != "" {
+			notes = append(notes, "done before: "+st.Before)
 		}
 		switch st.State {
 		case StepActive:

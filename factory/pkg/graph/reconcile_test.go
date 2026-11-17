@@ -525,3 +525,91 @@ func TestReconcileWaitingForAPerson(t *testing.T) {
 		t.Errorf("an ordinary active step waits for %q", r.Steps[0].Waiting)
 	}
 }
+
+// Steps the start block lists as done get no child: they count as
+// succeeded, with their receipt in the status, and the steps after them
+// start. A child that exists already wins; a PR receipt that did not merge
+// makes the graph invalid; a later step's requires reads the receipt PR's
+// labels (a master receipt has none to check).
+func TestReconcileDoneSteps(t *testing.T) {
+	s := abc(t, ", requires: {labels: {all: [assessed]}}")
+	merged := func(pr int, labels ...string) Receipt {
+		return Receipt{Text: fmt.Sprintf("#%d", pr), PR: pr, Merged: true, Labels: labels}
+	}
+	master := Receipt{Text: ReceiptMaster}
+
+	o := observed(s, nil, State{})
+	o.Done = map[string]Receipt{"a": merged(7)}
+	r := Reconcile(o)
+	if got := states(r); got != "a=Succeeded b=Active c=Active d=Pending finally=Pending" {
+		t.Errorf("a done: %s", got)
+	}
+	if r.Steps[0].Before != "#7" || r.Steps[0].Child != 0 {
+		t.Errorf("a: before %q child %d", r.Steps[0].Before, r.Steps[0].Child)
+	}
+	if got := kinds(r); !slices.Equal(got, []string{"create-child:b", "create-child:c"}) {
+		t.Errorf("a done: actions %v, want b and c created", got)
+	}
+	if !strings.Contains(RenderStatus("plan", 1, s, r), "Done before the graph (#7)") {
+		t.Error("the status does not say a was done before the graph")
+	}
+
+	// A child that exists wins over the block.
+	o = observed(s, map[string][]Child{"a": {open(101)}}, State{})
+	o.Done = map[string]Receipt{"a": merged(7)}
+	if got := states(Reconcile(o)); !strings.HasPrefix(got, "a=Active") {
+		t.Errorf("a with a child: %s", got)
+	}
+
+	// A receipt that is not a merged PR: invalid, nothing created.
+	o = observed(s, nil, State{})
+	o.Done = map[string]Receipt{"a": {Text: "#8", PR: 8}}
+	if r := Reconcile(o); r.Phase != PhaseInvalid || !strings.Contains(r.Reason, "#8 is not a merged pull request") || len(r.Actions) != 0 {
+		t.Errorf("unmerged receipt: %s %q %v", r.Phase, r.Reason, kinds(r))
+	}
+
+	// d requires `assessed` on the PR carrying b's work: read from b's
+	// receipt; c's master receipt has nothing to check.
+	o = observed(s, nil, State{})
+	o.Done = map[string]Receipt{"a": master, "b": merged(9, "assessed"), "c": master}
+	if got := states(Reconcile(o)); got != "a=Succeeded b=Succeeded c=Succeeded d=Active finally=Pending" {
+		t.Errorf("b's receipt assessed: %s", got)
+	}
+	o.Done["b"] = merged(9)
+	r = Reconcile(o)
+	if got := states(r); got != "a=Succeeded b=Succeeded c=Succeeded d=Pending finally=Pending" || !strings.Contains(r.Steps[3].Waiting, "#9 needs") {
+		t.Errorf("b's receipt not assessed: %s, waiting %q", got, r.Steps[3].Waiting)
+	}
+}
+
+// In a grouped graph whose first steps are done, the first step left opens
+// the group's PR (a draft the steps after it continue); with every step
+// before the last done, the last opens a PR of its own.
+func TestReconcileDoneStepsGrouped(t *testing.T) {
+	s, err := ParsePlanBlock("```yaml graph\nsteps:\n" +
+		"  - {id: x, title: X, body: x}\n" +
+		"  - {id: y, after: [x], title: Y, body: y}\n" +
+		"  - {id: z, after: [y], title: Z, body: z}\n```\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	created := func(done map[string]Receipt) Action {
+		t.Helper()
+		o := observed(s, nil, State{})
+		o.Grouped, o.Done = true, done
+		for _, a := range Reconcile(o).Actions {
+			if a.Kind == ActCreateChild {
+				return a
+			}
+		}
+		t.Fatal("nothing created")
+		return Action{}
+	}
+	m := Receipt{Text: ReceiptMaster}
+	if a := created(map[string]Receipt{"x": m}); a.Step != "y" || a.Child.Group != GroupFirst {
+		t.Errorf("x done: created %s, group %q; want y opening the group's PR", a.Step, a.Child.Group)
+	}
+	if a := created(map[string]Receipt{"x": m, "y": m}); a.Step != "z" || a.Child.Group != "" {
+		t.Errorf("x, y done: created %s, group %q; want z with a PR of its own", a.Step, a.Child.Group)
+	}
+}
