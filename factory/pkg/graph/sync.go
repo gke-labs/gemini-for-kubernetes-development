@@ -214,6 +214,23 @@ func Observe(ctx context.Context, gh GitHub, opts Options) (*Pass, *githubv39.Is
 	if o.SpecErr == nil {
 		o.Spec, o.SpecErr = start.WithGates(o.Spec)
 	}
+	if o.SpecErr == nil {
+		o.SpecErr = start.checkDone(o.Spec)
+	}
+	if o.SpecErr == nil && len(start.Done) > 0 {
+		o.Done = map[string]Receipt{}
+		for id, text := range start.Done {
+			rc := Receipt{Text: text, PR: start.Done.PR(id)}
+			if rc.PR > 0 {
+				ref, err := gh.GetIssueRef(ctx, rc.PR)
+				if err != nil {
+					return nil, nil, fmt.Errorf("reading done step %s's receipt #%d: %w", id, rc.PR, err)
+				}
+				rc.Merged, rc.Labels = ref.IsPR && ref.Merged, ref.Labels
+			}
+			o.Done[id] = rc
+		}
+	}
 
 	if !o.Parent.Open {
 		o.Parent.ClosedBy = closedBy(ctx, gh, opts.Issue)

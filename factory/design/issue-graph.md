@@ -275,6 +275,31 @@ params:
 
 Not given, the graph's `group-gate` steps gate. Given, the list replaces them: each named step is a gate, every other step is not. A name that is no step of the graph makes the graph `Invalid`, saying so; `gates` without `grouped: true` is an error. Changing them takes effect for the steps not yet started.
 
+#### Steps done outside the graph (`done`)
+
+The block can list steps whose work is already on the default branch, done before or outside this graph (an older issue, a hand-made PR), each with a **receipt**: the merged PR that did it, or `master` when no one PR did. A plain list means `master` for each.
+
+```factory-graph
+graph: kcc-greenfield
+grouped: true
+gates: [types-judgement]
+done:
+  prepopulate: "#14012"
+  types-judgement: "#14012"
+  controller: "#14390"
+  mockgcp: master
+  mockgcp-alignment: master
+params:
+  kind: DiscoveryEngineSampleQuerySet
+```
+
+- **No child.** A done step counts as succeeded: the status shows it as "done before the graph", with its receipt, and the steps after it start. Here only `release` gets an issue.
+- **The child wins.** A step that already has a child keeps it; `done` only covers steps not started.
+- **Receipts are checked.** A PR receipt must be a merged pull request; otherwise the graph is `Invalid`, saying which. A name that is no step of the graph is `Invalid` too.
+- **`requires` reads the receipt.** A step whose `after` step is done checks its labels on the receipt PR (§4.11); a `master` receipt has none to check, so it passes, as for a step that closed needing no change.
+- **Grouping.** A group whose first steps are done is opened by its first step left; with every earlier step done, the last opens a PR of its own.
+- **`no-change: ok` stays the backstop** for a step the list missed: its fix finds the work done, commits nothing, and the step closes.
+
 - **The group's first step** opens its PR as a draft. Its child says so (a `## Pull request` section), and its marker carries `group=first`.
 - **The next step starts** once the step before has pushed to the PR (the PR's body fixes that step's child) and the PR is ready as the watch's `ready` rule would hand it to people, were it not a draft: green, merging, no trusted feedback waiting, nothing of it running, and, when a review is wanted (the step has `review`), reviewed at its head without changes asked. So the reviewer reviews each step, and the care rules answer it, before the next step builds on it. Outside the watch (or with the ready rule off), the PR head's checks being green decides: at least one, none pending or failed. That step is then `InGroup`: done but for the merge. It counts toward neither `maxActive` nor completion. A later push that is not ready yet does not take it back.
 - **A step continuing the PR** has `group=next pr=<PR> as=<the PR's author> in=<the group's first issue>` in its marker: it commits on the PR's branch as the PR's author (only they can push to it), in the group's first step's sandbox (the branch checked out, its builds warm), and the PR then fixes its child too. The group's last step has `last=true`: once it is pushed, the PR is marked ready for review, and from there it is reviewed and merged like any PR.

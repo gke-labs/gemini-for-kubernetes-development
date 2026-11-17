@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"testing"
@@ -447,6 +448,8 @@ func TestParseStart(t *testing.T) {
 		{"```factory-graph\ngraph: ../x\n```", "bare name"},
 		{"```factory-graph\nsource: plan\nparams: {a: b}\n```", "take none"},
 		{"```factory-graph\ngraph: two\n", "not closed"},
+		{"```factory-graph\ngraph: two\ndone: {types: \"PR 5\"}\n```", "neither a merged PR"},
+		{"```factory-graph\ngraph: two\ndone: types\n```", "a list of steps, or a map"},
 	} {
 		if _, err := ParseStart(tc.body); err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("%q: %v, want %q", tc.body, err, tc.want)
@@ -530,5 +533,62 @@ spec:
 	sync(t, f, opts)
 	if slices.Contains(f.Issues[300].Labels, "overseer/auto-merge") || !slices.Contains(f.Issues[300].Labels, "overseer") {
 		t.Errorf("after the parent lost it, PR labels %v", f.Issues[300].Labels)
+	}
+}
+
+// The start block's done, as a list (each master) or a map of receipts,
+// round-trips through StartBlock.
+func TestParseStartDone(t *testing.T) {
+	l, err := ParseStart("```factory-graph\ngraph: two\ndone: [prepopulate, types-judgement]\n```")
+	if err != nil || l.Done["prepopulate"] != ReceiptMaster || l.Done["types-judgement"] != ReceiptMaster {
+		t.Fatalf("list form: %+v, %v", l, err)
+	}
+	m, err := ParseStart("```factory-graph\ngraph: two\ndone:\n  controller: \"#14390\"\n  mockgcp: master\n```")
+	if err != nil || m.Done["controller"] != "#14390" || m.Done.PR("controller") != 14390 || m.Done.PR("mockgcp") != 0 {
+		t.Fatalf("map form: %+v, %v", m, err)
+	}
+	back, err := ParseStart(m.StartBlock())
+	if err != nil || !maps.Equal(back.Done, m.Done) {
+		t.Errorf("round trip: %+v, %v", back, err)
+	}
+}
+
+// done end to end: a template graph whose start block lists its first two
+// steps as done - one by a merged PR, one on master - creates only the last
+// step's child; the status names the receipts. A done step that is no step
+// of the graph, or a receipt that did not merge, makes it invalid.
+func TestSyncDone(t *testing.T) {
+	f := graphtest.New()
+	f.Files[".agents/graphs/three.yaml"] = `apiVersion: factory.gemini.google.com/v1alpha1
+kind: IssueGraph
+metadata: {name: three}
+spec:
+  steps:
+    - {id: types, title: Types, body: t}
+    - {id: controller, after: [types], title: Controller, body: c}
+    - {id: release, after: [controller], title: Release, body: r}
+`
+	f.Issues[300] = &graphtest.Issue{Title: "controller PR", Author: "hopper-coder-bot", IsPR: true, Merged: true}
+	f.Issues[301] = &graphtest.Issue{Title: "open PR", Author: "hopper-coder-bot", IsPR: true, Open: true}
+	body := func(done string) string { return "```factory-graph\ngraph: three\n" + done + "\n```\n" }
+	f.Issues[100] = &graphtest.Issue{Title: "Kind", Body: body("done:\n  types: master\n  controller: \"#300\""), Author: "alice", Assoc: "MEMBER", Open: true}
+	opts := Options{Issue: 100, Trigger: "overseer", BotLogin: "watcher"}
+	p := sync(t, f, opts)
+	if childOf(f, 100, "types") != 0 || childOf(f, 100, "controller") != 0 || childOf(f, 100, "release") == 0 {
+		t.Fatalf("children: types #%d controller #%d release #%d", childOf(f, 100, "types"), childOf(f, 100, "controller"), childOf(f, 100, "release"))
+	}
+	if !strings.Contains(p.Status, "Done before the graph (#300)") || !strings.Contains(p.Status, "Done before the graph (master)") {
+		t.Errorf("status:\n%s", p.Status)
+	}
+	for name, done := range map[string]string{
+		"unknown step":     "done: [deploy]",
+		"unmerged receipt": "done:\n  types: \"#301\"",
+	} {
+		f.Issues[101] = &graphtest.Issue{Title: "Kind", Body: body(done), Author: "alice", Assoc: "MEMBER", Open: true}
+		o := opts
+		o.Issue = 101
+		if p := sync(t, f, o); p.Result.Phase != PhaseInvalid || childOf(f, 101, "release") != 0 {
+			t.Errorf("%s: phase %s (%s)", name, p.Result.Phase, p.Result.Reason)
+		}
 	}
 }
