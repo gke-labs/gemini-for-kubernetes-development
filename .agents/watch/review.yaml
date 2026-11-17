@@ -38,4 +38,13 @@ policy:
   cooldown:
     failure: 30m
     reset-on: [head]
+  # A review that keeps failing at one head cannot run at all (its
+  # instructions, its sandbox): after 3 failed runs it gives up, with the
+  # stop label and a comment, for a person to look. A new head, or taking
+  # the stop label off, starts the count again.
+  give-up:
+    attempts: 3
+    since: [head, pause]
+    failed: true
+    comment: Pausing after 3 failed reviews at this head. The review could not run (see its task logs); fix what it trips on, then take the stop label off.
   phase: 1
