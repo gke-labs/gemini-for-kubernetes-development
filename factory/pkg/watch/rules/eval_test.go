@@ -218,6 +218,18 @@ func TestDecidePRs(t *testing.T) {
 		{"*/review on a closing issue: inherited, then review", pr(func(it *Item) {
 			it.Closes = []Closing{{Number: 13173, Labels: []string{"overseer", "overseer/review"}}}
 		}), "inherit-labels run, review run"},
+		{"review failed 10m ago on this head: failure cooldown", pr(func(it *Item) {
+			it.Labels = append(it.Labels, "overseer/review")
+			it.Runs = []PastRun{{Rule: "review", StartedAt: ago(11 * time.Minute), EndedAt: ago(10 * time.Minute), Head: "h2", Failed: true}}
+		}), ""},
+		{"review failed 10m ago on the last head: new head reviewed", pr(func(it *Item) {
+			it.Labels = append(it.Labels, "overseer/review")
+			it.Runs = []PastRun{{Rule: "review", StartedAt: ago(11 * time.Minute), EndedAt: ago(10 * time.Minute), Head: "h1", Failed: true}}
+		}), "review run"},
+		{"review failed 40m ago on this head: retried", pr(func(it *Item) {
+			it.Labels = append(it.Labels, "overseer/review")
+			it.Runs = []PastRun{{Rule: "review", StartedAt: ago(41 * time.Minute), EndedAt: ago(40 * time.Minute), Head: "h2", Failed: true}}
+		}), "review run"},
 		{"reviewed at head: ready", pr(func(it *Item) {
 			it.Labels, it.ReviewedAtHead = append(it.Labels, "overseer/review"), true
 		}), "ready run"},

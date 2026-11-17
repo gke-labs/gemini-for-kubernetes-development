@@ -30,4 +30,12 @@ run:
     comment: "AI Factory started reviewing this pull request in a sandbox."
 policy:
   dedupe: head
+  # A review that fails (it could not load its instructions, the engine
+  # errored) is not a review of the head, so dedupe does not hold it back:
+  # without a cooldown it ran again every scan (KCC #15826: 40+ runs, 3s
+  # each, over 7h). It waits 30m after a failure instead; a new head ends
+  # the wait, so a push is still reviewed at once.
+  cooldown:
+    failure: 30m
+    reset-on: [head]
   phase: 1
