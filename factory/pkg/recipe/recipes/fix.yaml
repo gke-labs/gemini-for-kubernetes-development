@@ -10,7 +10,11 @@
 # A fix that should change nothing makes no commit and writes why (the
 # Change's comment): the push step pushes nothing, and open-pr posts the
 # comment on the issue instead of opening a PR. No commit and no comment
-# fails the task.
+# fails the task. The agent says whether the work is done already or it
+# was blocked (the Change's blocked): a blocked issue is labelled
+# <trigger>/needs-human and <trigger>/stop and never closed; otherwise a
+# graph step that may need no change (no-change: ok) is closed as
+# completed.
 #
 # With a plan the first ask follows it. The plan input takes a Plan's
 # result (from: Plan): a plan whose actions offer `run: fix` (`factory
@@ -303,8 +307,20 @@ start:
             you checked, what you found (the commit or PR that already
             fixed it, the duplicate, the decision a maintainer must make),
             and what would need to be true for a change to be right.
+          blocked: true   # ONLY if the work is still undone; see below
 
         It is posted on the issue, and no pull request is opened.
+
+        `blocked` says which kind of "nothing" it is. Write `blocked: true`
+        when the work still needs doing but you could not do it: a
+        decision only a maintainer can make, something it depends on that
+        is missing or broken, an API you cannot exercise. The issue then
+        waits for a person, and nothing more runs on it. Leave `blocked`
+        out when nothing needs doing: the work is already done (on the
+        default branch, or on the branch you continued), the issue is not
+        a bug, or it duplicates another. Some issues are closed for you
+        when you say nothing needed doing, so do not leave `blocked` out
+        for work that is still undone.
 
         Rules:
         - The body MUST contain a line of exactly the form

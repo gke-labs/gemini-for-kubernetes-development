@@ -54,6 +54,13 @@ type Change struct {
 	// is not a bug, or needs a human's decision), when it made no commit:
 	// open-pr posts it on the issue instead of opening a PR.
 	Comment string `yaml:"comment,omitempty"`
+	// Blocked, with Comment, is that the work still needs doing but the
+	// agent could not do it (a maintainer must decide, a dependency is
+	// missing): open-pr then labels the issue <trigger>/needs-human and
+	// <trigger>/stop, so nothing more runs on it until a person takes the
+	// stop label off, and never closes it - not even a graph step that may
+	// need no change (no-change: ok), which is for work already done.
+	Blocked bool `yaml:"blocked,omitempty"`
 	// Rerun asks for checks that failed through no fault of the change (a
 	// flake, an outage) to run again, as post-replies applies them: the
 	// agent never reruns anything itself.
@@ -510,18 +517,63 @@ func commentUnchanged(ctx context.Context, gh *githubv39.Client, doc *Document, 
 		}
 		if posted {
 			fmt.Fprintf(out, "Why task %s changed nothing is already on %s; not commenting again\n", doc.Source.Task, doc.Target.URL)
-			return closeNoChangeStep(ctx, gh, owner, repo, num, dryRun, out)
+			return settleUnchanged(ctx, gh, c, owner, repo, num, dryRun, out)
 		}
 	}
 	fmt.Fprintf(out, "The fix made no change; no PR. %s why on %s:\n%s\n", doing(dryRun, "Commenting", "comment"), doc.Target.URL, indent(c.Comment))
 	if dryRun {
 		return nil
 	}
-	body := withSessionHint(ctx, c.Comment) + marker(doc)
+	comment := c.Comment
+	if c.Blocked {
+		comment += blockedNote(triggerLabel(ctx))
+	}
+	body := withSessionHint(ctx, comment) + marker(doc)
 	if _, _, err := gh.Issues.CreateComment(ctx, owner, repo, num, &githubv39.IssueComment{Body: &body}); err != nil {
 		return fmt.Errorf("commenting why the fix changed nothing: %w", err)
 	}
+	return settleUnchanged(ctx, gh, c, owner, repo, num, dryRun, out)
+}
+
+// settleUnchanged is what becomes of an issue whose fix changed nothing,
+// once the comment saying why is on it: a blocked one waits for a person
+// (holdBlocked); otherwise a graph step that may need no change is closed
+// as completed (closeNoChangeStep), and any other issue is left as it is.
+func settleUnchanged(ctx context.Context, gh *githubv39.Client, c *Change, owner, repo string, num int, dryRun bool, out io.Writer) error {
+	if c.Blocked {
+		return holdBlocked(ctx, gh, owner, repo, num, dryRun, out)
+	}
 	return closeNoChangeStep(ctx, gh, owner, repo, num, dryRun, out)
+}
+
+// blockedNote ends a blocked fix's comment: what the labels mean, and how
+// to go on.
+func blockedNote(trigger string) string {
+	return fmt.Sprintf("\n\n**This needs a person.** The work is not done, and the agent could not do it. The issue is labelled `%[1]s/needs-human` and `%[1]s/stop`, so nothing more runs on it. Once what blocks it is resolved, take `%[1]s/stop` off to have it fixed again, or close it.", trigger)
+}
+
+// holdBlocked labels issue num <trigger>/needs-human and <trigger>/stop: a
+// blocked fix's issue waits for a person, as a graph's then: ask step
+// does, and nothing more runs on it until the stop label comes off. A
+// closed issue is left as it is.
+func holdBlocked(ctx context.Context, gh *githubv39.Client, owner, repo string, num int, dryRun bool, out io.Writer) error {
+	issue, _, err := gh.Issues.Get(ctx, owner, repo, num)
+	if err != nil {
+		return fmt.Errorf("reading #%d: %w", num, err)
+	}
+	if issue.GetState() != "open" {
+		return nil
+	}
+	trigger := triggerLabel(ctx)
+	labels := []string{trigger + "/needs-human", trigger + "/stop"}
+	fmt.Fprintf(out, "%s #%d %s: its fix is blocked and waits for a person\n", doing(dryRun, "Labelling", "label"), num, strings.Join(labels, ", "))
+	if dryRun {
+		return nil
+	}
+	if _, _, err := gh.Issues.AddLabelsToIssue(ctx, owner, repo, num, labels); err != nil {
+		return fmt.Errorf("labelling #%d blocked: %w", num, err)
+	}
+	return nil
 }
 
 // noChangeStepRE is a graph step's marker saying the step may rightly need

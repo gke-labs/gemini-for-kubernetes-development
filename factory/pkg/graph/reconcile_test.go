@@ -507,3 +507,21 @@ func TestPRLabelsFromParentOnlyInTemplates(t *testing.T) {
 		t.Errorf("a template with pr-labels-from-parent: %v", err)
 	}
 }
+
+// A step whose open child waits for a person - its fix was blocked (or it
+// is a then: ask step) - says so in the status; the step stays Active.
+func TestReconcileWaitingForAPerson(t *testing.T) {
+	s := abc(t, "")
+	blocked := open(101)
+	blocked.Labels = []string{"overseer", "overseer/needs-human", "overseer/stop"}
+	r := Reconcile(observed(s, map[string][]Child{"a": {blocked}}, State{}))
+	if r.Steps[0].State != StepActive || r.Steps[0].Waiting != "a person (#101 is labelled overseer/needs-human)" {
+		t.Errorf("step a: %s, waiting %q", r.Steps[0].State, r.Steps[0].Waiting)
+	}
+	if !strings.Contains(RenderStatus("plan", 1, s, r), "waiting: a person (#101") {
+		t.Error("the status table does not say step a waits for a person")
+	}
+	if r := Reconcile(observed(s, map[string][]Child{"a": {open(101)}}, State{})); r.Steps[0].Waiting != "" {
+		t.Errorf("an ordinary active step waits for %q", r.Steps[0].Waiting)
+	}
+}
