@@ -26,6 +26,13 @@ rules:
 - apiGroups: [""]
   resources: ["secrets", "events"]
   verbs: ["get", "list"]
+# The factory-deployer service account the research, run and retro
+# sandboxes run as (factory's sandbox.go DeployerServiceAccount): read, and
+# made when the namespace has none yet. Without get, the retro could not
+# even see that it exists, and failed every week trying to create it.
+- apiGroups: [""]
+  resources: ["serviceaccounts"]
+  verbs: ["get", "create"]
 # Delete a pod: a sandbox moved to the overseer's factory image (on reuse,
 # no task in flight) has its awake pod replaced, which its controller makes
 # again from the updated spec. Without it the spec moved and the old pod

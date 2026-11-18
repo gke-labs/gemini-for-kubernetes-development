@@ -84,18 +84,24 @@ func fillEnvResources(opts *DevSandboxOptions) {
 // It carries no Kubernetes RBAC; only the research/deploy surface uses it.
 const DeployerServiceAccount = "factory-deployer"
 
-// ensureDeployerServiceAccount creates the deployer KSA if missing.
+// ensureDeployerServiceAccount creates the deployer KSA if missing. Only a
+// "not found" makes it create one: any other error reading it (no
+// permission to get service accounts, say) is that error, not a create
+// that fails with a misleading message.
 func ensureDeployerServiceAccount(ctx context.Context, kubeClient *clients.KubernetesClient, namespace string) error {
 	_, err := kubeClient.Clientset.CoreV1().ServiceAccounts(namespace).Get(ctx, DeployerServiceAccount, metav1.GetOptions{})
-	if err == nil {
+	switch {
+	case err == nil:
 		return nil
+	case !apierrors.IsNotFound(err):
+		return fmt.Errorf("reading the %s service account: %w", DeployerServiceAccount, err)
 	}
 	sa := &corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{
 		Name:      DeployerServiceAccount,
 		Namespace: namespace,
 		Labels:    map[string]string{"factory.gemini.google.com/managed": "true"},
 	}}
-	if _, cerr := kubeClient.Clientset.CoreV1().ServiceAccounts(namespace).Create(ctx, sa, metav1.CreateOptions{}); cerr != nil && !strings.Contains(cerr.Error(), "already exists") {
+	if _, cerr := kubeClient.Clientset.CoreV1().ServiceAccounts(namespace).Create(ctx, sa, metav1.CreateOptions{}); cerr != nil && !apierrors.IsAlreadyExists(cerr) {
 		return fmt.Errorf("creating %s service account: %w", DeployerServiceAccount, cerr)
 	}
 	return nil
