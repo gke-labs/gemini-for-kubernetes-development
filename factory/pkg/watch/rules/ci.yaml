@@ -28,4 +28,5 @@ policy:
     attempts: 3
     since: [head, human, pause]
     comment: Pausing after 3 attempts to fix the failing checks.
+    assign: "{{closing-issue-assignees}}"
   phase: 3

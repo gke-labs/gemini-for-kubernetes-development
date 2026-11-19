@@ -345,7 +345,8 @@ type Cooldown struct {
 }
 
 // GiveUp stops the rule on an item after Attempts runs since Since: the
-// stop label, and Comment saying why.
+// stop label, Comment saying why, and Assign assigned with it (a PR's
+// {{closing-issue-assignees}}: a paused PR handed to its humans).
 type GiveUp struct {
 	Attempts int   `yaml:"attempts" json:"attempts"`
 	Since    Since `yaml:"since,omitempty" json:"since,omitempty"`
@@ -354,6 +355,7 @@ type GiveUp struct {
 	// asked.
 	Failed  bool   `yaml:"failed,omitempty" json:"failed,omitempty"`
 	Comment string `yaml:"comment,omitempty" json:"comment,omitempty"`
+	Assign  string `yaml:"assign,omitempty" json:"assign,omitempty"`
 }
 
 // Duration is a time.Duration written as Go writes one ("10m", "2h"), or
@@ -657,6 +659,11 @@ func (r *Rule) checkPlaceholders() error {
 	}
 	if err := check("run.assign", assigneePlaceholders, r.Run.Assign, r.Run.Unassign); err != nil {
 		return err
+	}
+	if g := r.Policy.GiveUp; g != nil {
+		if err := check("policy.give-up.assign", assigneePlaceholders, g.Assign); err != nil {
+			return err
+		}
 	}
 	for name, h := range r.Run.hooks() {
 		if h == nil {

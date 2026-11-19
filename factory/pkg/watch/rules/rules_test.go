@@ -150,6 +150,8 @@ func TestValidateErrors(t *testing.T) {
 		// Placeholders and named durations are the engine's closed set.
 		{"unknown placeholder", strings.Replace(base, "[overseer]", `["{{nope}}"]`, 1), "{{nope}} is not one of {{trigger}}"},
 		{"pr placeholder on issue", "name: r\non: issue\nwhen: {labels: {any: [x]}}\nrun: {label: [\"{{closing-issue-labels}}\"]}\n", "{{closing-issue-labels}} is not one of"},
+		{"give-up assigns closing issues' humans", base + "policy:\n  give-up: {attempts: 3, assign: \"{{closing-issue-assignees}}\"}\n", ""},
+		{"give-up assign pr placeholder on issue", strings.Replace(strings.Replace(base, "on: pr", "on: issue", 1), "care-ci", "fix", 1) + "policy:\n  give-up: {attempts: 3, assign: \"{{closing-issue-assignees}}\"}\n", "policy.give-up.assign: {{closing-issue-assignees}} is not one of"},
 		{"unknown duration name", base + "policy:\n  cooldown: {success: \"{{soon}}\"}\n", "is not a duration factory reads"},
 		{"named duration", base + "policy:\n  cooldown: {success: \"{{workflow-cooldown}}\"}\n", ""},
 	} {
