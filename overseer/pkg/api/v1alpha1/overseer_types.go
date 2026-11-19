@@ -76,12 +76,20 @@ type OverseerRepoRecipe struct {
 	GitCommit string `json:"gitCommit,omitempty"`
 }
 
-// RetroSpec is when the weekly retro runs.
+// RetroSpec is when the weekly retro runs, and whether per-PR retros do.
 type RetroSpec struct {
 	// Schedule is cron's five fields or a descriptor, such as @weekly.
 	// Empty, the retro never runs.
 	// +kubebuilder:validation:Optional
 	Schedule string `json:"schedule,omitempty"`
+
+	// PerPR runs a retro on one of overseer's own PRs that a maintainer
+	// labels <trigger>/retro, once it is closed
+	// (factory/design/retro-per-pr.md): its edits to the agents'
+	// instructions are opened as a PR, assigned to the people involved,
+	// and how it went is said on the PR. Off, the label does nothing.
+	// +kubebuilder:validation:Optional
+	PerPR bool `json:"perPR,omitempty"`
 }
 
 // OverseerSpec defines the desired state of Overseer

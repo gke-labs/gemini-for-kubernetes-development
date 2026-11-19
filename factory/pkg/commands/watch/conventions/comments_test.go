@@ -68,6 +68,17 @@ func TestHasIgnorePrefix(t *testing.T) {
 			triggerLabel: "factory",
 			expected:     false,
 		},
+		// A /retro note is for the PR's retro, not care feedback.
+		{
+			body:         "/retro the agent never ran the envtest skill",
+			triggerLabel: "factory",
+			expected:     true,
+		},
+		{
+			body:         "/retrospective: not a note",
+			triggerLabel: "factory",
+			expected:     false,
+		},
 	}
 
 	for _, tc := range tests {
