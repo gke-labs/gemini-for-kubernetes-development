@@ -377,7 +377,7 @@ func applyOpenPR(ctx context.Context, gh *githubv39.Client, doc *Document, dryRu
 		Title:               githubv39.String(c.Title),
 		Head:                githubv39.String(head),
 		Base:                githubv39.String(base),
-		Body:                githubv39.String(withSessionHint(ctx, c.Body) + marker(doc)),
+		Body:                githubv39.String(withSessionHint(ctx, withAttachments(c.Body, doc)) + marker(doc)),
 		Draft:               githubv39.Bool(draft),
 		MaintainerCanModify: githubv39.Bool(true),
 	})
@@ -535,7 +535,7 @@ func commentUnchanged(ctx context.Context, gh *githubv39.Client, doc *Document, 
 	if c.Blocked {
 		comment += blockedNote(triggerLabel(ctx))
 	}
-	body := withSessionHint(ctx, comment) + marker(doc)
+	body := withSessionHint(ctx, withAttachments(comment, doc)) + marker(doc)
 	if _, _, err := gh.Issues.CreateComment(ctx, owner, repo, num, &githubv39.IssueComment{Body: &body}); err != nil {
 		return fmt.Errorf("commenting why the fix changed nothing: %w", err)
 	}

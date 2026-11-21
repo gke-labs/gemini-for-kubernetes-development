@@ -249,6 +249,23 @@ func TestOpenPR(t *testing.T) {
 		}
 	})
 
+	// A Change's attachments (its recipe's comment attach: evidence a step
+	// wrote) go in the PR body, verbatim, after the description.
+	t.Run("attachments go in the PR body", func(t *testing.T) {
+		doc := changeDoc(t)
+		doc.Attachments = []Attachment{NewAttachment("receipts.md", []byte("# Validation receipts\n\nPASS 37/0\n"))}
+		f := &fakePRs{}
+		var out bytes.Buffer
+		if err := ApplyAction(ctx, f.client(t), doc, "open-pr", false, &out); err != nil {
+			t.Fatal(err)
+		}
+		b := f.created[0].GetBody()
+		if !strings.HasPrefix(b, "Does it.\n\nFixes #7") || !strings.Contains(b, "<code>receipts.md</code>") ||
+			!strings.Contains(b, doc.Attachments[0].SHA256) || !strings.Contains(b, "PASS 37/0") || !strings.HasSuffix(b, marker(doc)) {
+			t.Errorf("body = %q", b)
+		}
+	})
+
 	// A task on a repository (the retro) opens its PR there.
 	t.Run("a repository's Change opens on the repository", func(t *testing.T) {
 		doc := changeDoc(t)
@@ -1071,5 +1088,33 @@ func TestOpenPRUnchangedOnRepository(t *testing.T) {
 	}
 	if len(f.created) != 0 || len(f.issueComments) != 0 || !strings.Contains(out.String(), "The feedback was taste.") {
 		t.Errorf("created %d, comments %q:\n%s", len(f.created), f.issueComments, out.String())
+	}
+}
+
+// A Change that changed nothing carries its attachments in the comment on
+// the issue, after why: the evidence the recipe captured either way.
+func TestOpenPRUnchangedAttachments(t *testing.T) {
+	ctx := context.Background()
+	const why = "change:\n  comment: |\n    The script already covered the change; re-run.\n"
+	doc, err := Wrap("Change", why, Target{URL: issueURL}, Source{Task: "validate-3", Recipe: "validate-kind"})
+	if err != nil {
+		t.Fatalf("Wrap: %v", err)
+	}
+	if err := doc.SetPushed(Pushed{Unchanged: true, Base: "b0", Head: "b0"}); err != nil {
+		t.Fatalf("SetPushed: %v", err)
+	}
+	doc.Attachments = []Attachment{NewAttachment("receipts.md", []byte("# Validation receipts\n\nPASS 41/0\n"))}
+	f := &fakePRs{}
+	var out bytes.Buffer
+	if err := ApplyAction(ctx, f.client(t), doc, "open-pr", false, &out); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.created) != 0 || len(f.issueComments) != 1 {
+		t.Fatalf("opened %d PRs, %d comments", len(f.created), len(f.issueComments))
+	}
+	c := f.issueComments[0]
+	if !strings.HasPrefix(c, "The script already covered the change") || !strings.Contains(c, "<code>receipts.md</code>") ||
+		!strings.Contains(c, "PASS 41/0") || !strings.HasSuffix(c, marker(doc)) {
+		t.Errorf("comment = %q", c)
 	}
 }
