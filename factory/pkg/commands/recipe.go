@@ -1827,6 +1827,10 @@ func writeTaskOutput(taskDir, repoDir string, inputs map[string]string, engine s
 	doc.Actions = task.Output.Actions
 	doc.Preview = task.Output.Preview
 	doc.Comment = task.Output.Comment
+	// The files its recipe attaches (comment attach), read now, as a
+	// framed result's are: open-pr carries them into the PR body, or the
+	// no-change comment.
+	doc.Attachments = taskoutput.ReadAttachments(taskDir, task.Output.Comment)
 	out, err := taskoutput.Marshal(doc)
 	if err != nil {
 		return err

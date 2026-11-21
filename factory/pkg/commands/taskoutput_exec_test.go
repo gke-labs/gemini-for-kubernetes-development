@@ -345,3 +345,35 @@ func TestTaskOutputOfAnOptionalResultWrittenLater(t *testing.T) {
 		t.Errorf("notes = %s (%v)", data, err)
 	}
 }
+
+// A Change's recipe attaches files (comment attach, evidence a step wrote):
+// they are read into the result when it is wrapped, as a framed result's
+// are, so open-pr carries them into the PR.
+func TestWriteTaskOutputChangeAttachments(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "recipe-validate-kind-20261121-181738-8515")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeTaskFiles(t, dir, spool.Task{ID: filepath.Base(dir), Recipe: "validate-kind",
+		Output: &taskoutput.Decl{Kind: "Change", From: "change.yaml", Comment: &taskoutput.CommentOptions{Attach: []string{"receipts.md", "missing.md"}}}},
+		map[string]string{
+			"change.yaml": "change:\n  title: \"t\"\n  body: |\n    b\n\n    Fixes #1\n",
+			"receipts.md": "# Validation receipts\n\nPASS 39/0\n",
+			"push.json":   `{"fork":"bot/r","branch":"issue-1-1","base":"` + strings.Repeat("a", 40) + `","head":"` + strings.Repeat("b", 40) + `"}`,
+		})
+	if err := writeTaskOutput(dir, dir, map[string]string{"issue_url": "https://github.com/o/r/issues/1"}, "gemini"); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, taskoutput.File))
+	if err != nil {
+		t.Fatal(err)
+	}
+	docs, err := taskoutput.Parse(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := docs[0].Attachments
+	if len(a) != 1 || a[0].Name != "receipts.md" || !strings.Contains(a[0].Content, "PASS 39/0") || a[0].SHA256 == "" {
+		t.Errorf("attachments = %+v, want receipts.md (missing.md left out)", a)
+	}
+}
