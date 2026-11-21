@@ -111,6 +111,8 @@ type CommentOptions struct {
 	// produced (a capture a script wrote), not the agent's words. They are
 	// read into the result when it is wrapped (Attachments), so apply has
 	// them wherever it runs. A file the task did not write is left out.
+	// A Change carries them too: open-pr puts them in the body of the PR
+	// it opens, or in the comment on the issue when nothing changed.
 	Attach []string `yaml:"attach,omitempty" json:"attach,omitempty"`
 }
 
