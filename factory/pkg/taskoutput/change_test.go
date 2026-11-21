@@ -971,6 +971,34 @@ func TestOpenPRUnchanged(t *testing.T) {
 	if other.issueClosed {
 		t.Error("a step without no-change: ok was closed")
 	}
+	// Any issue opts in with NoChangeMarker in its body (a fan-out
+	// child's task, say): closed as completed, like a no-change step.
+	for _, body := range []string{
+		"Validate FooWidget.\n\n" + NoChangeMarker + "\n\nPart of #9.",
+		"Validate FooWidget.\n<!--factory:no-change   ok-->",
+	} {
+		optIn := &fakePRs{issueBody: body}
+		out.Reset()
+		if err := ApplyAction(ctx, optIn.client(t), doc, "open-pr", false, &out); err != nil {
+			t.Fatal(err)
+		}
+		if !optIn.issueClosed || len(optIn.issueComments) != 1 || !strings.Contains(out.String(), "Closing #7 as completed") {
+			t.Errorf("an issue with the no-change marker %q: closed %v, comments %d:\n%s", body, optIn.issueClosed, len(optIn.issueComments), out.String())
+		}
+	}
+	// Mentioning no-change in text, or another marker, is not the marker.
+	for _, body := range []string{
+		"factory:no-change ok, in plain text",
+		"<!-- factory:no-change maybe -->",
+	} {
+		notOptIn := &fakePRs{issueBody: body}
+		if err := ApplyAction(ctx, notOptIn.client(t), doc, "open-pr", false, &out); err != nil {
+			t.Fatal(err)
+		}
+		if notOptIn.issueClosed {
+			t.Errorf("an issue with %q was closed", body)
+		}
+	}
 
 	// Blocked: the work is undone and the agent could not do it. Even a
 	// no-change: ok step is not closed; it is labelled needs-human and

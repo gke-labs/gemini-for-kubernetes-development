@@ -32,7 +32,7 @@ If the proposal is too far off, delete the spec comment and the bot writes a new
 
 ### 4. Remove `overseer/stop` to start
 
-The bot creates the children and labels the first batch (`window.start`, 2 by default) `overseer`. From there each child is an ordinary overseer issue: a coder bot picks it up and opens a PR, and the PR goes through review as usual.
+The bot creates the children and labels the first batch (`window.start`, 2 by default) `overseer`. From there each child is an ordinary overseer issue: a coder bot picks it up and opens a PR, and the PR goes through review as usual. A child whose work may rightly already be done can close without a PR: put `<!-- factory:no-change ok -->` in the task, so every child's body carries it, and a fix that changes nothing and says why closes the child as completed, as a `no-change: ok` graph step does. Without the marker such a child stays open for a person.
 
 The progress comment shows each child's PR and state. Each child is also a GitHub sub-issue of the parent, so GitHub lists them under it with a progress bar.
 

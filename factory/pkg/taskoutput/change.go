@@ -544,8 +544,9 @@ func commentUnchanged(ctx context.Context, gh *githubv39.Client, doc *Document, 
 
 // settleUnchanged is what becomes of an issue whose fix changed nothing,
 // once the comment saying why is on it: a blocked one waits for a person
-// (holdBlocked); otherwise a graph step that may need no change is closed
-// as completed (closeNoChangeStep), and any other issue is left as it is.
+// (holdBlocked); otherwise an issue that may need no change - a graph step
+// with no-change: ok, or one whose body has NoChangeMarker - is closed as
+// completed (closeNoChangeStep), and any other issue is left as it is.
 func settleUnchanged(ctx context.Context, gh *githubv39.Client, c *Change, owner, repo string, num int, dryRun bool, out io.Writer) error {
 	if c.Blocked {
 		return holdBlocked(ctx, gh, owner, repo, num, dryRun, out)
@@ -587,19 +588,37 @@ func holdBlocked(ctx context.Context, gh *githubv39.Client, owner, repo string, 
 // no PR (graph's Step.NoChange: ok).
 var noChangeStepRE = regexp.MustCompile(`<!--\s*factory:graph-child\s[^>]*\bnochange=ok\b`)
 
-// closeNoChangeStep closes issue num as completed if it is a graph step
-// that may rightly need no PR (its marker says nochange=ok): its fix
-// changed nothing, the comment says why, and the graph goes on. Any other
-// issue is left open, for a person to judge the no-op.
+// NoChangeMarker opts any issue in to what a no-change: ok graph step
+// gets: a fix that rightly changes nothing (and says why) closes it as
+// completed. Its author writes it in the body, e.g. a fan-out's task, so
+// each child carries it: a child whose work is already done then closes,
+// and the fan-out goes on. Only the body counts, and the fix rule only
+// takes issues from trusted authors.
+const NoChangeMarker = "<!-- factory:no-change ok -->"
+
+// noChangeMarkerRE matches NoChangeMarker, spacing aside.
+var noChangeMarkerRE = regexp.MustCompile(`<!--\s*factory:no-change\s+ok\s*-->`)
+
+// mayNeedNoChange is whether an issue's body says its fix may rightly
+// change nothing: a no-change: ok graph step's marker, or NoChangeMarker.
+func mayNeedNoChange(body string) bool {
+	return noChangeStepRE.MatchString(body) || noChangeMarkerRE.MatchString(body)
+}
+
+// closeNoChangeStep closes issue num as completed if its body says it may
+// rightly need no PR (mayNeedNoChange: a graph step with nochange=ok, or
+// NoChangeMarker): its fix changed nothing, the comment says why, and the
+// graph or fan-out goes on. Any other issue is left open, for a person to
+// judge the no-op.
 func closeNoChangeStep(ctx context.Context, gh *githubv39.Client, owner, repo string, num int, dryRun bool, out io.Writer) error {
 	issue, _, err := gh.Issues.Get(ctx, owner, repo, num)
 	if err != nil {
 		return fmt.Errorf("reading #%d: %w", num, err)
 	}
-	if issue.GetState() != "open" || !noChangeStepRE.MatchString(issue.GetBody()) {
+	if issue.GetState() != "open" || !mayNeedNoChange(issue.GetBody()) {
 		return nil
 	}
-	fmt.Fprintf(out, "%s #%d as completed: its graph step may need no change (no-change: ok)\n", doing(dryRun, "Closing", "close"), num)
+	fmt.Fprintf(out, "%s #%d as completed: it may need no change (no-change: ok)\n", doing(dryRun, "Closing", "close"), num)
 	if dryRun {
 		return nil
 	}
