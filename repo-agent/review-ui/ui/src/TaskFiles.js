@@ -106,12 +106,13 @@ export default function TaskFiles({ apiBase, sandbox, task, initialFile }) {
     return () => { cancelled = true; };
   }, [apiBase, sandbox, task, open]);
 
-  if (error) return <div className="task-files" style={{ padding: 16, color: 'var(--danger, #c62828)' }}>Could not list this task's files: {error}</div>;
-  if (!listing) return <div className="task-files" style={{ padding: 16 }}>Loading files…</div>;
+  if (error) return <div className="task-files" style={{ padding: 16, textAlign: 'left', color: 'var(--danger, #c62828)' }}>Could not list this task's files: {error}</div>;
+  if (!listing) return <div className="task-files" style={{ padding: 16, textAlign: 'left' }}>Loading files…</div>;
 
   const groups = groupTaskFiles(listing.files);
   return (
-    <div className="task-files" style={{ display: 'flex', flex: 1, minHeight: 0 }}>
+    // Left-aligned: the page sits in .App, whose text-align is center (App.css).
+    <div className="task-files" style={{ display: 'flex', flex: 1, minHeight: 0, textAlign: 'left' }}>
       <div style={{ width: 320, overflowY: 'auto', borderRight: '1px solid var(--border, #ddd)', padding: 8 }}>
         <div style={{ fontSize: 12, opacity: 0.75, marginBottom: 8 }} data-testid="task-files-source">
           {listing.source === 'archive' ? 'From the archive (the sandbox is gone)' : 'Live from the sandbox'}
