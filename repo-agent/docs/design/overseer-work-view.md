@@ -142,6 +142,13 @@ admin, a maintainer of its repository, or a login on its
 - `GET /sandbox-card/:sandbox`, `…/log`, `POST …/lifecycle`, and the
   terminal: the same, for the card. The page's terminal moves here from
   `/api/terminal/:namespace/:name`, which goes.
+- `GET /task-files/:sandbox/:task` and `GET /task-files/:sandbox/:task/file/<path>`:
+  a task's files for the session page's Files tab
+  (`#/overseers/<name>/task-session/<sandbox>/<task>?tab=files[&file=<path>]`),
+  read live from the sandbox's task server, or - once the sandbox is reaped
+  or paused - from the task archive (the token-usage collector, which
+  factory's harvest fills), for the overseer's repository's tasks only.
+  Served as text, never HTML (`handlers_task_files.go`).
 
 No revise, draft or apply routes: the board files those as Requests on a
 board, and overseer sandboxes belong to none. The overseer's CLI already

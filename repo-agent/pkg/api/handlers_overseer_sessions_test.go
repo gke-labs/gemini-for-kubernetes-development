@@ -145,6 +145,8 @@ func overseerSessionServer(t *testing.T, daemon *fakeSessions) *gin.Engine {
 	scoped.POST("/task-sessions/:sandbox/:task/prompt", server.promptTaskSession)
 	scoped.GET("/task-sessions/:sandbox/:task/streams", server.getTaskSessionStreams)
 	scoped.GET("/task-sessions/:sandbox/:task/streams/:stream", server.getTaskSessionStream)
+	scoped.GET("/task-files/:sandbox/:task", server.getTaskFiles)
+	scoped.GET("/task-files/:sandbox/:task/file/*path", server.getTaskFile)
 	scoped.GET("/sandbox-card/:sandbox", server.getSandboxCard)
 	scoped.POST("/sandbox-card/:sandbox/lifecycle", server.sandboxLifecycle)
 	return r
