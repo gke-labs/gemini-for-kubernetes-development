@@ -7,6 +7,7 @@ import Work from './Work';
 import Sessions, { sessionsRoute } from './Sessions';
 import SandboxTerminal, { terminalRoute } from './Terminal';
 import { ResearchConversation } from './Research';
+import TaskFiles from './TaskFiles';
 
 // Repo Agent shell: the Work board is home (docs/design/repoboard.md §8).
 // The legacy RepoWatch dashboard (Review/Issues/Dev tabs) retired with
@@ -26,10 +27,16 @@ import { ResearchConversation } from './Research';
 // (handlers_task_session.go).
 // #/overseers/<name>/task-session/<sandbox>/<task> is an overseer's
 // sandbox's, on that overseer's routes (apiBase).
+// An overseer's session page takes ?tab=files (its Files tab) and
+// &file=<path> (a file of the task, open), so a link opens either.
 export function taskSessionRoute(hash = window.location.hash) {
-  const m = hash.match(/^#(?:\/overseers\/([A-Za-z0-9._-]+))?\/task-session\/([a-z0-9][-a-z0-9.]{0,252})\/([A-Za-z0-9_][A-Za-z0-9._-]{0,127})$/);
+  const m = hash.match(/^#(?:\/overseers\/([A-Za-z0-9._-]+))?\/task-session\/([a-z0-9][-a-z0-9.]{0,252})\/([A-Za-z0-9_][A-Za-z0-9._-]{0,127})(?:\?(.*))?$/);
   if (!m) return null;
-  return { sandbox: m[2], task: m[3], apiBase: m[1] ? `/api/overseers/${m[1]}` : '/api' };
+  const route = { sandbox: m[2], task: m[3], apiBase: m[1] ? `/api/overseers/${m[1]}` : '/api' };
+  const params = new URLSearchParams(m[4] || '');
+  if (params.get('tab') === 'files') route.tab = 'files';
+  if (params.get('file')) route.file = params.get('file');
+  return route;
 }
 
 // taskSessionTitle names a task's session by what the task is:
@@ -42,10 +49,38 @@ function taskSessionTitle(route) {
 function TaskSessionPage({ route }) {
   const title = taskSessionTitle(route);
   useEffect(() => { document.title = title; }, [title]);
+  // The Files tab is on an overseer's routes (handlers_task_files.go).
+  const hasFiles = route.apiBase !== '/api';
+  const [tab, setTab] = useState(hasFiles && route.tab === 'files' ? 'files' : 'conversation');
+  const [filesSeen, setFilesSeen] = useState(tab === 'files');
+  const show = next => {
+    setTab(next);
+    if (next === 'files') setFilesSeen(true);
+    const [path] = window.location.hash.split('?');
+    window.history.replaceState(null, '', next === 'files' ? `${path}?tab=files` : path);
+  };
+  const tabStyle = active => ({
+    padding: '6px 14px', border: 0, borderBottom: active ? '2px solid var(--accent, #4285f4)' : '2px solid transparent',
+    background: 'transparent', color: 'inherit', cursor: 'pointer', fontWeight: active ? 600 : 400,
+  });
   return (
     <div className="App" style={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
-      <ResearchConversation task={{ sandbox: route.sandbox, task: route.task }} title={title} fill standalone
-        apiBase={route.apiBase} onDeleted={() => { window.location.href = '/'; }} />
+      {hasFiles && (
+        <div role="tablist" style={{ display: 'flex', gap: 4, padding: '0 8px', borderBottom: '1px solid var(--border, #ddd)' }}>
+          <button type="button" role="tab" aria-selected={tab === 'conversation'} style={tabStyle(tab === 'conversation')} onClick={() => show('conversation')}>Conversation</button>
+          <button type="button" role="tab" aria-selected={tab === 'files'} style={tabStyle(tab === 'files')} onClick={() => show('files')}>Files</button>
+        </div>
+      )}
+      {/* The conversation stays mounted behind the Files tab: switching keeps its stream. */}
+      <div style={{ flex: 1, minHeight: 0, display: tab === 'conversation' ? 'flex' : 'none', flexDirection: 'column' }}>
+        <ResearchConversation task={{ sandbox: route.sandbox, task: route.task }} title={title} fill standalone
+          apiBase={route.apiBase} onDeleted={() => { window.location.href = '/'; }} />
+      </div>
+      {hasFiles && filesSeen && (
+        <div style={{ flex: 1, minHeight: 0, display: tab === 'files' ? 'flex' : 'none' }}>
+          <TaskFiles apiBase={route.apiBase} sandbox={route.sandbox} task={route.task} initialFile={route.file} />
+        </div>
+      )}
     </div>
   );
 }

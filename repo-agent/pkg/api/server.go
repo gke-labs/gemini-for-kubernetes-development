@@ -131,6 +131,10 @@ func (s *Server) RegisterRoutes(router *gin.Engine) {
 			scoped.GET("/task-sessions/:sandbox/:task", s.getTaskSession)
 			scoped.GET("/task-sessions/:sandbox/:task/streams", s.getTaskSessionStreams)
 			scoped.GET("/task-sessions/:sandbox/:task/streams/:stream", s.getTaskSessionStream)
+			// A task's files (the session's Files tab): live from its
+			// sandbox, or from the archive once the sandbox is reaped.
+			scoped.GET("/task-files/:sandbox/:task", s.getTaskFiles)
+			scoped.GET("/task-files/:sandbox/:task/file/*path", s.getTaskFile)
 			scoped.POST("/task-sessions/:sandbox/:task/prompt", s.promptTaskSession)
 			scoped.POST("/task-sessions/:sandbox/:task/permission", s.resolveTaskSessionPermission)
 			scoped.POST("/task-sessions/:sandbox/:task/cancel", s.cancelTaskSession)

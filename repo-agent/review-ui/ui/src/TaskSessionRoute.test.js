@@ -10,4 +10,7 @@ test('taskSessionRoute', () => {
     expect(taskSessionRoute('#/task-session/fix-r-5/recipe-fix-1')).toEqual({ sandbox: 'fix-r-5', task: 'recipe-fix-1', apiBase: '/api' });
     expect(taskSessionRoute('#/overseers/kcc/task-session/fix-r-5/recipe-fix-1')).toEqual({ sandbox: 'fix-r-5', task: 'recipe-fix-1', apiBase: '/api/overseers/kcc' });
     expect(taskSessionRoute('#/overseers/kcc')).toBeNull();
+    // The Files tab, and a file open in it.
+    expect(taskSessionRoute('#/overseers/kcc/task-session/fix-r-5/recipe-fix-1?tab=files')).toEqual({ sandbox: 'fix-r-5', task: 'recipe-fix-1', apiBase: '/api/overseers/kcc', tab: 'files' });
+    expect(taskSessionRoute('#/overseers/kcc/task-session/fix-r-5/recipe-fix-1?tab=files&file=runs%2Frun1__REPORT.md')).toEqual({ sandbox: 'fix-r-5', task: 'recipe-fix-1', apiBase: '/api/overseers/kcc', tab: 'files', file: 'runs/run1__REPORT.md' });
 });
