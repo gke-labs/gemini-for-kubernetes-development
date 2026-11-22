@@ -1,4 +1,9 @@
 import React, { useCallback, useEffect, useState } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import yaml from 'js-yaml';
+import DataTree from './DataTree';
+import { markdownComponents } from './Research';
 
 // TaskFiles is the Files tab of a task's session page: what the task left in
 // its directory (its result, step logs, transcript, and the evidence its
@@ -51,6 +56,30 @@ export function prettyContent(name, text) {
   return text;
 }
 
+// viewKind is how a file can be shown besides its source: Markdown
+// rendered, JSON or YAML as a tree, anything else as text only.
+export function viewKind(name) {
+  if (/\.md$/i.test(name)) return 'markdown';
+  if (/\.json$/i.test(name)) return 'json';
+  if (/\.ya?ml$/i.test(name)) return 'yaml';
+  return 'text';
+}
+
+// parseData is a JSON or YAML file's value for the tree - a YAML file of
+// several documents as a list of them - or null when it does not parse.
+export function parseData(kind, text) {
+  try {
+    if (kind === 'json') return { value: JSON.parse(text) };
+    if (kind === 'yaml') {
+      const docs = yaml.loadAll(text).filter(d => d !== undefined);
+      return { value: docs.length === 1 ? docs[0] : docs };
+    }
+  } catch (e) {
+    return null;
+  }
+  return null;
+}
+
 // withFileParam is the page's hash with the open file (and the Files tab)
 // in its query, so its link opens it again.
 export function withFileParam(hash, file) {
@@ -67,6 +96,8 @@ export default function TaskFiles({ apiBase, sandbox, task, initialFile }) {
   const [open, setOpen] = useState(initialFile || '');
   const [content, setContent] = useState(null);
   const [fileError, setFileError] = useState('');
+  // mode is rendered (Markdown, a JSON/YAML tree) or source (the file as it is).
+  const [mode, setMode] = useState('rendered');
 
   useEffect(() => {
     let cancelled = false;
@@ -91,6 +122,7 @@ export default function TaskFiles({ apiBase, sandbox, task, initialFile }) {
     let cancelled = false;
     setContent(null);
     setFileError('');
+    setMode('rendered');
     fetch(taskFilesURL(apiBase, sandbox, task, open))
       .then(async res => {
         const text = await res.text();
@@ -101,17 +133,18 @@ export default function TaskFiles({ apiBase, sandbox, task, initialFile }) {
         }
         return text;
       })
-      .then(text => { if (!cancelled) setContent(prettyContent(open, text)); })
+      .then(text => { if (!cancelled) setContent(text); })
       .catch(err => { if (!cancelled) setFileError(err.message); });
     return () => { cancelled = true; };
   }, [apiBase, sandbox, task, open]);
 
-  if (error) return <div className="task-files" style={{ padding: 16, color: 'var(--danger, #c62828)' }}>Could not list this task's files: {error}</div>;
-  if (!listing) return <div className="task-files" style={{ padding: 16 }}>Loading files…</div>;
+  if (error) return <div className="task-files" style={{ padding: 16, textAlign: 'left', color: 'var(--danger, #c62828)' }}>Could not list this task's files: {error}</div>;
+  if (!listing) return <div className="task-files" style={{ padding: 16, textAlign: 'left' }}>Loading files…</div>;
 
   const groups = groupTaskFiles(listing.files);
   return (
-    <div className="task-files" style={{ display: 'flex', flex: 1, minHeight: 0 }}>
+    // Left-aligned: the page sits in .App, whose text-align is center (App.css).
+    <div className="task-files" style={{ display: 'flex', flex: 1, minHeight: 0, textAlign: 'left' }}>
       <div style={{ width: 320, overflowY: 'auto', borderRight: '1px solid var(--border, #ddd)', padding: 8 }}>
         <div style={{ fontSize: 12, opacity: 0.75, marginBottom: 8 }} data-testid="task-files-source">
           {listing.source === 'archive' ? 'From the archive (the sandbox is gone)' : 'Live from the sandbox'}
@@ -141,19 +174,53 @@ export default function TaskFiles({ apiBase, sandbox, task, initialFile }) {
           <>
             <div style={{ display: 'flex', gap: 12, alignItems: 'center', padding: '6px 12px', borderBottom: '1px solid var(--border, #ddd)', fontSize: 12 }}>
               <code style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis' }}>{open}</code>
+              {viewKind(open) !== 'text' && (
+                <span role="group" aria-label="view">
+                  {['rendered', 'source'].map(m => (
+                    <button key={m} type="button" aria-pressed={mode === m} onClick={() => setMode(m)}
+                      style={{ fontWeight: mode === m ? 600 : 400, marginLeft: 4 }}>{m === 'rendered' ? 'Rendered' : 'Source'}</button>
+                  ))}
+                </span>
+              )}
               <a href={taskFilesURL(apiBase, sandbox, task, open)} target="_blank" rel="noreferrer">raw</a>
               <button type="button" onClick={() => navigator.clipboard && navigator.clipboard.writeText(window.location.href)}>copy link</button>
             </div>
             {fileError
               ? <div style={{ padding: 12, color: 'var(--danger, #c62828)' }}>Could not read {open}: {fileError}</div>
-              : <pre data-testid="task-file-content" style={{ flex: 1, margin: 0, padding: 12, overflow: 'auto', fontSize: 12, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-                  {content === null ? 'Loading…' : content}
-                </pre>}
+              : <FileView name={open} content={content} mode={mode} />}
           </>
         ) : (
           <div style={{ padding: 16, opacity: 0.7 }}>Pick a file to view it.</div>
         )}
       </div>
     </div>
+  );
+}
+
+// FileView is one file's content: Markdown rendered, JSON or YAML as a tree
+// (in rendered mode), or the file exactly as it is (source mode, and any file
+// that is not Markdown, JSON or YAML, or does not parse).
+export function FileView({ name, content, mode }) {
+  const scroll = { flex: 1, margin: 0, padding: 12, overflow: 'auto', fontSize: 12, textAlign: 'left' };
+  if (content === null) return <pre data-testid="task-file-content" style={scroll}>Loading…</pre>;
+  const kind = viewKind(name);
+  if (mode === 'rendered' && kind === 'markdown') {
+    return (
+      <div data-testid="task-file-markdown" className="markdown-body" style={{ ...scroll, fontSize: 13 }}>
+        <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{content}</ReactMarkdown>
+      </div>
+    );
+  }
+  const parsed = mode === 'rendered' && (kind === 'json' || kind === 'yaml') ? parseData(kind, content) : null;
+  if (parsed) {
+    return <div data-testid="task-file-tree" style={scroll}><DataTree value={parsed.value} /></div>;
+  }
+  return (
+    <>
+      {mode === 'rendered' && kind !== 'text' && kind !== 'markdown' && (
+        <div style={{ padding: '6px 12px', fontSize: 12, opacity: 0.7 }}>Not valid {kind.toUpperCase()}: shown as it is.</div>
+      )}
+      <pre data-testid="task-file-content" style={{ ...scroll, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{content}</pre>
+    </>
   );
 }
