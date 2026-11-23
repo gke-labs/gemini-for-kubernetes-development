@@ -76,9 +76,10 @@ var verbs = map[string]verb{
 	"open-pr":       {class: ClassApply, kinds: []string{"Change"}, apply: applyOpenPR},
 	"post-replies":  {class: ClassApply, kinds: []string{"Change"}, apply: applyPostReplies},
 	"post-spec":     {class: ClassApply, kinds: []string{"FanOut"}, apply: applyPostSpec},
+	"open-issues":   {class: ClassApply, kinds: []string{"Issues"}, apply: applyOpenIssues},
 	"run":           {class: ClassFollowUp, kinds: []string{"Triage", "Plan", "Notes", "Review", "Change", "Summary"}},
-	"edit":          {class: ClassDraft, kinds: []string{"Triage", "Plan", "Notes", "Review", "Change", "Summary", "FanOut"}},
-	"reject":        {class: ClassDraft, kinds: []string{"Triage", "Plan", "Notes", "Review", "Change", "Summary", "FanOut"}},
+	"edit":          {class: ClassDraft, kinds: []string{"Triage", "Plan", "Notes", "Review", "Change", "Summary", "FanOut", "Issues"}},
+	"reject":        {class: ClassDraft, kinds: []string{"Triage", "Plan", "Notes", "Review", "Change", "Summary", "FanOut", "Issues"}},
 }
 
 // defaultActions are what a kind's result offers when its document
@@ -105,6 +106,11 @@ var defaultActions = map[string][]Action{
 	"FanOut": {
 		{Verb: "edit", Field: "spec.markdown", Format: "markdown"},
 		{Verb: "post-spec", Label: "Post spec"},
+		{Verb: "reject"},
+	},
+	"Issues": {
+		{Verb: "edit", Field: "spec", Format: "yaml"},
+		{Verb: "open-issues", Label: "File issues"},
 		{Verb: "reject"},
 	},
 	"Notes": {

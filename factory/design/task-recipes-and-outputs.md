@@ -108,6 +108,7 @@ The runner wraps the declared file (`from:`) into this document as `task-output.
 | Notes | `research` | `push-notes` saves to the member's `research/notes`. |
 | Summary | `summarize` | Comments the summary. |
 | FanOut | `fanout` | `post-spec` posts the spec. |
+| Issues | a repository's own (KCC's `file-validate-bug`) | `open-issues` files each issue in the target's repository, once per `key`: an open issue with that key (a hidden marker in its body) gets a comment instead; then one comment on the target lists what was filed, with the note. |
 
 ### 5. Actions: what can be done with a result
 
@@ -147,7 +148,7 @@ actions:
 
 | Class | Verbs | Who executes it | Meaning |
 |---|---|---|---|
-| Apply | `comment`, `label`, `post-review`, `submit-review`, `open-pr`, `post-replies`, `push-notes`, `post-spec`; later `close-duplicate` | `factory apply --action <verb>` | A write to the document's `target`, using the caller's token, idempotent as in part 4. |
+| Apply | `comment`, `label`, `post-review`, `submit-review`, `open-pr`, `post-replies`, `push-notes`, `post-spec`, `open-issues`; later `close-duplicate` | `factory apply --action <verb>` | A write to the document's `target`, using the caller's token, idempotent as in part 4. |
 | Follow-up | `run` | `factory apply --action run` | Starts the named recipe on the target, with this document (its markdown, else its spec as YAML) as the recipe's input declared `from:` this kind — fix's `plan: {from: Plan}`. |
 | Draft | `edit`, `reject` | The caller that keeps the draft | `edit` names the field and format to edit (`spec.markdown` as markdown; `spec` as YAML for a Triage). `reject` discards the draft. factory executes neither; from the CLI, editing is editing the file before `apply -f`, and rejecting is not applying. |
 
